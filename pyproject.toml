@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
     "yfinance>=0.2.54",
+    "SQLAlchemy>=2.0",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,2 +1,15 @@
-
+
 /.idea/
+
+# Local SQLite database (raw data is regenerated from the provider, not committed)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/

@@ -6,7 +6,7 @@ import pandas as pd
 
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 
-
+# python -m unittest tests.test_yfinance_provider -v
 class YFinanceProviderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.history = pd.DataFrame(
