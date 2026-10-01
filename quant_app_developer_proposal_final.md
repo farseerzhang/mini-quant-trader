@@ -1,0 +1,1133 @@
+# Quant Trading System — Application Developer Proposal
+
+# 1. Project Goal
+
+Build a local, personal quantitative trading research and signal-generation application for US equities.
+
+The application should:
+
+- Import market data from external APIs.
+- Store historical market data locally.
+- Calculate technical and market features.
+- Detect the current market regime: Bull, Sideways, Bear.
+- Generate stock/ETF predictions using machine-learning models.
+- Generate interpretable target exposures and BUY / HOLD / REDUCE signals.
+- Backtest strategies with VectorBT against explicit benchmarks.
+- Store predictions, signals, model versions, and backtest results.
+- Run on demand from a command line, with a **manual** command to retrain models.
+- Provide a Streamlit dashboard for monitoring.
+- Be designed so future paper trading / broker integration can be added without redesigning the core.
+
+This is a research and decision-support system. It must not assume that model predictions are reliable or that a signal is a recommendation to trade.
+
+---
+
+# 2. Technology Stack
+
+## Core
+
+- Python (a version confirmed compatible with VectorBT in the Phase 0 spike)
+- SQLite (WAL mode)
+- SQLAlchemy (Core is sufficient; ORM optional)
+- pandas, NumPy
+- `exchange_calendars` (or `pandas_market_calendars`) for the NYSE trading calendar
+
+## Market Data
+
+Initial implementation: `yfinance`.
+
+`yfinance` is an unofficial scraper: it can break, rate-limit, and revise data. It must be isolated behind a provider interface so it can later be replaced (Polygon, Tiingo, IBKR, etc.).
+
+## Quant / ML
+
+- VectorBT — backtesting
+- scikit-learn — Logistic Regression, Random Forest, calibration
+- XGBoost — gradient-boosted trees
+- hmmlearn — HMM regime detection
+- joblib — model serialization for sklearn models; XGBoost native format for XGBoost models
+
+## Operations
+
+- A CLI (`argparse` or `typer`). **No scheduler.**
+
+## UI
+
+- Streamlit
+
+## Packaging / Testing
+
+- `pyproject.toml`
+- pytest
+- Alembic (optional, only if the schema starts changing often)
+
+## Containerization
+
+No Docker in V1. The application runs directly on the local machine.
+
+---
+
+# 3. High-Level Architecture
+
+```text
+                    External Market Data API
+                              |
+                              v
+                    +--------------------+
+                    | Market Data Layer  |
+                    | Incremental Import |
+                    | + Corporate Actions|
+                    +---------+----------+
+                              |
+                              v
+                    +--------------------+
+                    |       SQLite       |
+                    | Raw (unadjusted)   |
+                    +---------+----------+
+                              |
+                              v
+                    +--------------------+
+                    | Feature Engineering|
+                    | Scale-free features|
+                    +---------+----------+
+                              |
+              +---------------+----------------+
+              v                                v
+   +--------------------+           +--------------------+
+   | Market Regime      |           | ML Prediction      |
+   | Rule-based / HMM   |---------->| LR / RF / XGBoost  |
+   | (filtered only)    |           | (calibrated)       |
+   +---------+----------+           +---------+----------+
+             |                                |
+             +---------------+----------------+
+                             v
+                    +--------------------+
+                    | Strategy Engine    |
+                    +---------+----------+
+                              v
+                    +--------------------+
+                    | Risk Management    |
+                    | -> Target Weights  |
+                    +---------+----------+
+                              v
+                    +--------------------+
+                    | Signals (vs        |
+                    | positions)         |
+                    +---------+----------+
+                              v
+                    +--------------------+
+                    | SQLite             |
+                    | Signals / Results  |
+                    +---------+----------+
+                              v
+                    +--------------------+
+                    | Streamlit Dashboard|
+                    +--------------------+
+
+   Triggered manually via CLI:
+   quant run-daily | quant retrain | quant promote | quant backtest
+```
+
+---
+
+# 4. Architecture Principles
+
+## 4.1 Python-first
+
+The complete V1 system uses Python. Do not introduce Java for data downloading, SQLite access, feature engineering, or orchestration. Java is not justified unless a later production trading-service requirement exists.
+
+## 4.2 SQLite as a local file
+
+```text
+data/quant.db
+```
+
+SQLite is sufficient: single user, local, daily data, low concurrency.
+
+Even so, two processes touch the file (CLI commands write, Streamlit reads). Therefore:
+
+- Enable WAL mode (`PRAGMA journal_mode=WAL`).
+- Set a busy timeout.
+- Keep write transactions short.
+
+Access goes through a thin data-access layer. Plain functions over SQLAlchemy Core are preferred to one repository class per table.
+
+## 4.3 Raw data is the source of truth
+
+Raw market data stays logically separate from derived features. Changing RSI parameters, SMA windows or model algorithms must not require downloading market data again.
+
+## 4.4 Incremental data ingestion
+
+The application must NOT re-download the entire history every run.
+
+```text
+Initial run:     configured_initial_date -> last completed session
+Subsequent runs: latest stored date + 1  -> last completed session
+```
+
+Rules:
+
+- "Last completed session" is determined with the exchange calendar in `America/New_York`. The current day's partial bar is never ingested before the close.
+- If the app was not run for several days, the missing range is filled automatically.
+- Ingestion is idempotent: `PRIMARY KEY (symbol, date)` on prices, upsert semantics.
+- Corporate actions (splits, dividends) are fetched and stored. When a **new** corporate action appears for a symbol, the symbol's affected history is re-validated and adjustment factors are recomputed (see 6.3).
+
+## 4.5 Time and execution convention
+
+```text
+Bar date T      = a completed daily bar.
+Signal at T     = computed only from information available at or before the close of T.
+Execution       = at the open of T+1 (or a configurable alternative such as T+1 close).
+```
+
+This convention applies identically to backtests, paper trading and forward testing. Backtest code must shift signals accordingly; VectorBT must not be allowed to fill at the same bar the signal was computed on.
+
+---
+
+# 5. Expected Data Volume
+
+Daily US equity data for a personal universe is small (e.g. 1,000 symbols x 252 days x 20 years is roughly 5 million rows). SQLite handles this comfortably. Do not optimize for distributed databases. Intraday/tick data is a future concern.
+
+---
+
+# 6. Database Schema
+
+All derived tables must have a natural unique key and use upserts, so re-running any stage never creates duplicates.
+
+## 6.1 symbols
+
+```text
+symbol (PK), name, asset_type, exchange, currency,
+sector, industry, active, created_at, updated_at
+```
+
+`sector` / `industry` are needed for sector concentration limits. The config file lists the universe; the `symbols` table is synchronized from it at the start of each run (config is the single source of truth).
+
+## 6.2 daily_prices (unadjusted)
+
+```sql
+CREATE TABLE daily_prices (
+    symbol TEXT NOT NULL,
+    date DATE NOT NULL,
+    open REAL, high REAL, low REAL, close REAL,   -- as traded (split-unadjusted)
+    volume INTEGER,                                -- NULL allowed (e.g. ^VIX)
+    provider TEXT NOT NULL,
+    ingested_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (symbol, date)
+);
+```
+
+- Store prices **as originally traded**. Do not store the provider's `adjusted_close` as the source of truth, because it is rewritten retroactively whenever a dividend or split occurs.
+- Never silently overwrite historical rows. A correction requires an explicit, logged data-correction path.
+
+## 6.3 corporate_actions
+
+```text
+symbol, ex_date, action_type (SPLIT | DIVIDEND), value, provider, ingested_at
+PRIMARY KEY (symbol, ex_date, action_type)
+```
+
+Adjusted prices and total-return series are **computed** from `daily_prices` + `corporate_actions` (a view or a function), so every consumer (features, labels, backtests) uses one consistent adjustment basis. Features that need adjusted series (long moving averages, momentum, labels) must read the computed series, never raw closes across split dates.
+
+## 6.4 market_features
+
+Market-level features keyed by date only (not duplicated per symbol):
+
+```text
+date, spy_trend, qqq_trend, vix, vix_change, market_volatility, ...
+feature_version
+```
+
+## 6.5 features
+
+Per-symbol derived features:
+
+```text
+symbol, date, feature_version, <feature columns...>
+PRIMARY KEY (symbol, date, feature_version)
+```
+
+Features must be scale-free so a single model can be trained across symbols (see section 11).
+
+## 6.6 market_regimes
+
+```text
+date, regime_method (RULE | HMM), regime, regime_score, confidence,
+model_version, created_at
+PRIMARY KEY (date, regime_method, model_version)
+```
+
+Historical regime values must be point-in-time (filtered), never smoothed over future data.
+
+## 6.7 predictions
+
+```text
+symbol, date, model_version, probability, target_definition, created_at
+PRIMARY KEY (symbol, date, model_version)
+```
+
+A prediction is a **model output only**: the calibrated probability of the defined target. It is not a BUY/HOLD/REDUCE label.
+
+Also snapshot (or hash) the feature vector used, so the prediction can be reproduced even if upstream data is later corrected.
+
+## 6.8 positions
+
+```text
+symbol, as_of_date, quantity (or weight), cost_basis (optional), source (MANUAL | PAPER)
+```
+
+Required to turn target weights into BUY / HOLD / REDUCE. Initially populated by manual entry.
+
+## 6.9 signals
+
+```text
+symbol, date, regime, strategy, target_weight, current_weight,
+signal (BUY | HOLD | REDUCE | EXIT), score, confidence,
+model_version, reason, created_at
+PRIMARY KEY (symbol, date, strategy, model_version)
+```
+
+Semantics:
+
+```text
+target_weight > current_weight  -> BUY (increase)
+target_weight ~= current_weight -> HOLD
+0 < target_weight < current     -> REDUCE (to target_weight)
+target_weight = 0 and held      -> EXIT
+```
+
+`reason` is human-readable and lists the main contributing factors.
+
+## 6.10 model_versions
+
+```text
+model_id (PK), model_type, version, status (CANDIDATE | ACTIVE | RETIRED),
+training_start, training_end, feature_version, target_definition,
+hyperparameters, metrics, library_versions, config_hash, git_commit,
+model_path, created_at
+```
+
+The serialized model lives on disk; SQLite holds metadata and the path:
+
+```text
+models/
+  xgb/xgb_20261001_v01.ubj
+  random_forest/rf_20261001_v01.joblib
+  hmm/hmm_20261001_v01.joblib
+```
+
+Avoid raw `pickle` where a native or joblib format is available.
+
+## 6.11 backtest_runs
+
+```text
+run_id, strategy, strategy_version, universe, start_date, end_date,
+initial_cash, fee_model, slippage_model, execution_convention,
+model_version, walk_forward_config, benchmark,
+total_return, cagr, sharpe, sortino, max_drawdown, win_rate,
+num_trades, profit_factor, benchmark_total_return, benchmark_sharpe,
+parameters, config_hash, git_commit, created_at
+```
+
+Runs are portfolio-level; per-symbol breakdowns may be stored separately.
+
+## 6.12 pipeline_runs
+
+```text
+run_id, command, stage, status (STARTED | OK | FAILED | SKIPPED),
+data_as_of_date, started_at, finished_at, message
+```
+
+Used for restartability and to show data freshness / last successful run on the dashboard.
+
+## 6.13 data_quarantine
+
+Rows that fail validation are written here with a reason instead of entering `daily_prices`, and never silently dropped.
+
+---
+
+# 7. Suggested Project Structure
+
+```text
+quant-system/
+├── pyproject.toml
+├── README.md
+├── config/settings.yaml
+├── data/quant.db
+├── models/{xgb,random_forest,logistic,hmm}/
+├── src/quant/
+│   ├── cli.py                 # entry points (python -m quant ...)
+│   ├── config/settings.py
+│   ├── data/                  # provider.py, yfinance_provider.py,
+│   │                          # downloader.py, calendar.py, data_quality.py,
+│   │                          # adjustments.py
+│   ├── persistence/           # database.py, tables.py, queries.py
+│   ├── features/              # technical.py, momentum.py, volatility.py, market.py
+│   ├── regime/                # rule_based.py, hmm.py
+│   ├── models/                # training.py, validation.py, calibration.py,
+│   │                          # registry.py
+│   ├── strategies/            # trend.py, mean_reversion.py, selector.py
+│   ├── risk/                  # position_sizing.py, portfolio_risk.py
+│   ├── signals/               # engine.py, weights_to_signals.py
+│   ├── backtest/              # vectorbt_engine.py, walk_forward.py, benchmarks.py
+│   └── pipeline/              # daily.py, retrain.py
+├── dashboard/app.py
+└── tests/{data,features,regime,models,strategies,signals,backtest}/
+```
+
+The structure may be simplified wherever it becomes heavier than the problem requires. The provider abstraction is the one abstraction that is clearly worth keeping.
+
+---
+
+# 8. Market Data Provider Abstraction
+
+```python
+class MarketDataProvider(Protocol):
+    def get_daily_data(self, symbol: str, start: date, end: date) -> DataFrame: ...
+    def get_corporate_actions(self, symbol: str, start: date, end: date) -> DataFrame: ...
+```
+
+```text
+MarketDataProvider
+   +-- YFinanceProvider
+   +-- (future) PolygonProvider / IBKRProvider
+```
+
+The downloader depends on the abstraction only. The provider must return **unadjusted** prices and corporate actions separately.
+
+---
+
+# 9. Incremental Downloader
+
+```text
+last_session = calendar.last_completed_session(now, tz="America/New_York")
+
+for symbol in universe:
+    latest = latest_stored_date(symbol)
+    start = initial_date if latest is None else next_session(latest)
+    if start > last_session: continue
+
+    prices  = provider.get_daily_data(symbol, start, last_session)
+    actions = provider.get_corporate_actions(symbol, start, last_session)
+
+    good, bad = validate(prices)
+    quarantine(bad)
+    upsert(good)
+    upsert(actions)
+    if new_corporate_action_detected: flag symbol for adjustment recompute
+```
+
+Requirements:
+
+- Idempotent; no duplicate rows.
+- Uses the exchange calendar (holidays and early closes) instead of guessing from weekdays.
+- Retry failed API requests with backoff.
+- A failing symbol never aborts the whole batch.
+- Log failed symbols; print a final ingestion summary.
+- Detect missing or abnormal data against the calendar.
+
+---
+
+# 10. Data Quality Checks
+
+Before writing to `daily_prices`:
+
+```text
+- Duplicate rows
+- Missing symbol/date
+- Invalid OHLC relationships (high >= max(open, close, low); low <= min(open, close, high))
+- Negative volume; non-positive prices
+- Missing sessions versus the exchange calendar
+- Extreme price changes (cross-checked against corporate_actions so legitimate
+  splits are not rejected and unexplained jumps are flagged)
+```
+
+Failures go to `data_quarantine` and the log; they never silently enter the main tables.
+
+---
+
+# 11. Feature Engineering
+
+All features are computed from the adjusted series (section 6.3) using only data at or before T.
+
+Features must be **scale-free** (comparable across symbols and over time):
+
+### Trend
+
+```text
+price_vs_sma20, price_vs_sma50, price_vs_sma200, sma50_vs_sma200
+```
+
+### Momentum
+
+```text
+return_1m, return_3m, return_6m, return_12m
+RSI14
+MACD / price, MACD signal / price (or normalized MACD histogram)
+```
+
+### Risk / volatility
+
+```text
+ATR14 / price
+realized_volatility (e.g. 20d, annualized)
+volume_ratio (volume / rolling average volume)
+```
+
+### Relative / market-level (stored in market_features)
+
+```text
+SPY trend, QQQ trend, VIX level and change, market realized volatility
+symbol return relative to SPY
+```
+
+Raw SMA/ATR values may be stored for charting but are not model inputs.
+
+**Removed from V1:**
+
+- **Fear & Greed**: no reliable point-in-time history; revisions and look-ahead risk. It may be logged going forward only (see section 30).
+- **Market breadth**: requires point-in-time index constituents, which V1 does not have.
+
+Warm-up periods (e.g. first 200 days for SMA200) must be handled explicitly (NaN, not backfilled).
+
+---
+
+# 12. Market Regime Detection — Rule-Based
+
+Regimes: `BULL`, `SIDEWAYS`, `BEAR`.
+
+Illustrative inputs:
+
+```text
+SPY > SMA200
+QQQ > SMA200
+SMA50 > SMA200 (SPY)
+SPY momentum
+VIX level / trend
+```
+
+Illustrative scoring:
+
+```text
+score >= +T_bull            BULL
+-T_bear < score < +T_bull   SIDEWAYS
+score <= -T_bear            BEAR
+```
+
+Rules:
+
+- Thresholds are starting points, configurable, and must be validated; they are not established optima.
+- Tuning thresholds on the full history is in-sample. Evaluate regime logic out-of-sample.
+- Add **hysteresis** (different enter/exit thresholds) and/or a **minimum dwell time** to prevent daily flip-flopping near boundaries.
+- The rule-based regime is the baseline that HMM must beat to be adopted.
+
+---
+
+# 13. Market Regime Detection — HMM
+
+Observations (market-level): SPY/QQQ returns, realized volatility, VIX, momentum, price-vs-SMA200.
+
+Critical rules:
+
+1. **No look-ahead in state estimation.** hmmlearn's `predict()` (Viterbi) and `predict_proba()` (smoothed posteriors) use the whole sequence, including the future. For the regime at date T, use only the **filtered** state probability computed from observations up to T (a forward-only pass, or equivalently the last-step posterior from a fit on data up to T).
+2. **Fit walk-forward.** Refit the HMM on an expanding or rolling window ending at the training cutoff; do not fit once on the full history and use it for the past.
+3. **State mapping.** HMM state numbers have no meaning. Map states to BULL / SIDEWAYS / BEAR from each fit's observed return/volatility characteristics, and check the mapping stays stable between refits.
+4. Use a long enough history (see section 27: `market.regime_history_start`) for the model to see more than one or two bear phases.
+5. Treat results skeptically; compare against the rule-based baseline before adopting.
+
+---
+
+# 14. ML Models
+
+## Candidates
+
+- Logistic Regression (baseline)
+- Random Forest (benchmark)
+- XGBoost (candidate)
+
+RF and XGBoost are competitors; the final system does not need both unless an ensemble shows a robust benefit.
+
+## Model scope
+
+A **single pooled model** across all symbols (with scale-free features and optionally a symbol-agnostic design). Per-symbol models are not used in V1: with a small universe they overfit.
+
+## Target
+
+Default (configurable):
+
+```text
+future_5d_return > 2%
+```
+
+Preferred alternatives to evaluate (a fixed 2% means very different things for high- and low-volatility stocks):
+
+```text
+future_5d_excess_return_vs_SPY > 0
+future_5d_return > k * recent_volatility
+```
+
+The target definition is stored with every model and prediction.
+
+## Probability calibration
+
+Raw tree-model probabilities are not calibrated. Fit a calibration step (isotonic or Platt) on a validation fold, and track Brier score and log-loss in addition to AUC. A probability of 0.73 means 73% **under the defined target and model assumptions**, not a 73% chance of making money.
+
+## Regime as an input
+
+The rule-based regime may be an input feature. HMM regime becomes an input only after it passes the filtered, walk-forward tests in section 13.
+
+---
+
+# 15. ML Validation Rules
+
+- **Never** use random train/test splits.
+- Use walk-forward (expanding or rolling) validation.
+- **Purge and embargo:** because the target looks `h` days ahead, labels in adjacent rows overlap. Leave a gap of at least `h` trading days between the end of training data and the start of validation data.
+- Keep a **final untouched out-of-sample holdout**. It is evaluated once per major model decision, not repeatedly tuned against.
+- Keep a **trial log** (how many models, targets, parameter sets were tried) in `model_versions` / experiment notes. The more variants tried, the less any single good result means.
+- Judge models by out-of-sample, after-cost trading metrics, stability across sub-periods and regimes, and complexity, not training accuracy.
+- Compare against: rule-based baseline, Logistic Regression, a random/shuffled-signal baseline.
+
+---
+
+# 16. Retraining Policy — Manual Trigger
+
+There is **no scheduler** and no automatic retraining or parameter optimization. Reasons: re-fitting on recent data automatically invites overfitting to noise, and a local personal tool does not need unattended jobs.
+
+Operating rhythm (all manual):
+
+```text
+Whenever you want fresh signals:   quant run-daily
+Occasionally, when you decide:     quant backtest
+When you decide to retrain:        quant retrain
+When a candidate looks good:       quant promote <model_id>
+```
+
+`quant retrain`:
+
+1. Builds the training set from stored data up to a chosen cutoff (default: last completed session).
+2. Trains the configured model type(s) using purged walk-forward validation.
+3. Calibrates probabilities.
+4. Registers a new model as `CANDIDATE` with metrics, feature version, library versions, config hash and git commit.
+5. Prints a comparison against the currently `ACTIVE` model and the rule-based baseline.
+6. **Does not change the active model.**
+
+`quant promote <model_id>` sets a candidate `ACTIVE` (previous active becomes `RETIRED`). `quant run-daily` never trains; it only loads the active model. If no active model exists, it falls back to rule-based signals and says so.
+
+Retrain parameters (window type/length, horizon, embargo) come from configuration, with CLI overrides.
+
+---
+
+# 17. Strategy Layer
+
+The strategy layer combines:
+
+```text
+Market regime + technical indicators + ML probability + risk constraints
+```
+
+Example trend strategy:
+
+```text
+Price > SMA200 AND SMA50 > SMA200 AND MACD > MACD signal
+```
+
+Example mean-reversion strategy:
+
+```text
+Price > SMA200 AND RSI is low AND MACD turning upward
+```
+
+Regime selects the strategy family:
+
+```text
+BULL     -> trend
+SIDEWAYS -> mean reversion
+BEAR     -> defensive / reduced exposure
+```
+
+These are examples for testing, not trading rules.
+
+---
+
+# 18. Signal Engine
+
+The final signal must not simply equal the ML prediction.
+
+```text
+Regime + Technical score + ML probability + Risk limits
+        |
+        v
+  Target weight per symbol
+        |
+        v
+  Compare with current positions
+        |
+        v
+  BUY / HOLD / REDUCE / EXIT  +  reason
+```
+
+Hysteresis around weight changes (ignore tiny differences) avoids churn.
+
+Example stored reason:
+
+```text
+Bull regime. Price above SMA200. SMA50 above SMA200. MACD positive.
+Calibrated model probability 0.64. Volatility within risk limits.
+Target weight 6% vs current 4% -> BUY (increase).
+```
+
+---
+
+# 19. Risk Management
+
+Risk management is independent of the prediction model and can override it.
+
+- Maximum position size
+- Maximum portfolio exposure
+- Volatility-based position sizing
+- ATR-based stop distance
+- Maximum drawdown protection
+- Sector concentration limits (uses `symbols.sector`)
+- Cash allocation
+- Regime exposure limits
+
+A high ML probability must never bypass risk controls.
+
+---
+
+# 20. Backtesting
+
+Use VectorBT, portfolio-level.
+
+Backtests must include:
+
+```text
+- Transaction fees and slippage assumptions
+- Position sizing and portfolio constraints
+- Execution convention from section 4.5 (signals shifted, no same-bar fills)
+- Entry/exit rules
+- Market regime
+- Walk-forward / out-of-sample periods, plus the final holdout
+- Benchmarks: SPY buy-and-hold and equal-weight universe
+- A random / shuffled-signal baseline
+```
+
+Report:
+
+```text
+Total return, CAGR, Sharpe, Sortino, Max drawdown, Win rate,
+Number of trades, Turnover, Profit factor, and all of the above for the benchmarks
+```
+
+Never judge a strategy by return alone. A strategy that does not beat the benchmark on a risk-adjusted, after-cost basis is not an improvement.
+
+Known limitation to document in every report: the universe is chosen today, so results suffer from **survivorship bias**; and the history may be dominated by bull markets.
+
+---
+
+# 21. Research / Backtest / Live Separation and Look-Ahead Tests
+
+Distinguish:
+
+```text
+Research
+Backtest
+Live signal generation
+```
+
+At date T:
+
+```text
+features use data <= T
+regime uses data <= T (filtered)
+the model used was trained on data available <= T (minus the embargo)
+signal uses information <= T
+```
+
+Mandatory tests:
+
+1. **Truncation test.** Compute features, regime and signals on the full dataset, then on data truncated at T. Values at T must be identical. Run for every feature and for the regime.
+2. **Execution test.** A signal at T never produces a fill at or before T's price in the backtest.
+3. **Embargo test.** No training label window overlaps the validation period.
+
+Production predictions are a point-in-time log. Historical performance of ML models is established by **walk-forward simulation** (retraining at each historical step), not by replaying the latest model over the past.
+
+---
+
+# 22. Model Versioning
+
+Every trained model has a unique version, stored in `model_versions` (section 6.10). Every prediction records `model_version`. Models are never overwritten; a new training run creates a new version.
+
+Record library versions, config hash and git commit so a model and its results can be reproduced.
+
+---
+
+# 23. Daily Pipeline (`quant run-daily`)
+
+Run manually, whenever fresh signals are wanted. Because ingestion fills any gap, it is safe to run after days off, and safe to run twice.
+
+```text
+1.  Load/sync configured symbol universe
+2.  Update market data and corporate actions (to last completed session)
+3.  Run data-quality checks (quarantine bad rows)
+4.  Recompute adjustments if new corporate actions appeared
+5.  Calculate/update features and market features
+6.  Calculate market regime
+7.  Load the ACTIVE model (fallback: rule-based only)
+8.  Generate predictions
+9.  Run strategy selection
+10. Apply risk management -> target weights
+11. Compare with positions -> BUY/HOLD/REDUCE/EXIT signals
+12. Persist results
+13. Print summary and write log
+```
+
+Each stage writes a `pipeline_runs` row. Stages persist inside their own transaction, so a failure at a later stage (e.g. prediction) cannot corrupt data written by earlier stages, and a rerun resumes safely.
+
+---
+
+# 24. Operations: CLI
+
+There is no APScheduler and no background process.
+
+```text
+python -m quant ingest                 # step 2-3 only
+python -m quant run-daily              # full daily pipeline
+python -m quant retrain [--model xgb]  # MANUAL; registers a CANDIDATE
+python -m quant promote <model_id>     # activate a candidate
+python -m quant backtest [--strategy ...]
+python -m quant status                 # last runs, data freshness, active model
+streamlit run dashboard/app.py         # dashboard (separate process)
+```
+
+If the user later wants automation, a scheduler can be added in a later phase without changing the pipeline, because every command is idempotent and restartable (section 30).
+
+---
+
+# 25. Streamlit Dashboard
+
+Read-only view of the database.
+
+**Status:** last successful `run-daily`, data as-of date, active model version, warnings (stale data, quarantined rows).
+
+**Market Overview:** current regime and score, SPY, QQQ, VIX.
+
+**Signals table:** symbol, signal, current vs target weight, score, ML probability, regime, strategy, reason.
+
+**Stock Detail:** price, SMA50, SMA200, RSI, MACD, volume (from adjusted series).
+
+**Model:** version, status, training period, validation metrics, calibration plot, feature importance, comparison with baseline.
+
+**Backtest:** equity curve vs benchmarks, drawdown, Sharpe, CAGR, trades.
+
+The dashboard should show a clear note that outputs are research signals, not advice. (The dashboard does not trigger retraining in V1; the CLI does.)
+
+---
+
+# 26. Logging
+
+Use Python's `logging`. Log data ingestion, API failures, quality warnings, feature calculation, model training/loading, predictions, signals, backtests and every CLI command. Prefer structured, readable logs.
+
+---
+
+# 27. Configuration
+
+```yaml
+database:
+  url: sqlite:///data/quant.db
+
+market:
+  initial_history: 2005-01-01      # regime work needs more than one or two bear phases
+  timezone: America/New_York
+  execution: next_open
+  symbols: [SPY, QQQ, AAPL, MSFT, NVDA]
+  market_symbols: [SPY, QQQ, ^VIX]
+
+features:
+  version: 1
+  sma: [20, 50, 200]
+  rsi_period: 14
+  atr_period: 14
+
+regime:
+  method: rule_based               # rule_based | hmm
+  enter_threshold: 5
+  exit_threshold: 3
+  min_dwell_days: 5
+
+model:
+  type: xgboost
+  target: future_5d_return_gt_2pct
+  target_horizon_days: 5
+  target_return: 0.02
+  embargo_days: 5
+  calibration: isotonic
+
+retrain:                           # used only by the manual `quant retrain`
+  window: expanding                # expanding | rolling
+  rolling_years: 5
+  holdout_start: 2024-01-01
+
+backtest:
+  fee_bps: 1
+  slippage_bps: 5
+  benchmarks: [SPY, equal_weight]
+
+risk:
+  max_position_size: 0.10
+  max_sector_weight: 0.30
+```
+
+There is no `schedule` section. Secrets/API keys must not be committed; use environment variables or a local secrets mechanism.
+
+---
+
+# 28. Testing Requirements
+
+## Unit tests
+
+- Incremental date calculation (with exchange calendar and holidays)
+- Upsert behavior and duplicate prevention
+- Corporate action adjustment (split and dividend cases)
+- Feature calculations and warm-up handling
+- Regime classification and hysteresis
+- Weights-to-signals mapping (BUY / HOLD / REDUCE / EXIT)
+- Position sizing and risk limits
+- Data validation and quarantine
+
+## Integration tests
+
+- Provider -> downloader -> SQLite (using a fake provider)
+- Feature pipeline -> SQLite
+- Prediction -> signal pipeline
+- `retrain` registers a candidate and does not change the active model
+- `promote` switches the active model correctly
+- `run-daily` twice produces no duplicates
+
+## Look-ahead / correctness tests
+
+- Truncation test (section 21)
+- Execution timing and fees on small deterministic datasets
+- Embargo test for training/validation windows
+- HMM: the state at T is unchanged when later data is appended
+
+---
+
+# 29. Implementation Phases
+
+Each stage must be validated against the previous one with walk-forward, out-of-sample backtests.
+
+## Phase 0 — Spikes
+
+- Confirm VectorBT installs and runs on the target Python version.
+- Confirm how `yfinance` returns unadjusted prices and corporate actions.
+- Confirm the exchange calendar library covers the needed history.
+
+## Phase 1 — Data foundation
+
+SQLite (WAL), `symbols`, `daily_prices`, `corporate_actions`, provider interface, `YFinanceProvider`, incremental downloader, calendar, data validation, quarantine, `pipeline_runs`.
+
+Acceptance: initial download works; second run downloads only missing sessions; no duplicates; failed symbols reported; a new split/dividend triggers an adjustment recompute; the database survives restart; no partial current-day bar is stored.
+
+## Phase 2 — Features
+
+SMA/RSI/MACD/ATR/momentum/volatility (scale-free), market features.
+
+Acceptance: reproducible; truncation test passes; warm-up periods handled.
+
+## Phase 3 — Rule-based regime
+
+Rule-based BULL/SIDEWAYS/BEAR with hysteresis. Serves as the baseline.
+
+## Phase 4 — Rule-based strategies + backtesting
+
+Trend and mean-reversion strategies in VectorBT with fees, slippage, sizing, next-open execution, benchmarks and a random baseline. This produces the **baseline performance** that later stages must beat.
+
+## Phase 5 — ML baselines
+
+Logistic Regression and Random Forest with purged walk-forward validation, calibration and the final holdout. Random Forest first uses the rule-based regime as an input.
+
+## Phase 6 — XGBoost
+
+Compare Rule-Based vs Logistic vs Random Forest vs XGBoost on out-of-sample, after-cost results and stability. XGBoost is not assumed to win; RF may remain only as a benchmark.
+
+## Phase 7 — HMM regime
+
+Filtered, walk-forward HMM; state mapping; compare to the rule-based regime. Adopt only if it adds out-of-sample value.
+
+## Phase 8 — Integrated signal engine + risk
+
+Combine regime, indicators, ML probability and risk into target weights; add `positions`; derive BUY/HOLD/REDUCE/EXIT with reasons.
+
+## Phase 9 — CLI operations and dashboard
+
+`run-daily`, `retrain` (manual), `promote`, `backtest`, `status`; Streamlit monitoring.
+
+## Phase 10 — Forward testing, then paper trading
+
+Log live signals and score them against realized outcomes (true out-of-sample evidence). Only after that, consider paper trading:
+
+```text
+Signal Engine -> Paper Trading -> Broker API
+```
+
+Do not implement live trading in V1.
+
+---
+
+# 30. Future Extensions
+
+Not part of V1 unless required:
+
+- Optional scheduler/automation (cron, systemd, launchd, or APScheduler) on top of the idempotent CLI
+- Polygon / IBKR data provider; intraday data
+- Point-in-time index constituents and market breadth
+- Fear & Greed or other sentiment (logged going forward only, until a reliable history exists)
+- Fundamental, sector/industry, macro and credit-spread features
+- Portfolio optimization, risk parity, Black-Litterman, Kelly sizing
+- Paper trading, broker integration, automated execution
+- PostgreSQL, Docker, cloud deployment
+
+---
+
+# 31. Important Engineering Constraints
+
+Priorities:
+
+1. Correctness over complexity.
+2. Reproducibility.
+3. No look-ahead bias.
+4. No data leakage.
+5. Idempotent ingestion and idempotent pipeline stages.
+6. Clear separation of raw and derived data.
+7. Model versioning.
+8. Testability.
+9. Configuration over hardcoded parameters.
+10. Simple local deployment.
+
+Avoid: microservices, Kafka, Kubernetes, PostgreSQL, Docker, live broker trading, schedulers, unnecessary abstractions.
+
+The V1 objective is a reliable local research and signal-generation platform.
+
+---
+
+# 32. Definition of Done for V1
+
+V1 is complete when the developer can run:
+
+```bash
+python -m quant run-daily
+```
+
+and the system can:
+
+```text
+ 1. Load configured US stocks.
+ 2. Download missing daily data and corporate actions (completed sessions only).
+ 3. Persist them to SQLite; quarantine invalid rows.
+ 4. Validate the data.
+ 5. Calculate technical features.
+ 6. Detect market regime (point-in-time).
+ 7. Load the active ML model (or fall back to rule-based).
+ 8. Generate calibrated predictions.
+ 9. Generate target weights and BUY/HOLD/REDUCE/EXIT signals.
+10. Persist signals with reasons.
+11. Run a VectorBT backtest against benchmarks.
+12. Display results in Streamlit.
+13. Retrain a model on demand with `python -m quant retrain` (registers a candidate,
+    changes nothing until `promote`).
+14. Re-run safely without creating duplicate data.
+15. Reproduce historical predictions from stored model versions and feature snapshots.
+```
+
+Research-validity gate: if the ML layer does not beat the rule-based baseline net of costs across out-of-sample periods, the rule-based system is what ships.
+
+---
+
+# 33. Recommended First Implementation
+
+First working vertical slice:
+
+```text
+AAPL -> yfinance -> SQLite (unadjusted + corporate actions)
+     -> SMA50 / SMA200 / RSI14 / MACD
+     -> simple Bull/Bear regime
+     -> simple trend strategy
+     -> VectorBT (next-open execution, vs SPY buy-and-hold)
+     -> backtest result
+```
+
+Then expand: SPY/QQQ, multiple stocks, VIX, rule-based regime with hysteresis, Logistic/Random Forest, XGBoost, HMM, risk management.
+
+Prefer this incremental approach to building the whole architecture at once.
+
+---
+
+# 34. Key Design Decision Summary
+
+| Area | V1 Decision |
+|---|---|
+| Language | Python |
+| Database | SQLite file, WAL mode |
+| DB access | SQLAlchemy (Core is enough) |
+| Market data | yfinance behind provider abstraction |
+| Price storage | Unadjusted OHLCV + corporate_actions; adjustments computed locally |
+| Data frequency | Daily |
+| Data ingestion | Incremental, completed sessions only |
+| Execution convention | Signal at close of T, fill at open of T+1 |
+| Features | pandas / NumPy, scale-free |
+| Regime | Rule-based first (with hysteresis), filtered HMM later |
+| ML | Logistic Regression, Random Forest, XGBoost; pooled; calibrated |
+| Validation | Purged walk-forward + final holdout + trial log |
+| Backtest | VectorBT, portfolio-level, with benchmarks |
+| Output | Target weights -> BUY/HOLD/REDUCE/EXIT vs positions |
+| Scheduler | **None** |
+| Retraining | **Manual** (`quant retrain`), candidate then explicit `quant promote` |
+| UI | Streamlit |
+| Model storage | Local files (native/joblib) + SQLite metadata |
+| Container | None |
+| PostgreSQL | Future |
+| Java | Not needed |
+| Broker execution / live trading | Future / not V1 |
+
+---
+
+# 35. Instructions to the Coding Agent
+
+Implement the system incrementally. Before adding a dependency or architectural component, verify it is necessary for the current phase.
+
+Do not introduce Java, Docker, PostgreSQL, Kafka, Redis, Kubernetes, microservices, a scheduler, or broker execution unless explicitly requested.
+
+Start with Phase 0 and Phase 1, and make the data foundation fully testable before moving to ML.
+
+For every feature/model/strategy:
+
+- Write tests, including the look-ahead tests in section 21.
+- Document assumptions.
+- Keep parameters configurable.
+- Store versions where reproducibility matters.
+- Never train, retrain or promote a model from `run-daily`; those are explicit manual commands.
+
+The most important invariant:
+
+```text
+A historical signal at time T must only depend on information
+that was available at or before the close of T.
+```
+
+Favor a simple, deterministic, reproducible research pipeline over architectural complexity.
+
+---
+
+# Appendix — Algorithm Responsibility
+
+| Component | Purpose | Output |
+|---|---|---|
+| SMA / RSI / MACD / ATR | Describe technical conditions | Features |
+| Rule-Based Regime | Simple, explainable baseline | Bull / Sideways / Bear |
+| Logistic Regression / Random Forest | Baseline supervised predictors | Calibrated probability |
+| XGBoost | Stronger boosting candidate | Calibrated probability |
+| HMM (filtered) | Detect latent market states | Market regime |
+| VectorBT | Test whether strategies work historically, after costs, against benchmarks | Backtest metrics |
+
+**Important:** More algorithms do not automatically mean a better trading system. Every added model must demonstrate incremental value through out-of-sample and walk-forward testing, and must not introduce look-ahead bias or data leakage.
