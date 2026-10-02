@@ -1,8 +1,7 @@
 """SQLAlchemy Core table definitions for the local data store.
 
-The schema follows section 6 of the proposal. Only the raw market-data
-foundation is defined here (sections 6.1, 6.2, 6.3, 6.12, 6.13); derived
-tables (features, predictions, signals, ...) are added in later phases.
+The schema follows section 6 of the proposal. It defines the raw market-data
+foundation plus versioned per-symbol and date-keyed market feature tables.
 """
 
 from sqlalchemy import (
@@ -22,7 +21,7 @@ from sqlalchemy import (
 metadata = MetaData()
 
 
-# 6.1 symbols — the universe, synchronized from config (config is the source of truth).
+# 6.1 symbols â€” the universe, synchronized from config (config is the source of truth).
 symbols = Table(
     "symbols",
     metadata,
@@ -39,7 +38,7 @@ symbols = Table(
 )
 
 
-# 6.2 daily_prices — unadjusted OHLCV, as originally traded. The source of truth.
+# 6.2 daily_prices â€” unadjusted OHLCV, as originally traded. The source of truth.
 daily_prices = Table(
     "daily_prices",
     metadata,
@@ -53,7 +52,7 @@ daily_prices = Table(
     Column("volume", Integer),
     Column("provider", String, nullable=False),
     Column("ingested_at", DateTime, nullable=False),
-    # PRIMARY KEY (symbol, date) — idempotent, upsert-friendly (sections 4.4 / 6.2).
+    # PRIMARY KEY (symbol, date) â€” idempotent, upsert-friendly (sections 4.4 / 6.2).
     PrimaryKeyConstraint("symbol", "date", name="pk_daily_prices"),
     CheckConstraint(
         "volume IS NULL OR volume >= 0", name="ck_daily_prices_volume_non_negative"
@@ -61,7 +60,7 @@ daily_prices = Table(
 )
 
 
-# 6.3 corporate_actions — splits and dividends, stored separately from prices.
+# 6.3 corporate_actions â€” splits and dividends, stored separately from prices.
 corporate_actions = Table(
     "corporate_actions",
     metadata,
@@ -80,7 +79,7 @@ corporate_actions = Table(
 )
 
 
-# 6.13 data_quarantine — rows that fail validation, never silently dropped.
+# 6.13 data_quarantine â€” rows that fail validation, never silently dropped.
 data_quarantine = Table(
     "data_quarantine",
     metadata,
@@ -94,7 +93,7 @@ data_quarantine = Table(
 )
 
 
-# 6.12 pipeline_runs — restartability and data-freshness tracking.
+# 6.12 pipeline_runs â€” restartability and data-freshness tracking.
 pipeline_runs = Table(
     "pipeline_runs",
     metadata,
@@ -106,4 +105,47 @@ pipeline_runs = Table(
     Column("started_at", DateTime, nullable=False),
     Column("finished_at", DateTime),
     Column("message", Text),
+)
+
+# 6.4 market_features â€” date-keyed market context, versioned for reproducibility.
+market_features = Table(
+    "market_features",
+    metadata,
+    Column("date", Date, nullable=False),
+    Column("feature_version", String, nullable=False),
+    Column("spy_trend", Float),
+    Column("qqq_trend", Float),
+    Column("vix", Float),
+    Column("vix_change", Float),
+    Column("market_volatility", Float),
+    PrimaryKeyConstraint("date", "feature_version", name="pk_market_features"),
+)
+
+
+# 6.5 per-symbol, scale-free technical features.
+features = Table(
+    "features",
+    metadata,
+    Column("symbol", String, nullable=False),
+    Column("date", Date, nullable=False),
+    Column("feature_version", String, nullable=False),
+    Column("price_vs_sma20", Float),
+    Column("price_vs_sma50", Float),
+    Column("price_vs_sma200", Float),
+    Column("sma50_vs_sma200", Float),
+    Column("return_1m", Float),
+    Column("return_3m", Float),
+    Column("return_6m", Float),
+    Column("return_12m", Float),
+    Column("rsi14", Float),
+    Column("macd_over_price", Float),
+    Column("macd_signal_over_price", Float),
+    Column("macd_hist_over_price", Float),
+    Column("atr14_over_price", Float),
+    Column("realized_volatility_20d", Float),
+    Column("volume_ratio_20d", Float),
+    Column("relative_return_1m_spy", Float),
+    PrimaryKeyConstraint(
+        "symbol", "date", "feature_version", name="pk_features"
+    ),
 )

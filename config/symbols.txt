@@ -2,3 +2,4 @@ AAPL
 MSFT
 SPY
 QQQ
+^VIX

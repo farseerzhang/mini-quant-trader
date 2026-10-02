@@ -1,17 +1,13 @@
-"""Thin data-access layer: plain functions over SQLAlchemy Core.
-
-Idempotency and the "never silently overwrite" rule (sections 4.4, 6.2) are
-enforced here: writes use ``INSERT ... ON CONFLICT DO NOTHING``, so re-running
-ingestion never creates duplicates and never rewrites an existing historical
-row. Corrections must go through an explicit, logged path instead.
-"""
+"""Thin data-access layer: plain functions over SQLAlchemy Core."""
 
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
+import pandas as pd
 from sqlalchemy import Engine, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -23,58 +19,38 @@ def _now() -> datetime:
 
 
 def upsert_symbol(engine: Engine, symbol: str, **attrs: Any) -> None:
-    """Insert a symbol or update its descriptive attributes and ``updated_at``."""
     now = _now()
-    values = {
-        "symbol": symbol,
-        "active": attrs.pop("active", 1),
-        "created_at": now,
-        "updated_at": now,
-        **attrs,
-    }
+    values = {"symbol": symbol, "active": attrs.pop("active", 1), "created_at": now, "updated_at": now, **attrs}
     stmt = sqlite_insert(tables.symbols).values(**values)
     update_cols = {
-        c.name: stmt.excluded[c.name]
-        for c in tables.symbols.columns
-        if c.name not in ("symbol", "created_at")
+        column.name: stmt.excluded[column.name]
+        for column in tables.symbols.columns
+        if column.name not in ("symbol", "created_at")
     }
-    stmt = stmt.on_conflict_do_update(index_elements=["symbol"], set_=update_cols)
     with engine.begin() as conn:
-        conn.execute(stmt)
+        conn.execute(stmt.on_conflict_do_update(index_elements=["symbol"], set_=update_cols))
 
 
-def upsert_daily_prices(
-    engine: Engine, rows: Sequence[Mapping[str, Any]]
-) -> int:
-    """Insert daily price rows idempotently.
-
-    Existing ``(symbol, date)`` rows are left untouched (no silent overwrite).
-    Returns the number of newly inserted rows.
-    """
-    rows = [dict(r) for r in rows]
+def upsert_daily_prices(engine: Engine, rows: Sequence[Mapping[str, Any]]) -> int:
+    rows = [dict(row) for row in rows]
     if not rows:
         return 0
     now = _now()
-    for r in rows:
-        r.setdefault("ingested_at", now)
-    stmt = sqlite_insert(tables.daily_prices).on_conflict_do_nothing(
-        index_elements=["symbol", "date"]
-    )
+    for row in rows:
+        row.setdefault("ingested_at", now)
+    stmt = sqlite_insert(tables.daily_prices).on_conflict_do_nothing(index_elements=["symbol", "date"])
     with engine.begin() as conn:
         result = conn.execute(stmt, rows)
         return result.rowcount if result.rowcount is not None else 0
 
 
-def upsert_corporate_actions(
-    engine: Engine, rows: Sequence[Mapping[str, Any]]
-) -> int:
-    """Insert corporate-action rows idempotently. Returns rows inserted."""
-    rows = [dict(r) for r in rows]
+def upsert_corporate_actions(engine: Engine, rows: Sequence[Mapping[str, Any]]) -> int:
+    rows = [dict(row) for row in rows]
     if not rows:
         return 0
     now = _now()
-    for r in rows:
-        r.setdefault("ingested_at", now)
+    for row in rows:
+        row.setdefault("ingested_at", now)
     stmt = sqlite_insert(tables.corporate_actions).on_conflict_do_nothing(
         index_elements=["symbol", "ex_date", "action_type"]
     )
@@ -83,23 +59,19 @@ def upsert_corporate_actions(
         return result.rowcount if result.rowcount is not None else 0
 
 
-def quarantine_rows(
-    engine: Engine, provider: str, bad_rows: Iterable[Mapping[str, Any]]
-) -> int:
-    """Persist rows that failed validation. Returns rows quarantined."""
+def quarantine_rows(engine: Engine, provider: str, bad_rows: Iterable[Mapping[str, Any]]) -> int:
     now = _now()
-    payload = []
-    for item in bad_rows:
-        payload.append(
-            {
-                "symbol": item["symbol"],
-                "date": item.get("date"),
-                "provider": provider,
-                "reason": item["reason"],
-                "raw": json.dumps(item.get("raw"), default=str),
-                "quarantined_at": now,
-            }
-        )
+    payload = [
+        {
+            "symbol": item["symbol"],
+            "date": item.get("date"),
+            "provider": provider,
+            "reason": item["reason"],
+            "raw": json.dumps(item.get("raw"), default=str),
+            "quarantined_at": now,
+        }
+        for item in bad_rows
+    ]
     if not payload:
         return 0
     with engine.begin() as conn:
@@ -108,10 +80,7 @@ def quarantine_rows(
 
 
 def latest_stored_date(engine: Engine, symbol: str) -> date | None:
-    """Return the most recent stored bar date for a symbol, or None."""
-    stmt = select(func.max(tables.daily_prices.c.date)).where(
-        tables.daily_prices.c.symbol == symbol
-    )
+    stmt = select(func.max(tables.daily_prices.c.date)).where(tables.daily_prices.c.symbol == symbol)
     with engine.connect() as conn:
         return conn.execute(stmt).scalar_one_or_none()
 
@@ -136,12 +105,81 @@ def record_pipeline_run(
     with engine.begin() as conn:
         conn.execute(
             tables.pipeline_runs.insert().values(
-                command=command,
-                stage=stage,
-                status=status,
-                data_as_of_date=data_as_of_date,
-                started_at=now,
-                finished_at=now,
-                message=message,
+                command=command, stage=stage, status=status,
+                data_as_of_date=data_as_of_date, started_at=now, finished_at=now, message=message,
             )
         )
+
+
+def load_market_data(engine: Engine, symbols: Sequence[str] | None = None):
+    """Load ordered price and corporate-action frames for feature calculation."""
+    price_stmt = select(tables.daily_prices).order_by(tables.daily_prices.c.symbol, tables.daily_prices.c.date)
+    action_stmt = select(tables.corporate_actions).order_by(
+        tables.corporate_actions.c.symbol, tables.corporate_actions.c.ex_date
+    )
+    if symbols is not None:
+        normalized = [symbol.strip().upper() for symbol in symbols]
+        price_stmt = price_stmt.where(tables.daily_prices.c.symbol.in_(normalized))
+        action_stmt = action_stmt.where(tables.corporate_actions.c.symbol.in_(normalized))
+    with engine.connect() as conn:
+        price_rows = conn.execute(price_stmt).mappings().all()
+        action_rows = conn.execute(action_stmt).mappings().all()
+
+    grouped_prices: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in price_rows:
+        grouped_prices[row["symbol"]].append(dict(row))
+    prices_by_symbol: dict[str, pd.DataFrame] = {}
+    for symbol, rows in grouped_prices.items():
+        frame = pd.DataFrame(rows).set_index("date")
+        frame.index = pd.DatetimeIndex(frame.index)
+        prices_by_symbol[symbol] = frame[["open", "high", "low", "close", "volume"]]
+
+    grouped_actions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in action_rows:
+        grouped_actions[row["symbol"]].append(
+            {key: row[key] for key in ("ex_date", "action_type", "value")}
+        )
+    actions_by_symbol = {
+        symbol: pd.DataFrame(rows) for symbol, rows in grouped_actions.items()
+    }
+    return prices_by_symbol, actions_by_symbol
+
+
+def list_price_symbols(engine: Engine) -> list[str]:
+    stmt = select(tables.daily_prices.c.symbol).distinct().order_by(tables.daily_prices.c.symbol)
+    with engine.connect() as conn:
+        return list(conn.execute(stmt).scalars())
+
+
+def save_features(
+    engine: Engine,
+    symbol_rows: Sequence[Mapping[str, Any]],
+    market_rows: Sequence[Mapping[str, Any]],
+) -> tuple[int, int]:
+    """Insert or refresh deterministic feature rows for the same version/date."""
+    symbol_rows = [dict(row) for row in symbol_rows]
+    market_rows = [dict(row) for row in market_rows]
+    with engine.begin() as conn:
+        symbol_count = 0
+        if symbol_rows:
+            stmt = sqlite_insert(tables.features)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["symbol", "date", "feature_version"],
+                set_={column.name: stmt.excluded[column.name]
+                      for column in tables.features.columns
+                      if column.name not in ("symbol", "date", "feature_version")},
+            )
+            result = conn.execute(stmt, symbol_rows)
+            symbol_count = result.rowcount or 0
+        market_count = 0
+        if market_rows:
+            stmt = sqlite_insert(tables.market_features)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["date", "feature_version"],
+                set_={column.name: stmt.excluded[column.name]
+                      for column in tables.market_features.columns
+                      if column.name not in ("date", "feature_version")},
+            )
+            result = conn.execute(stmt, market_rows)
+            market_count = result.rowcount or 0
+    return symbol_count, market_count
