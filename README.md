@@ -148,7 +148,7 @@ mini-quant-trader/
 
 ## Planned Features
 
-See [quant_app_developer_proposal_final.md](quant_app_developer_proposal_final.md) for the complete design specification.
+See [quant_app_developer_proposal_final.md](proposal.md) for the complete design specification.
 
 Future phases will include:
 - Feature engineering (SMA, RSI, MACD, ATR, momentum, volatility)
