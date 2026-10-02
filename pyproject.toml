@@ -11,6 +11,7 @@ dependencies = [
     "pandas>=2.0",
     "yfinance>=0.2.54",
     "SQLAlchemy>=2.0",
+    "exchange-calendars>=4.5",
 ]
 
 [tool.setuptools.packages.find]
