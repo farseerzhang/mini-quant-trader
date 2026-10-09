@@ -13,6 +13,9 @@ class MarketDataError(RuntimeError):
 
 
 class YFinanceProvider:
+    def __init__(self, request_timeout_seconds: float = 20) -> None:
+        self._timeout = request_timeout_seconds
+
     def get_daily_data(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         history = self._get_history(symbol, start, end)
         return history.loc[:, _PRICE_COLUMNS].copy()
@@ -31,8 +34,7 @@ class YFinanceProvider:
                 )
         return pd.DataFrame(actions, columns=_ACTION_COLUMNS)
 
-    @staticmethod
-    def _get_history(symbol: str, start: date, end: date) -> pd.DataFrame:
+    def _get_history(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         normalized_symbol = symbol.strip().upper()
         if not normalized_symbol:
             raise ValueError("symbol must not be empty")
@@ -46,7 +48,7 @@ class YFinanceProvider:
                 interval="1d",
                 auto_adjust=False,
                 actions=True,
-                timeout=20,
+                timeout=self._timeout,
             )
         except yf.exceptions.YFException as exc:
             raise MarketDataError(f"Yahoo Finance request for {normalized_symbol} failed: {exc}") from exc

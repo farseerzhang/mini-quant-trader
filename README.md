@@ -56,6 +56,7 @@ This will install the required packages:
 - yfinance >= 0.2.54
 - SQLAlchemy >= 2.0
 - exchange-calendars >= 4.5
+- PyYAML >= 6.0
 
 ## Usage
 
@@ -73,13 +74,13 @@ python -m quant fetch-market-data --symbol AAPL --start 2026-09-25 --end 2026-10
 
 #### Update the Configured Symbol Pool
 
-Fetch missing daily bars for `config/symbols.txt` through the last completed NYSE session:
+Fetch missing daily bars for `market.symbols` and `market.market_symbols` (from `config/settings.yaml`) through the last completed NYSE session:
 
 ```powershell
 python -m quant update-market-data
 ```
 
-New symbols start from 2015-01-01 by default; existing symbols only fetch sessions after their last stored bar. Edit `config/symbols.txt` to change the pool (one ticker per line).
+New symbols start from `market.initial_history` (2005-01-01 by default; override once with `--initial-date YYYY-MM-DD`); existing symbols only fetch sessions after their last stored bar. Edit `market.symbols` in `config/settings.yaml` to change the pool.
 
 #### Calculate Features
 
@@ -105,11 +106,17 @@ Options:
 - `--symbol`: Ticker symbol (e.g., AAPL)
 - `--start`: Inclusive start date (YYYY-MM-DD format)
 - `--end`: Exclusive end date (YYYY-MM-DD format)
-- `--db`: Path to SQLite database (default: `data/quant.db`)
+- `--db`: Path to SQLite database (default: `database.url` in `config/settings.yaml`)
+
+### Configuration
+
+All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, calendar, initial history), features, regime, model, retrain, backtest and risk. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Unknown or invalid settings are rejected at startup. The `model`, `retrain`, `backtest` and `risk` sections are loaded but not used until those phases are built.
+
+The feature windows are fixed: `features.sma` must stay `[20, 50, 200]` because stored feature columns are named after them. Other indicator parameters (MACD 12/26/9, return and volatility windows) are part of the feature definition, so changing them means bumping `features.version`.
 
 ### Database
 
-The application uses SQLite with WAL mode for local data storage. The database file is located at `data/quant.db` by default.
+The application uses SQLite with WAL mode for local data storage. The database file is set by `database.url` (default `data/quant.db`).
 
 ## Project Structure
 

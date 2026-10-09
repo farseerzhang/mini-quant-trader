@@ -1,0 +1,50 @@
+# Single source of truth for all application settings (proposal section 27).
+# Relative paths are resolved from the directory the command is run in.
+
+database:
+  url: sqlite:///data/quant.db
+  busy_timeout_ms: 5000
+
+market:
+  provider: yfinance
+  request_timeout_seconds: 20
+  calendar: XNYS                   # exchange_calendars name for the NYSE trading calendar
+  initial_history: 2005-01-01      # regime work needs more than one or two bear phases
+  timezone: America/New_York
+  execution: next_open
+  symbols: [AAPL, MSFT, SPY, QQQ]
+  market_symbols: [SPY, QQQ, ^VIX]
+
+features:
+  version: 1
+  sma: [20, 50, 200]               # feature column names embed these windows; changing them needs a schema change
+  rsi_period: 14
+  atr_period: 14
+
+regime:
+  method: rule_based               # rule_based | hmm
+  enter_threshold: 5
+  exit_threshold: 3
+  min_dwell_days: 5
+
+model:
+  type: xgboost
+  target: future_5d_return_gt_2pct
+  target_horizon_days: 5
+  target_return: 0.02
+  embargo_days: 5
+  calibration: isotonic
+
+retrain:                           # used only by the manual `quant retrain`
+  window: expanding                # expanding | rolling
+  rolling_years: 5
+  holdout_start: 2024-01-01
+
+backtest:
+  fee_bps: 1
+  slippage_bps: 5
+  benchmarks: [SPY, equal_weight]
+
+risk:
+  max_position_size: 0.10
+  max_sector_weight: 0.30

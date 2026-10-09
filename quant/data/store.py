@@ -1,4 +1,4 @@
-﻿"""Store historical market data locally (proposal sections 6, 9, 10)."""
+"""Store historical market data locally (proposal sections 6, 9, 10)."""
 
 from __future__ import annotations
 
@@ -110,6 +110,7 @@ def sync_market_data(
     initial_date: date,
     now: datetime | None = None,
     provider_name: str = "yfinance",
+    calendar_name: str = "XNYS",
 ) -> SyncReport:
     """Incrementally fetch all configured symbols through the latest completed NYSE session.
 
@@ -117,7 +118,7 @@ def sync_market_data(
     NYSE session after the latest stored bar. The provider end is exclusive.
     API failures are recorded per symbol and do not abort the remaining pool.
     """
-    as_of = last_completed_session(now)
+    as_of = last_completed_session(now, calendar_name)
     if initial_date > as_of:
         raise ValueError("initial_date must not be after the last completed session")
     end_exclusive = as_of + timedelta(days=1)
@@ -134,7 +135,7 @@ def sync_market_data(
         if latest is None:
             start = initial_date
         else:
-            start = next_session_after(latest, as_of)
+            start = next_session_after(latest, as_of, calendar_name)
             if start is None:
                 skipped.append(symbol)
                 continue

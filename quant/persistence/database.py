@@ -16,29 +16,27 @@ from sqlalchemy import Engine, create_engine, event
 
 from quant.persistence.tables import metadata
 
-DEFAULT_DB_PATH = Path("data") / "quant.db"
-_BUSY_TIMEOUT_MS = 5000
+DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 
-def _configure_connection(dbapi_connection, _connection_record) -> None:
+def _configure_connection(dbapi_connection, busy_timeout_ms: int) -> None:
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA synchronous=NORMAL")
     finally:
         cursor.close()
 
 
-def create_db_engine(db_path: str | os.PathLike[str] | None = None) -> Engine:
+def create_db_engine(
+    db_path: str | os.PathLike[str], busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS
+) -> Engine:
     """Create an engine for the local SQLite database.
 
     Pass ``":memory:"`` for an in-memory database (used by tests).
     """
-    if db_path is None:
-        db_path = DEFAULT_DB_PATH
-
     if str(db_path) == ":memory:":
         url = "sqlite:///:memory:"
     else:
@@ -47,7 +45,11 @@ def create_db_engine(db_path: str | os.PathLike[str] | None = None) -> Engine:
         url = f"sqlite:///{path}"
 
     engine = create_engine(url, future=True)
-    event.listen(engine, "connect", _configure_connection)
+    event.listen(
+        engine,
+        "connect",
+        lambda dbapi_connection, _record: _configure_connection(dbapi_connection, busy_timeout_ms),
+    )
     return engine
 
 

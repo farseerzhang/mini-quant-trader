@@ -8,8 +8,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-FEATURE_VERSION = "technical-v1"
-MARKET_FEATURE_VERSION = "market-v1"
+from quant.config.settings import FeatureSettings
 
 FEATURE_COLUMNS = (
     "price_vs_sma20",
@@ -105,7 +104,7 @@ def prepare_adjusted_series(prices: pd.DataFrame, actions: pd.DataFrame) -> pd.D
     return adjusted
 
 
-def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
+def _rsi(close: pd.Series, period: int) -> pd.Series:
     change = close.diff()
     average_gain = change.clip(lower=0).ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     average_loss = -change.clip(upper=0).ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
@@ -116,7 +115,7 @@ def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     return result
 
 
-def _atr(adjusted: pd.DataFrame, period: int = 14) -> pd.Series:
+def _atr(adjusted: pd.DataFrame, period: int) -> pd.Series:
     previous_close = adjusted["close"].shift(1)
     true_range = pd.concat(
         [
@@ -130,15 +129,19 @@ def _atr(adjusted: pd.DataFrame, period: int = 14) -> pd.Series:
 
 
 def calculate_symbol_features(
-    adjusted: pd.DataFrame, spy_total_return_close: pd.Series | None = None
+    adjusted: pd.DataFrame,
+    spy_total_return_close: pd.Series | None = None,
+    settings: FeatureSettings | None = None,
 ) -> pd.DataFrame:
     """Calculate scale-free features using only current and prior rows."""
+    settings = settings or FeatureSettings()
+    sma_short, sma_medium, sma_long = settings.sma
     close = adjusted["total_return_close"].astype(float)
     features = pd.DataFrame(index=adjusted.index)
 
-    sma20 = close.rolling(20, min_periods=20).mean()
-    sma50 = close.rolling(50, min_periods=50).mean()
-    sma200 = close.rolling(200, min_periods=200).mean()
+    sma20 = close.rolling(sma_short, min_periods=sma_short).mean()
+    sma50 = close.rolling(sma_medium, min_periods=sma_medium).mean()
+    sma200 = close.rolling(sma_long, min_periods=sma_long).mean()
     features["price_vs_sma20"] = close / sma20 - 1.0
     features["price_vs_sma50"] = close / sma50 - 1.0
     features["price_vs_sma200"] = close / sma200 - 1.0
@@ -147,7 +150,7 @@ def calculate_symbol_features(
     for name, periods in (("return_1m", 20), ("return_3m", 63), ("return_6m", 126), ("return_12m", 252)):
         features[name] = close / close.shift(periods) - 1.0
 
-    features["rsi14"] = _rsi(close)
+    features["rsi14"] = _rsi(close, settings.rsi_period)
     macd = close.ewm(span=12, min_periods=12, adjust=False).mean() - close.ewm(
         span=26, min_periods=26, adjust=False
     ).mean()
@@ -156,7 +159,7 @@ def calculate_symbol_features(
     features["macd_signal_over_price"] = macd_signal / close
     features["macd_hist_over_price"] = (macd - macd_signal) / close
 
-    features["atr14_over_price"] = _atr(adjusted) / adjusted["close"]
+    features["atr14_over_price"] = _atr(adjusted, settings.atr_period) / adjusted["close"]
     daily_return = close.pct_change(fill_method=None)
     features["realized_volatility_20d"] = daily_return.rolling(20, min_periods=20).std() * np.sqrt(252)
 
@@ -177,8 +180,12 @@ def calculate_symbol_features(
     return features.loc[:, FEATURE_COLUMNS]
 
 
-def calculate_market_features(adjusted_by_symbol: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
+def calculate_market_features(
+    adjusted_by_symbol: Mapping[str, pd.DataFrame], settings: FeatureSettings | None = None
+) -> pd.DataFrame:
     """Calculate date-keyed benchmark and volatility features; SPY is required."""
+    settings = settings or FeatureSettings()
+    trend_window = settings.sma[2]
     spy = adjusted_by_symbol.get("SPY")
     if spy is None or spy.empty:
         raise ValueError("SPY market data is required to calculate market features")
@@ -190,7 +197,7 @@ def calculate_market_features(adjusted_by_symbol: Mapping[str, pd.DataFrame]) ->
             market[column] = np.nan
             continue
         close = frame["total_return_close"].astype(float)
-        trend = close / close.rolling(200, min_periods=200).mean() - 1.0
+        trend = close / close.rolling(trend_window, min_periods=trend_window).mean() - 1.0
         market[column] = trend.reindex(market.index)
 
     vix = adjusted_by_symbol.get("^VIX")

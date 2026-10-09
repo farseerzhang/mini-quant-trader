@@ -7,10 +7,10 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import select, func
 
+from quant.config.settings import FeatureSettings
 from quant.features.pipeline import calculate_and_store_features
 from quant.features.technical import (
     FEATURE_COLUMNS,
-    FEATURE_VERSION,
     calculate_symbol_features,
     prepare_adjusted_series,
 )
@@ -97,7 +97,7 @@ class TechnicalFeatureTests(unittest.TestCase):
 
     def test_feature_names_match_persisted_model_inputs(self):
         self.assertEqual(tuple(tables.features.c.keys())[3:], FEATURE_COLUMNS)
-        self.assertEqual(FEATURE_VERSION, "technical-v1")
+        self.assertEqual(FeatureSettings().feature_version, "technical-v1")
 
 
 class FeaturePersistenceTests(unittest.TestCase):
@@ -148,7 +148,7 @@ class FeaturePersistenceTests(unittest.TestCase):
                 select(tables.features).where(
                     tables.features.c.symbol == "AAPL",
                     tables.features.c.date == dates[-1].date(),
-                    tables.features.c.feature_version == FEATURE_VERSION,
+                    tables.features.c.feature_version == FeatureSettings().feature_version,
                 )
             ).mappings().one()
         self.assertIsNotNone(aapl_last["price_vs_sma200"])

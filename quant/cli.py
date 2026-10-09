@@ -1,15 +1,13 @@
-﻿import argparse
+import argparse
 import sys
 from datetime import date
-from pathlib import Path
 
+from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, Settings, load_settings
 from quant.data.store import store_market_data, sync_market_data
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
-from quant.persistence.database import DEFAULT_DB_PATH, create_db_engine, init_db
+from quant.persistence.database import create_db_engine, init_db
 
-DEFAULT_UNIVERSE_PATH = Path("config") / "symbols.txt"
-DEFAULT_INITIAL_DATE = date(2015, 1, 1)
 
 def _iso_date(value: str) -> date:
     try:
@@ -20,7 +18,13 @@ def _iso_date(value: str) -> date:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="quant")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help=f"path to the settings file (default: {DEFAULT_CONFIG_PATH})",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
+    db_help = "SQLite database path (overrides database.url in the settings file)"
 
     fetch_command = commands.add_parser(
         "fetch-market-data",
@@ -37,27 +41,44 @@ def build_parser() -> argparse.ArgumentParser:
     store_command.add_argument("--symbol", required=True, help="ticker symbol, e.g. AAPL")
     store_command.add_argument("--start", required=True, type=_iso_date, help="inclusive start date")
     store_command.add_argument("--end", required=True, type=_iso_date, help="exclusive end date")
-    store_command.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
+    store_command.add_argument("--db", help=db_help)
 
     update_command = commands.add_parser(
         "update-market-data",
-        help="incrementally update the configured stock pool through the last completed NYSE session",
+        help="incrementally update market.symbols and market.market_symbols through the last completed session",
     )
-    update_command.add_argument("--symbols-file", default=str(DEFAULT_UNIVERSE_PATH))
-    update_command.add_argument("--initial-date", type=_iso_date, default=DEFAULT_INITIAL_DATE)
-    update_command.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
+    update_command.add_argument(
+        "--initial-date",
+        type=_iso_date,
+        help="start date for symbols not yet stored (overrides market.initial_history)",
+    )
+    update_command.add_argument("--db", help=db_help)
 
     feature_command = commands.add_parser(
         "calculate-features",
         help="calculate and persist versioned technical and market features",
     )
-    feature_command.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
+    feature_command.add_argument("--db", help=db_help)
     return parser
 
 
-def _run_fetch(args: argparse.Namespace) -> int:
+def _provider(settings: Settings) -> YFinanceProvider:
+    if settings.market.provider != "yfinance":
+        raise ConfigError(f"unsupported market.provider: {settings.market.provider!r}")
+    return YFinanceProvider(request_timeout_seconds=settings.market.request_timeout_seconds)
+
+
+def _engine(settings: Settings, db_override: str | None):
+    engine = create_db_engine(
+        db_override or settings.database.path, settings.database.busy_timeout_ms
+    )
+    init_db(engine)
+    return engine
+
+
+def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
     try:
-        prices = YFinanceProvider().get_daily_data(args.symbol, args.start, args.end)
+        prices = _provider(settings).get_daily_data(args.symbol, args.start, args.end)
     except MarketDataError as exc:
         print(f"Market data request failed: {exc}", file=sys.stderr)
         return 1
@@ -66,51 +87,47 @@ def _run_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_store(args: argparse.Namespace) -> int:
-    engine = create_db_engine(args.db)
-    init_db(engine)
+def _run_store(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
     try:
-        summary = store_market_data(engine, YFinanceProvider(), args.symbol, args.start, args.end)
+        summary = store_market_data(
+            engine,
+            _provider(settings),
+            args.symbol,
+            args.start,
+            args.end,
+            provider_name=settings.market.provider,
+        )
     except MarketDataError as exc:
         print(f"Market data request failed: {exc}", file=sys.stderr)
         return 1
     finally:
         engine.dispose()
     print(
-        f"Stored {summary.symbol} into {args.db}: {summary.stored_prices} new price rows "
+        f"Stored {summary.symbol}: {summary.stored_prices} new price rows "
         f"(fetched {summary.fetched_prices}, quarantined {summary.quarantined}), "
         f"{summary.stored_actions} new corporate actions."
     )
     return 0
 
 
-def _read_symbols(path: str) -> list[str]:
-    symbols: list[str] = []
-    with Path(path).open(encoding="utf-8") as source:
-        for line in source:
-            line = line.split("#", 1)[0]
-            symbols.extend(part.strip().upper() for part in line.replace(",", " ").split())
-    if not symbols:
-        raise ValueError(f"No symbols found in {path}")
-    return list(dict.fromkeys(symbols))
-
-
-def _run_update(args: argparse.Namespace) -> int:
+def _run_update(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
     try:
-        symbols = _read_symbols(args.symbols_file)
-    except (OSError, ValueError) as exc:
-        print(f"Cannot read symbol pool: {exc}", file=sys.stderr)
-        return 1
-    engine = create_db_engine(args.db)
-    init_db(engine)
-    try:
-        report = sync_market_data(engine, YFinanceProvider(), symbols, initial_date=args.initial_date)
+        report = sync_market_data(
+            engine,
+            _provider(settings),
+            settings.market.universe,
+            initial_date=args.initial_date or settings.market.initial_history,
+            provider_name=settings.market.provider,
+            calendar_name=settings.market.calendar,
+        )
     except (MarketDataError, ValueError) as exc:
         print(f"Market data update failed: {exc}", file=sys.stderr)
         return 1
     finally:
         engine.dispose()
-    print(f"Market data updated through {report.as_of} ({args.db})")
+    print(f"Market data updated through {report.as_of}")
     for summary in report.summaries:
         print(
             f"{summary.symbol}: fetched {summary.fetched_prices}, stored {summary.stored_prices}, "
@@ -123,11 +140,10 @@ def _run_update(args: argparse.Namespace) -> int:
     return 1 if report.failures else 0
 
 
-def _run_features(args: argparse.Namespace) -> int:
-    engine = create_db_engine(args.db)
-    init_db(engine)
+def _run_features(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
     try:
-        summary = calculate_and_store_features(engine)
+        summary = calculate_and_store_features(engine, settings.features)
     except ValueError as exc:
         print(f"Feature calculation failed: {exc}", file=sys.stderr)
         return 1
@@ -146,13 +162,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command in ("fetch-market-data", "store-market-data") and args.start >= args.end:
         parser.error("--start must be earlier than --end")
-    if args.command == "fetch-market-data":
-        return _run_fetch(args)
-    if args.command == "store-market-data":
-        return _run_store(args)
-    if args.command == "update-market-data":
-        return _run_update(args)
-    if args.command == "calculate-features":
-        return _run_features(args)
+
+    try:
+        settings = load_settings(args.config)
+        if args.command == "fetch-market-data":
+            return _run_fetch(args, settings)
+        if args.command == "store-market-data":
+            return _run_store(args, settings)
+        if args.command == "update-market-data":
+            return _run_update(args, settings)
+        if args.command == "calculate-features":
+            return _run_features(args, settings)
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 1
     parser.error(f"unknown command: {args.command}")
     return 2

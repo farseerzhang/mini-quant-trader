@@ -13,6 +13,7 @@ dependencies = [
     "yfinance>=0.2.54",
     "SQLAlchemy>=2.0",
     "exchange-calendars>=4.5",
+    "PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]

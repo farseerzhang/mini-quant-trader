@@ -10,11 +10,10 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import Engine
 
+from quant.config.settings import FeatureSettings
 from quant.features.technical import (
     FEATURE_COLUMNS,
-    FEATURE_VERSION,
     MARKET_FEATURE_COLUMNS,
-    MARKET_FEATURE_VERSION,
     calculate_market_features,
     calculate_symbol_features,
     prepare_adjusted_series,
@@ -58,8 +57,13 @@ def _load_adjusted(engine: Engine, symbol: str) -> pd.DataFrame | None:
     return prepare_adjusted_series(prices[symbol], actions.get(symbol, empty_actions))
 
 
-def calculate_and_store_features(engine: Engine) -> FeatureSummary:
+def calculate_and_store_features(
+    engine: Engine, settings: FeatureSettings | None = None
+) -> FeatureSummary:
     """Recompute history, keeping only one symbol's bars in memory at a time."""
+    settings = settings or FeatureSettings()
+    feature_version = settings.feature_version
+    market_feature_version = settings.market_feature_version
     symbols = queries.list_price_symbols(engine)
     if not symbols:
         raise ValueError("No stored market data; update market data before calculating features")
@@ -76,8 +80,8 @@ def calculate_and_store_features(engine: Engine) -> FeatureSummary:
     if vix is not None:
         benchmarks[vix_symbol] = vix
 
-    market_frame = calculate_market_features(benchmarks)
-    market_rows = _records(market_frame, {}, MARKET_FEATURE_VERSION, MARKET_FEATURE_COLUMNS)
+    market_frame = calculate_market_features(benchmarks, settings)
+    market_rows = _records(market_frame, {}, market_feature_version, MARKET_FEATURE_COLUMNS)
     _, market_count = queries.save_features(engine, [], market_rows)
 
     spy_close = spy["total_return_close"]
@@ -87,8 +91,8 @@ def calculate_and_store_features(engine: Engine) -> FeatureSummary:
         adjusted = spy if symbol == "SPY" else _load_adjusted(engine, symbol)
         if adjusted is None or adjusted.empty:
             continue
-        frame = calculate_symbol_features(adjusted, spy_close)
-        rows = _records(frame, {"symbol": symbol}, FEATURE_VERSION, FEATURE_COLUMNS)
+        frame = calculate_symbol_features(adjusted, spy_close, settings)
+        rows = _records(frame, {"symbol": symbol}, feature_version, FEATURE_COLUMNS)
         inserted, _ = queries.save_features(engine, rows, [])
         symbol_count += inserted
         latest = adjusted.index.max().date()
@@ -101,15 +105,15 @@ def calculate_and_store_features(engine: Engine) -> FeatureSummary:
         status="OK",
         data_as_of_date=data_as_of,
         message=(
-            f"Calculated {symbol_count} {FEATURE_VERSION} symbol rows and "
-            f"{market_count} {MARKET_FEATURE_VERSION} market rows"
+            f"Calculated {symbol_count} {feature_version} symbol rows and "
+            f"{market_count} {market_feature_version} market rows"
         ),
     )
     return FeatureSummary(
         symbols=len(symbols),
         symbol_rows=symbol_count,
         market_rows=market_count,
-        feature_version=FEATURE_VERSION,
-        market_feature_version=MARKET_FEATURE_VERSION,
+        feature_version=feature_version,
+        market_feature_version=market_feature_version,
         data_as_of=data_as_of,
     )
