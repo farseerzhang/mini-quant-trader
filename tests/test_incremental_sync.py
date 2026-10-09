@@ -1,4 +1,4 @@
-﻿import tempfile
+import tempfile
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -9,6 +9,7 @@ from quant.data.store import sync_market_data
 from quant.data.yfinance_provider import MarketDataError
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
+from tests.settings_helper import SETTINGS
 
 
 class RecordingProvider:
@@ -38,9 +39,15 @@ class RecordingProvider:
 class IncrementalSyncTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.engine = create_db_engine(Path(self.temp_dir.name) / "market.db")
+        self.engine = create_db_engine(
+            Path(self.temp_dir.name) / "market.db", SETTINGS.database.busy_timeout_ms
+        )
         init_db(self.engine)
         self.now = datetime(2026, 10, 2, 18, 52, tzinfo=timezone.utc)
+        self.sync_settings = {
+            "provider_name": SETTINGS.market.provider,
+            "calendar_name": SETTINGS.market.calendar,
+        }
 
     def tearDown(self):
         self.engine.dispose()
@@ -58,7 +65,7 @@ class IncrementalSyncTests(unittest.TestCase):
         provider = RecordingProvider()
 
         report = sync_market_data(
-            self.engine, provider, ["AAPL"], date(2020, 1, 1), now=self.now
+            self.engine, provider, ["AAPL"], date(2020, 1, 1), now=self.now, **self.sync_settings
         )
 
         self.assertEqual(report.as_of, date(2026, 10, 1))
@@ -69,14 +76,14 @@ class IncrementalSyncTests(unittest.TestCase):
     def test_new_symbol_uses_configured_initial_date(self):
         provider = RecordingProvider()
         sync_market_data(
-            self.engine, provider, ["MSFT"], date(2024, 1, 2), now=self.now
+            self.engine, provider, ["MSFT"], date(2024, 1, 2), now=self.now, **self.sync_settings
         )
         self.assertEqual(provider.calls, [("MSFT", date(2024, 1, 2), date(2026, 10, 2))])
 
     def test_provider_failure_does_not_abort_other_symbols(self):
         provider = RecordingProvider(fail_symbols=["BAD"])
         report = sync_market_data(
-            self.engine, provider, ["BAD", "AAPL"], date(2020, 1, 1), now=self.now
+            self.engine, provider, ["BAD", "AAPL"], date(2020, 1, 1), now=self.now, **self.sync_settings
         )
         self.assertEqual([failure.symbol for failure in report.failures], ["BAD"])
         self.assertEqual([summary.symbol for summary in report.summaries], ["AAPL"])

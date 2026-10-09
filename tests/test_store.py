@@ -8,6 +8,7 @@ import pandas as pd
 from quant.data.store import store_market_data
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
+from tests.settings_helper import SETTINGS
 
 
 class FakeProvider:
@@ -44,7 +45,7 @@ class StoreMarketDataTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self._tmp.name) / "quant.db"
-        self.engine = create_db_engine(self.db_path)
+        self.engine = create_db_engine(self.db_path, SETTINGS.database.busy_timeout_ms)
         init_db(self.engine)
 
     def tearDown(self):
@@ -65,7 +66,8 @@ class StoreMarketDataTests(unittest.TestCase):
 
     def test_stores_prices_and_actions(self):
         summary = store_market_data(
-            self.engine, self._provider(), "aapl", date(2026, 9, 29), date(2026, 10, 1)
+            self.engine, self._provider(), "aapl", date(2026, 9, 29), date(2026, 10, 1),
+            provider_name=SETTINGS.market.provider,
         )
         self.assertEqual(summary.symbol, "AAPL")
         self.assertEqual(summary.stored_prices, 2)
@@ -76,10 +78,12 @@ class StoreMarketDataTests(unittest.TestCase):
 
     def test_is_idempotent(self):
         store_market_data(
-            self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1)
+            self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1),
+            provider_name=SETTINGS.market.provider,
         )
         second = store_market_data(
-            self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1)
+            self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1),
+            provider_name=SETTINGS.market.provider,
         )
         self.assertEqual(second.stored_prices, 0)
         self.assertEqual(second.stored_actions, 0)
@@ -94,7 +98,8 @@ class StoreMarketDataTests(unittest.TestCase):
         )
         provider = FakeProvider(prices, _actions_frame([]))
         summary = store_market_data(
-            self.engine, provider, "AAPL", date(2026, 9, 29), date(2026, 10, 1)
+            self.engine, provider, "AAPL", date(2026, 9, 29), date(2026, 10, 1),
+            provider_name=SETTINGS.market.provider,
         )
         self.assertEqual(summary.stored_prices, 1)
         self.assertEqual(summary.quarantined, 1)
@@ -102,10 +107,11 @@ class StoreMarketDataTests(unittest.TestCase):
 
     def test_survives_reopen(self):
         store_market_data(
-            self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1)
+            self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1),
+            provider_name=SETTINGS.market.provider,
         )
         self.engine.dispose()
-        reopened = create_db_engine(self.db_path)
+        reopened = create_db_engine(self.db_path, SETTINGS.database.busy_timeout_ms)
         try:
             self.assertEqual(queries.count_daily_prices(reopened, "AAPL"), 2)
         finally:

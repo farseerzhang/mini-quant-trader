@@ -8,7 +8,7 @@ import exchange_calendars as xcals
 import pandas as pd
 
 
-def last_completed_session(now: datetime | None = None, calendar_name: str = "XNYS") -> date:
+def last_completed_session(now: datetime | None, calendar_name: str) -> date:
     """Get the last NYSE session whose close has passed, including early closes."""
     now_utc = now or datetime.now(timezone.utc)
     if now_utc.tzinfo is None:
@@ -28,7 +28,7 @@ def last_completed_session(now: datetime | None = None, calendar_name: str = "XN
     return completed[-1].date()
 
 
-def next_session_after(session_date: date, through: date, calendar_name: str = "XNYS") -> date | None:
+def next_session_after(session_date: date, through: date, calendar_name: str) -> date | None:
     """Return the first NYSE session after session_date, up to and including through."""
     if session_date >= through:
         return None

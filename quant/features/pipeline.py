@@ -57,11 +57,8 @@ def _load_adjusted(engine: Engine, symbol: str) -> pd.DataFrame | None:
     return prepare_adjusted_series(prices[symbol], actions.get(symbol, empty_actions))
 
 
-def calculate_and_store_features(
-    engine: Engine, settings: FeatureSettings | None = None
-) -> FeatureSummary:
+def calculate_and_store_features(engine: Engine, settings: FeatureSettings) -> FeatureSummary:
     """Recompute history, keeping only one symbol's bars in memory at a time."""
-    settings = settings or FeatureSettings()
     feature_version = settings.feature_version
     market_feature_version = settings.market_feature_version
     symbols = queries.list_price_symbols(engine)
@@ -91,7 +88,7 @@ def calculate_and_store_features(
         adjusted = spy if symbol == "SPY" else _load_adjusted(engine, symbol)
         if adjusted is None or adjusted.empty:
             continue
-        frame = calculate_symbol_features(adjusted, spy_close, settings)
+        frame = calculate_symbol_features(adjusted, settings, spy_close)
         rows = _records(frame, {"symbol": symbol}, feature_version, FEATURE_COLUMNS)
         inserted, _ = queries.save_features(engine, rows, [])
         symbol_count += inserted

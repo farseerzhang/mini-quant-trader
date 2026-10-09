@@ -110,9 +110,9 @@ Options:
 
 ### Configuration
 
-All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, calendar, initial history), features, regime, model, retrain, backtest and risk. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Unknown or invalid settings are rejected at startup. The `model`, `retrain`, `backtest` and `risk` sections are loaded but not used until those phases are built.
+All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, calendar, initial history), features, regime, model, retrain, backtest and risk. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Every section and key is required, and unknown or invalid settings are rejected at startup; there are no defaults in code, so the file is the only place a value is defined. The `model`, `retrain`, `backtest` and `risk` sections are loaded but not used until those phases are built.
 
-The feature windows are fixed: `features.sma` must stay `[20, 50, 200]` because stored feature columns are named after them. Other indicator parameters (MACD 12/26/9, return and volatility windows) are part of the feature definition, so changing them means bumping `features.version`.
+`features.sma` must match the `price_vs_sma<N>` columns of the `features` table (checked when features are calculated), because those columns are named after the windows. Other indicator parameters (MACD 12/26/9, return and volatility windows) are part of the feature definition, so changing them means bumping `features.version`.
 
 ### Database
 

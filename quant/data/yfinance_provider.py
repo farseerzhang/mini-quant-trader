@@ -13,7 +13,7 @@ class MarketDataError(RuntimeError):
 
 
 class YFinanceProvider:
-    def __init__(self, request_timeout_seconds: float = 20) -> None:
+    def __init__(self, request_timeout_seconds: float) -> None:
         self._timeout = request_timeout_seconds
 
     def get_daily_data(self, symbol: str, start: date, end: date) -> pd.DataFrame:

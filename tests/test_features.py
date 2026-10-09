@@ -1,3 +1,4 @@
+import dataclasses
 import tempfile
 import unittest
 from datetime import date
@@ -7,7 +8,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import select, func
 
-from quant.config.settings import FeatureSettings
+from quant.config.settings import ConfigError
 from quant.features.pipeline import calculate_and_store_features
 from quant.features.technical import (
     FEATURE_COLUMNS,
@@ -16,6 +17,7 @@ from quant.features.technical import (
 )
 from quant.persistence import queries, tables
 from quant.persistence.database import create_db_engine, init_db
+from tests.settings_helper import SETTINGS
 
 
 def _price_frame(dates, close, volume=None):
@@ -80,7 +82,7 @@ class TechnicalFeatureTests(unittest.TestCase):
     def test_warmup_periods_are_null_not_backfilled(self):
         dates = pd.bdate_range("2025-01-01", periods=20)
         adjusted = prepare_adjusted_series(_price_frame(dates, np.arange(100, 120)), pd.DataFrame())
-        features = calculate_symbol_features(adjusted)
+        features = calculate_symbol_features(adjusted, SETTINGS.features)
         self.assertTrue(features.iloc[:19]["price_vs_sma20"].isna().all())
         self.assertTrue(features.iloc[:20]["return_1m"].isna().all())
         self.assertTrue(features.iloc[19]["price_vs_sma20"] > 0)
@@ -91,19 +93,31 @@ class TechnicalFeatureTests(unittest.TestCase):
         full_adjusted = prepare_adjusted_series(_price_frame(dates, close), pd.DataFrame())
         cut = dates[247]
         truncated_adjusted = full_adjusted.loc[:cut]
-        full = calculate_symbol_features(full_adjusted)
-        truncated = calculate_symbol_features(truncated_adjusted)
+        full = calculate_symbol_features(full_adjusted, SETTINGS.features)
+        truncated = calculate_symbol_features(truncated_adjusted, SETTINGS.features)
         pd.testing.assert_series_equal(full.loc[cut], truncated.loc[cut], check_names=False)
 
     def test_feature_names_match_persisted_model_inputs(self):
         self.assertEqual(tuple(tables.features.c.keys())[3:], FEATURE_COLUMNS)
-        self.assertEqual(FeatureSettings().feature_version, "technical-v1")
+        self.assertEqual(SETTINGS.features.feature_version, "technical-v1")
+
+
+class SchemaCompatibilityTests(unittest.TestCase):
+    def test_sma_windows_must_match_the_stored_feature_columns(self):
+        dates = pd.bdate_range("2025-01-01", periods=30)
+        adjusted = prepare_adjusted_series(_price_frame(dates, np.arange(100, 130)), pd.DataFrame())
+        mismatched = dataclasses.replace(SETTINGS.features, sma=(10, 50, 200))
+        with self.assertRaises(ConfigError):
+            calculate_symbol_features(adjusted, mismatched)
+        calculate_symbol_features(adjusted, SETTINGS.features)
 
 
 class FeaturePersistenceTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.engine = create_db_engine(Path(self.temp_dir.name) / "features.db")
+        self.engine = create_db_engine(
+            Path(self.temp_dir.name) / "features.db", SETTINGS.database.busy_timeout_ms
+        )
         init_db(self.engine)
 
     def tearDown(self):
@@ -131,8 +145,8 @@ class FeaturePersistenceTests(unittest.TestCase):
             )
         queries.upsert_daily_prices(self.engine, records)
 
-        first = calculate_and_store_features(self.engine)
-        second = calculate_and_store_features(self.engine)
+        first = calculate_and_store_features(self.engine, SETTINGS.features)
+        second = calculate_and_store_features(self.engine, SETTINGS.features)
 
         expected_symbol_rows = len(dates) * 3
         with self.engine.connect() as conn:
@@ -148,7 +162,7 @@ class FeaturePersistenceTests(unittest.TestCase):
                 select(tables.features).where(
                     tables.features.c.symbol == "AAPL",
                     tables.features.c.date == dates[-1].date(),
-                    tables.features.c.feature_version == FeatureSettings().feature_version,
+                    tables.features.c.feature_version == SETTINGS.features.feature_version,
                 )
             ).mappings().one()
         self.assertIsNotNone(aapl_last["price_vs_sma200"])

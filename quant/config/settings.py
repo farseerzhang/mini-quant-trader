@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 DEFAULT_CONFIG_PATH = Path("config") / "settings.yaml"
-_SQLITE_PREFIX = "sqlite:///"
-_SUPPORTED_SMA_WINDOWS = (20, 50, 200)
 
 
 class ConfigError(ValueError):
@@ -21,30 +21,34 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class DatabaseSettings:
-    url: str = "sqlite:///data/quant.db"
-    busy_timeout_ms: int = 5000
+    url: str
+    busy_timeout_ms: int
 
     def __post_init__(self) -> None:
-        if not self.url.startswith(_SQLITE_PREFIX) or len(self.url) == len(_SQLITE_PREFIX):
+        try:
+            parsed = make_url(self.url)
+        except ArgumentError as exc:
+            raise ConfigError(f"database.url is not a valid database URL: {self.url!r}") from exc
+        if parsed.get_backend_name() != "sqlite" or not parsed.database:
             raise ConfigError(f"database.url must look like 'sqlite:///path/to/file.db', got {self.url!r}")
         if self.busy_timeout_ms < 0:
             raise ConfigError("database.busy_timeout_ms must not be negative")
 
     @property
     def path(self) -> str:
-        return self.url[len(_SQLITE_PREFIX):]
+        return make_url(self.url).database
 
 
 @dataclass(frozen=True)
 class MarketSettings:
-    provider: str = "yfinance"
-    request_timeout_seconds: float = 20
-    calendar: str = "XNYS"
-    initial_history: date = date(2005, 1, 1)
-    timezone: str = "America/New_York"
-    execution: str = "next_open"
-    symbols: tuple[str, ...] = ("AAPL", "MSFT", "SPY", "QQQ")
-    market_symbols: tuple[str, ...] = ("SPY", "QQQ", "^VIX")
+    provider: str
+    request_timeout_seconds: float
+    calendar: str
+    initial_history: date
+    timezone: str
+    execution: str
+    symbols: tuple[str, ...]
+    market_symbols: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if self.request_timeout_seconds <= 0:
@@ -60,19 +64,16 @@ class MarketSettings:
 
 @dataclass(frozen=True)
 class FeatureSettings:
-    version: int = 1
-    sma: tuple[int, int, int] = _SUPPORTED_SMA_WINDOWS
-    rsi_period: int = 14
-    atr_period: int = 14
+    version: int
+    sma: tuple[int, int, int]
+    rsi_period: int
+    atr_period: int
 
     def __post_init__(self) -> None:
         if self.version < 1:
             raise ConfigError("features.version must be >= 1")
-        if tuple(self.sma) != _SUPPORTED_SMA_WINDOWS:
-            raise ConfigError(
-                f"features.sma must be {list(_SUPPORTED_SMA_WINDOWS)}: stored feature columns "
-                "(price_vs_sma20, ...) are named after these windows"
-            )
+        if len(self.sma) != 3 or self.sma[0] < 2 or list(self.sma) != sorted(set(self.sma)):
+            raise ConfigError("features.sma must be three increasing windows, each >= 2")
         if self.rsi_period < 2 or self.atr_period < 2:
             raise ConfigError("features.rsi_period and features.atr_period must be >= 2")
 
@@ -87,10 +88,10 @@ class FeatureSettings:
 
 @dataclass(frozen=True)
 class RegimeSettings:
-    method: str = "rule_based"
-    enter_threshold: float = 5
-    exit_threshold: float = 3
-    min_dwell_days: int = 5
+    method: str
+    enter_threshold: float
+    exit_threshold: float
+    min_dwell_days: int
 
     def __post_init__(self) -> None:
         if self.method not in ("rule_based", "hmm"):
@@ -103,21 +104,21 @@ class RegimeSettings:
 
 @dataclass(frozen=True)
 class Settings:
-    database: DatabaseSettings = field(default_factory=DatabaseSettings)
-    market: MarketSettings = field(default_factory=MarketSettings)
-    features: FeatureSettings = field(default_factory=FeatureSettings)
-    regime: RegimeSettings = field(default_factory=RegimeSettings)
+    database: DatabaseSettings
+    market: MarketSettings
+    features: FeatureSettings
+    regime: RegimeSettings
     # Sections for later phases are loaded as-is and validated when those phases land.
-    model: Mapping[str, Any] = field(default_factory=dict)
-    retrain: Mapping[str, Any] = field(default_factory=dict)
-    backtest: Mapping[str, Any] = field(default_factory=dict)
-    risk: Mapping[str, Any] = field(default_factory=dict)
+    model: Mapping[str, Any]
+    retrain: Mapping[str, Any]
+    backtest: Mapping[str, Any]
+    risk: Mapping[str, Any]
 
 
 def _section(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
     value = raw.get(name)
     if value is None:
-        return {}
+        raise ConfigError(f"missing settings section: {name}")
     if not isinstance(value, Mapping):
         raise ConfigError(f"'{name}' must be a mapping")
     return value
@@ -128,6 +129,9 @@ def _build(cls, name: str, values: Mapping[str, Any], converters: Mapping[str, A
     unknown = sorted(set(values) - known)
     if unknown:
         raise ConfigError(f"unknown setting(s) in '{name}': {', '.join(unknown)}")
+    missing = sorted(known - set(values))
+    if missing:
+        raise ConfigError(f"missing setting(s) in '{name}': {', '.join(missing)}")
     converters = converters or {}
     try:
         kwargs = {key: converters.get(key, lambda v: v)(value) for key, value in values.items()}
@@ -157,7 +161,7 @@ def _as_int_tuple(value: Any) -> tuple[int, ...]:
 
 
 def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
-    """Read settings.yaml. Missing sections fall back to defaults; unknown keys are rejected."""
+    """Read settings.yaml. Every section and key is required; unknown keys are rejected."""
     config_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
     try:
         with config_path.open(encoding="utf-8") as source:

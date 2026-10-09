@@ -59,7 +59,7 @@ def store_market_data(
     symbol: str,
     start: date,
     end: date,
-    provider_name: str = "yfinance",
+    provider_name: str,
 ) -> IngestSummary:
     """Fetch, validate, and persist daily prices and corporate actions."""
     symbol = symbol.strip().upper()
@@ -108,9 +108,9 @@ def sync_market_data(
     provider: MarketDataProvider,
     symbols: list[str],
     initial_date: date,
+    provider_name: str,
+    calendar_name: str,
     now: datetime | None = None,
-    provider_name: str = "yfinance",
-    calendar_name: str = "XNYS",
 ) -> SyncReport:
     """Incrementally fetch all configured symbols through the latest completed NYSE session.
 

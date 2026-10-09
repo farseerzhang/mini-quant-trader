@@ -17,7 +17,7 @@ market:
 
 features:
   version: 1
-  sma: [20, 50, 200]               # feature column names embed these windows; changing them needs a schema change
+  sma: [20, 50, 200]               # must match the price_vs_sma<N> columns of the features table
   rsi_period: 14
   atr_period: 14
 

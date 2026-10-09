@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import date
 from typing import Mapping
 
+import re
+
 import numpy as np
 import pandas as pd
 
-from quant.config.settings import FeatureSettings
+from quant.config.settings import ConfigError, FeatureSettings
+from quant.persistence import tables
 
 FEATURE_COLUMNS = (
     "price_vs_sma20",
@@ -36,6 +39,24 @@ MARKET_FEATURE_COLUMNS = (
     "vix_change",
     "market_volatility",
 )
+
+
+def check_schema_compatibility(settings: FeatureSettings) -> None:
+    """The features table names its SMA columns after their windows (price_vs_sma20, ...).
+
+    The windows in settings must match those stored columns, so the schema is the
+    single definition of what is supported rather than a second copy in code.
+    """
+    stored = tuple(
+        int(match.group(1))
+        for column in tables.features.c.keys()
+        if (match := re.fullmatch(r"price_vs_sma(\d+)", column))
+    )
+    if tuple(settings.sma) != stored:
+        raise ConfigError(
+            f"features.sma {list(settings.sma)} does not match the stored feature columns "
+            f"{[f'price_vs_sma{window}' for window in stored]}; changing the windows needs a schema change"
+        )
 
 
 def prepare_adjusted_series(prices: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame:
@@ -130,11 +151,11 @@ def _atr(adjusted: pd.DataFrame, period: int) -> pd.Series:
 
 def calculate_symbol_features(
     adjusted: pd.DataFrame,
+    settings: FeatureSettings,
     spy_total_return_close: pd.Series | None = None,
-    settings: FeatureSettings | None = None,
 ) -> pd.DataFrame:
     """Calculate scale-free features using only current and prior rows."""
-    settings = settings or FeatureSettings()
+    check_schema_compatibility(settings)
     sma_short, sma_medium, sma_long = settings.sma
     close = adjusted["total_return_close"].astype(float)
     features = pd.DataFrame(index=adjusted.index)
@@ -181,10 +202,10 @@ def calculate_symbol_features(
 
 
 def calculate_market_features(
-    adjusted_by_symbol: Mapping[str, pd.DataFrame], settings: FeatureSettings | None = None
+    adjusted_by_symbol: Mapping[str, pd.DataFrame], settings: FeatureSettings
 ) -> pd.DataFrame:
     """Calculate date-keyed benchmark and volatility features; SPY is required."""
-    settings = settings or FeatureSettings()
+    check_schema_compatibility(settings)
     trend_window = settings.sma[2]
     spy = adjusted_by_symbol.get("SPY")
     if spy is None or spy.empty:

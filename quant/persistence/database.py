@@ -1,7 +1,7 @@
 """Engine creation and connection configuration for the local SQLite store.
 
 Per section 4.2 of the proposal:
-- The database is a single local file (``data/quant.db`` by default).
+- The database is a single local file, set by ``database.url`` in config/settings.yaml.
 - WAL mode is enabled so the writing CLI and the reading Streamlit app can
   coexist.
 - A busy timeout is set so a brief lock does not immediately raise.
@@ -16,8 +16,6 @@ from sqlalchemy import Engine, create_engine, event
 
 from quant.persistence.tables import metadata
 
-DEFAULT_BUSY_TIMEOUT_MS = 5000
-
 
 def _configure_connection(dbapi_connection, busy_timeout_ms: int) -> None:
     cursor = dbapi_connection.cursor()
@@ -30,9 +28,7 @@ def _configure_connection(dbapi_connection, busy_timeout_ms: int) -> None:
         cursor.close()
 
 
-def create_db_engine(
-    db_path: str | os.PathLike[str], busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS
-) -> Engine:
+def create_db_engine(db_path: str | os.PathLike[str], busy_timeout_ms: int) -> Engine:
     """Create an engine for the local SQLite database.
 
     Pass ``":memory:"`` for an in-memory database (used by tests).

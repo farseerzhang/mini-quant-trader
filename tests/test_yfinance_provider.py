@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
+from tests.settings_helper import SETTINGS
 
 # python -m unittest tests.test_yfinance_provider -v
 class YFinanceProviderTests(unittest.TestCase):
@@ -27,7 +28,7 @@ class YFinanceProviderTests(unittest.TestCase):
     def test_returns_unadjusted_daily_prices(self, ticker: object) -> None:
         ticker.return_value.history.return_value = self.history
 
-        result = YFinanceProvider().get_daily_data(
+        result = YFinanceProvider(SETTINGS.market.request_timeout_seconds).get_daily_data(
             " aapl ", date(2026, 9, 30), date(2026, 10, 1)
         )
 
@@ -39,7 +40,7 @@ class YFinanceProviderTests(unittest.TestCase):
     def test_returns_corporate_actions_separately(self, ticker: object) -> None:
         ticker.return_value.history.return_value = self.history
 
-        result = YFinanceProvider().get_corporate_actions(
+        result = YFinanceProvider(SETTINGS.market.request_timeout_seconds).get_corporate_actions(
             "AAPL", date(2026, 9, 30), date(2026, 10, 1)
         )
 
@@ -52,7 +53,7 @@ class YFinanceProviderTests(unittest.TestCase):
         ticker.return_value.history.return_value = self.history.iloc[0:0]
 
         with self.assertRaises(MarketDataError):
-            YFinanceProvider().get_daily_data(
+            YFinanceProvider(SETTINGS.market.request_timeout_seconds).get_daily_data(
                 "AAPL", date(2026, 9, 30), date(2026, 10, 1)
             )
 
