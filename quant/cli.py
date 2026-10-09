@@ -1,8 +1,9 @@
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, Settings, load_settings
+from quant.data.calendar import last_completed_session
 from quant.data.store import store_market_data, sync_market_data
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
@@ -36,11 +37,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     store_command = commands.add_parser(
         "store-market-data",
-        help="fetch daily market data and store it locally in SQLite (idempotent)",
+        help="fetch a date range and store it locally in SQLite (idempotent); defaults come from the settings file",
     )
-    store_command.add_argument("--symbol", required=True, help="ticker symbol, e.g. AAPL")
-    store_command.add_argument("--start", required=True, type=_iso_date, help="inclusive start date")
-    store_command.add_argument("--end", required=True, type=_iso_date, help="exclusive end date")
+    store_command.add_argument(
+        "--symbol", help="ticker symbol, e.g. AAPL (default: every symbol in market.symbols and market.market_symbols)"
+    )
+    store_command.add_argument(
+        "--start", type=_iso_date, help="inclusive start date (default: market.initial_history)"
+    )
+    store_command.add_argument(
+        "--end", type=_iso_date, help="exclusive end date (default: the day after the last completed session)"
+    )
     store_command.add_argument("--db", help=db_help)
 
     update_command = commands.add_parser(
@@ -88,27 +95,34 @@ def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def _run_store(args: argparse.Namespace, settings: Settings) -> int:
-    engine = _engine(settings, args.db)
-    try:
-        summary = store_market_data(
-            engine,
-            _provider(settings),
-            args.symbol,
-            args.start,
-            args.end,
-            provider_name=settings.market.provider,
-        )
-    except MarketDataError as exc:
-        print(f"Market data request failed: {exc}", file=sys.stderr)
+    symbols = [args.symbol.strip().upper()] if args.symbol else settings.market.universe
+    start = args.start or settings.market.initial_history
+    end = args.end or last_completed_session(None, settings.market.calendar) + timedelta(days=1)
+    if start >= end:
+        print(f"Cannot store market data: start {start} must be earlier than end {end}", file=sys.stderr)
         return 1
+
+    engine = _engine(settings, args.db)
+    failures = 0
+    try:
+        provider = _provider(settings)
+        for symbol in symbols:
+            try:
+                summary = store_market_data(
+                    engine, provider, symbol, start, end, provider_name=settings.market.provider
+                )
+            except MarketDataError as exc:
+                print(f"{symbol}: FAILED: {exc}", file=sys.stderr)
+                failures += 1
+                continue
+            print(
+                f"{summary.symbol}: stored {summary.stored_prices} new price rows "
+                f"(fetched {summary.fetched_prices}, quarantined {summary.quarantined}), "
+                f"{summary.stored_actions} new corporate actions"
+            )
     finally:
         engine.dispose()
-    print(
-        f"Stored {summary.symbol}: {summary.stored_prices} new price rows "
-        f"(fetched {summary.fetched_prices}, quarantined {summary.quarantined}), "
-        f"{summary.stored_actions} new corporate actions."
-    )
-    return 0
+    return 1 if failures else 0
 
 
 def _run_update(args: argparse.Namespace, settings: Settings) -> int:
@@ -160,7 +174,7 @@ def _run_features(args: argparse.Namespace, settings: Settings) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command in ("fetch-market-data", "store-market-data") and args.start >= args.end:
+    if args.command == "fetch-market-data" and args.start >= args.end:
         parser.error("--start must be earlier than --end")
 
     try:

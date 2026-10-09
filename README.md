@@ -96,16 +96,19 @@ This recomputes feature history (including adjustment changes from stored corpor
 
 #### Store Market Data
 
-Fetch daily market data and store it locally in SQLite (idempotent):
+Fetch a date range and store it locally in SQLite (idempotent). With no arguments it stores every symbol in `market.symbols` and `market.market_symbols`, from `market.initial_history` through the last completed session:
 
 ```bash
+python -m quant store-market-data
 python -m quant store-market-data --symbol AAPL --start 2020-01-01 --end 2026-10-02
 ```
 
-Options:
-- `--symbol`: Ticker symbol (e.g., AAPL)
-- `--start`: Inclusive start date (YYYY-MM-DD format)
-- `--end`: Exclusive end date (YYYY-MM-DD format)
+Unlike `update-market-data`, this always re-requests the whole range (nothing is duplicated or overwritten). Use `update-market-data` for routine incremental refreshes.
+
+Options (all optional):
+- `--symbol`: One ticker (default: the whole pool)
+- `--start`: Inclusive start date, YYYY-MM-DD (default: `market.initial_history`)
+- `--end`: Exclusive end date, YYYY-MM-DD (default: the day after the last completed session)
 - `--db`: Path to SQLite database (default: `database.url` in `config/settings.yaml`)
 
 ### Configuration
