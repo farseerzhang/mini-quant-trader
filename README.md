@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 3 - Rule-based regime** (Done; next: Phase 4 - rule-based strategies and backtesting)
+**Phase 4 - Rule-based strategies and backtesting** (Done; next: Phase 5 - ML baselines)
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -30,6 +30,8 @@ The project is currently in early development. Implemented features include:
 - Split-adjusted OHLCV and dividend-aware total-return price series
 - Versioned technical and market feature calculation
 - Rule-based BULL/SIDEWAYS/BEAR market regime with hysteresis and minimum dwell time
+- Rule-based trend, mean-reversion and regime-switch strategies with position and sector caps
+- VectorBT backtests against SPY, equal weight and a random baseline, saved per run
 
 ## Installation
 
@@ -104,6 +106,18 @@ python -m quant calculate-regime
 ```
 
 The score at each session sums five -1/0/+1 inputs (SPY trend, QQQ trend, SPY SMA50 vs SMA200, SPY 3-month return, VIX level), and a state machine with hysteresis (`regime.enter_threshold` / `regime.exit_threshold`) and a minimum dwell time (`regime.min_dwell_days`) turns scores into regimes; the full rules are in section 12 of `proposal.md`. Sessions missing any input get no regime. The whole history is recomputed and replaces the stored rows of the `market_regimes` table for `rule_based-v<regime.version>`; bump `regime.version` when changing any `regime` setting.
+
+#### Backtest the Strategies
+
+After `run-daily`, compare the rule-based strategies with SPY buy-and-hold, an equal-weight portfolio of the pool and a random baseline:
+
+```bash
+python -m quant backtest
+python -m quant backtest --strategy trend --strategy regime_switch
+python -m quant backtest --evaluate-holdout
+```
+
+Orders are decided at the close and filled at the next open, with fees, slippage and a minimum trade size from the `backtest` settings; the strategies are described in section 17 of `proposal.md` and the engine in section 20.1. The report shows the development period. The holdout (the last `retrain.validation.holdout_months`) is shown only with `--evaluate-holdout`; every evaluation is logged in `pipeline_runs`, and the report says how many times the holdout has been viewed. Each run is saved as a batch in `backtest_runs` (metrics, costs, parameters, config hash, git commit) and `backtest_equity` (daily value), with holdout rows only when it was evaluated. A run takes about 40 seconds, mostly the random baseline.
 
 Every command accepts `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
 

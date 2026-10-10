@@ -1,4 +1,3 @@
-import dataclasses
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,10 +9,8 @@ from quant.backtest.data import Prices, load_prices
 from quant.backtest.engine import BENCHMARK, STRATEGY, run_backtests, simulate, split_periods
 from quant.backtest.metrics import period_metrics
 from quant.backtest.orders import buy_and_hold, equal_weight_monthly, order_targets, permuted_weights
-from quant.features.pipeline import calculate_and_store_features
-from quant.persistence import queries
-from quant.persistence.database import create_db_engine, init_db
-from quant.regime.pipeline import calculate_and_store_regimes
+from quant.persistence.database import create_db_engine
+from tests.backtest_fixture import DATES, build_market_db, small_settings
 from tests.settings_helper import SETTINGS
 
 BT = SETTINGS.backtest  # 1 bp fee, 5 bp slippage
@@ -108,39 +105,12 @@ class MetricTests(unittest.TestCase):
         self.assertEqual((periods.start, periods.end), (index[0], index[-1]))
 
 
-def _rows(symbol, dates, closes):
-    return [
-        {"symbol": symbol, "date": stamp.date(), "open": float(c) * 0.999, "high": float(c) * 1.01,
-         "low": float(c) * 0.99, "close": float(c), "volume": 1000, "provider": "test"}
-        for stamp, c in zip(dates, closes)
-    ]
-
-
 class RunBacktestsTests(unittest.TestCase):
     def test_every_strategy_and_benchmark_with_separate_development_and_holdout(self):
-        pool = {"information_technology": ("AAPL", "MSFT"), "energy": ("XOM",)}
-        settings = dataclasses.replace(
-            SETTINGS,
-            market=dataclasses.replace(SETTINGS.market, symbols=pool),
-            backtest=dataclasses.replace(SETTINGS.backtest, random_baseline_runs=3),
-        )
-        sessions = 650
-        dates = pd.bdate_range("2023-01-02", periods=sessions)
-        t = np.arange(sessions)
-        series = {
-            "SPY": 100 * np.exp(0.0004 * t + 0.03 * np.sin(t / 40)),
-            "QQQ": 100 * np.exp(0.0005 * t + 0.04 * np.sin(t / 35)),
-            "AAPL": 100 * np.exp(0.0006 * t + 0.08 * np.sin(t / 25)),
-            "MSFT": 100 * np.exp(0.0003 * t + 0.06 * np.sin(t / 18 + 1)),
-            "XOM": 100 * np.exp(0.0002 * t + 0.07 * np.sin(t / 30 + 2)),
-            "^VIX": 18 + 6 * np.sin(t / 50),
-        }
+        settings = small_settings()
         with tempfile.TemporaryDirectory() as directory:
+            build_market_db(Path(directory) / "bt.db", settings)
             engine = create_db_engine(Path(directory) / "bt.db", settings.database.busy_timeout_ms)
-            init_db(engine)
-            queries.upsert_daily_prices(engine, [row for s, c in series.items() for row in _rows(s, dates, c)])
-            calculate_and_store_features(engine, settings.features)
-            calculate_and_store_regimes(engine, settings.regime, settings.features)
             report = run_backtests(engine, settings)
             prices = load_prices(engine, ["SPY"])
             engine.dispose()
@@ -154,7 +124,7 @@ class RunBacktestsTests(unittest.TestCase):
         self.assertTrue(development.index.equals(holdout.index))
         self.assertFalse(development.loc[:, ["total_return", "sharpe", "max_drawdown"]].isna().any().any())
         self.assertLess(report.periods.development_end, report.periods.holdout_start)
-        self.assertEqual(report.periods.start, dates[settings.features.sma[2] - 1])  # first regime session
+        self.assertEqual(report.periods.start, DATES[settings.features.sma[2] - 1])  # first regime session
 
         # The two periods chain to the full-history return of each portfolio.
         for result in report.results:

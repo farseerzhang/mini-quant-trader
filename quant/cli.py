@@ -2,12 +2,17 @@ import argparse
 import sys
 from datetime import date
 
+from quant.backtest.engine import run_backtests
+from quant.backtest.persist import save_backtest
+from quant.backtest.report import development_report, holdout_report
 from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, Settings, load_settings
 from quant.data.store import sync_market_data, sync_symbol_table
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
+from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
 from quant.regime.pipeline import calculate_and_store_regimes
+from quant.strategies import build_strategies
 
 
 def _iso_date(value: str) -> date:
@@ -49,6 +54,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="calculate and persist the rule-based BULL/SIDEWAYS/BEAR regime from stored features",
     )
     regime_command.add_argument("--db", help=db_help)
+
+    backtest_command = commands.add_parser(
+        "backtest",
+        help="backtest the rule-based strategies against SPY, equal weight and a random baseline, and save the results",
+    )
+    backtest_command.add_argument(
+        "--strategy",
+        action="append",
+        metavar="NAME",
+        help="run only this strategy (repeatable; default: all). Benchmarks always run",
+    )
+    backtest_command.add_argument(
+        "--evaluate-holdout",
+        action="store_true",
+        help="also show and save the holdout period; every evaluation is logged (section 15.2)",
+    )
+    backtest_command.add_argument("--db", help=db_help)
 
     daily_command = commands.add_parser(
         "run-daily",
@@ -151,6 +173,65 @@ def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_backtest(args: argparse.Namespace, settings: Settings) -> int:
+    strategies = build_strategies(settings)
+    if args.strategy:
+        known = {strategy.name for strategy in strategies}
+        unknown = [name for name in args.strategy if name not in known]
+        if unknown:
+            print(
+                f"Unknown strategy: {', '.join(unknown)}; choose from {', '.join(sorted(known))}",
+                file=sys.stderr,
+            )
+            return 1
+        strategies = [strategy for strategy in strategies if strategy.name in args.strategy]
+    show_holdout = args.evaluate_holdout or not settings.holdout_requires_flag
+
+    engine = _engine(settings, args.db)
+    try:
+        report = run_backtests(engine, settings, strategies)
+        previous_evaluations = queries.count_pipeline_runs(engine, "backtest", "holdout")
+        batch_id = save_backtest(engine, settings, report, include_holdout=show_holdout)
+        periods = report.periods
+        names = ", ".join(result.name for result in report.results)
+        if show_holdout:
+            queries.record_pipeline_run(
+                engine,
+                command="backtest",
+                stage="holdout",
+                status="OK",
+                data_as_of_date=periods.end.date(),
+                message=f"batch {batch_id}: holdout {periods.holdout_start.date()}..{periods.end.date()} "
+                f"evaluated for {names}",
+            )
+        queries.record_pipeline_run(
+            engine,
+            command="backtest",
+            stage="backtest",
+            status="OK",
+            data_as_of_date=periods.end.date(),
+            message=f"batch {batch_id}: {names}",
+        )
+    except ValueError as exc:
+        print(f"Backtest failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+
+    print(development_report(report))
+    print()
+    if show_holdout:
+        print(holdout_report(report, previous_evaluations + 1))
+    else:
+        print(
+            f"HOLDOUT {periods.holdout_start.date()} .. {periods.end.date()}: not shown "
+            f"(evaluated {previous_evaluations} time(s) so far; use --evaluate-holdout to view it)"
+        )
+    print()
+    print(f"Saved as batch {batch_id} in backtest_runs and backtest_equity.")
+    return 0
+
+
 def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
     """Run the pipeline stages in order (proposal section 23, steps 1-6 so far).
 
@@ -193,6 +274,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_regime(args, settings)
         if args.command == "run-daily":
             return _run_daily(args, settings)
+        if args.command == "backtest":
+            return _run_backtest(args, settings)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1

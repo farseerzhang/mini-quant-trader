@@ -62,6 +62,7 @@ class PortfolioResult:
     kind: str
     description: str
     value: pd.Series
+    invested: pd.Series
     development: dict[str, float]
     holdout: dict[str, float]
     yearly: pd.Series
@@ -178,6 +179,7 @@ def _result(name, kind, description, simulation: Simulation, periods: Periods, r
         kind=kind,
         description=description,
         value=simulation.value,
+        invested=simulation.invested,
         development=period_metrics(*common, periods.start, periods.development_end),
         holdout=period_metrics(*common, periods.holdout_start, periods.end),
         yearly=yearly_returns(simulation.value, periods.start, periods.development_end),

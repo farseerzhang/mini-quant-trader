@@ -344,6 +344,8 @@ parameters, config_hash, git_commit, created_at
 
 Runs are portfolio-level; per-symbol breakdowns may be stored separately.
 
+As implemented, one `quant backtest` invocation is a batch (`batch_id`), with one row per portfolio (`kind` STRATEGY or BENCHMARK) and period (`period` DEVELOPMENT, plus HOLDOUT only when the holdout was explicitly evaluated), unique on `(batch_id, strategy, period)`. Rows also store volatility, average invested, turnover, fees and the random-baseline ranking (development only). Costs are stored as `fee_bps`, `slippage_bps` and `min_trade_weight`. `git_commit` ends in `+dirty` when the working tree had uncommitted changes. `backtest_equity (run_id, date, value, invested)` holds each run's daily equity curve for the dashboard; it stops at the end of development unless the holdout was evaluated.
+
 ## 6.12 pipeline_runs
 
 ```text
@@ -979,7 +981,9 @@ python -m quant retrain --role predictor|regime [--model xgb] [--evaluate-holdou
                                        # MANUAL; validates, then registers a CANDIDATE
 python -m quant promote <model_id> [--override "<reason>"]
                                        # activate a candidate for its role (refuses failed gates)
-python -m quant backtest [--strategy ...]
+python -m quant backtest [--strategy NAME ...] [--evaluate-holdout]
+                                       # rule-based strategies vs SPY, equal weight, random baseline;
+                                       # holdout only with the flag, every evaluation logged
 python -m quant status                 # last runs, data freshness, active model per role, stale warnings
 streamlit run dashboard/app.py         # dashboard (separate process)
 ```

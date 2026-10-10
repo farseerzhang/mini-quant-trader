@@ -263,6 +263,17 @@ class Settings:
             raise ConfigError("retrain.validation.holdout_months must be >= 1")
         return months
 
+    @property
+    def holdout_requires_flag(self) -> bool:
+        """retrain.validation.holdout_requires_flag: show the holdout only on explicit request."""
+        try:
+            value = self.retrain["validation"]["holdout_requires_flag"]
+        except (KeyError, TypeError) as exc:
+            raise ConfigError("retrain.validation.holdout_requires_flag is required") from exc
+        if not isinstance(value, bool):
+            raise ConfigError("retrain.validation.holdout_requires_flag must be true or false")
+        return value
+
 
 def _section(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
     value = raw.get(name)

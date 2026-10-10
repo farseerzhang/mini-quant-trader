@@ -10,12 +10,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     MetaData,
     PrimaryKeyConstraint,
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
 
 metadata = MetaData()
@@ -177,4 +179,68 @@ market_regimes = Table(
     PrimaryKeyConstraint("date", "regime_method", "model_version", name="pk_market_regimes"),
     CheckConstraint("regime_method IN ('RULE', 'HMM')", name="ck_market_regimes_method"),
     CheckConstraint("regime IN ('BULL', 'SIDEWAYS', 'BEAR')", name="ck_market_regimes_regime"),
+)
+
+
+# 6.11 backtest_runs — one row per portfolio and period of one `quant backtest` invocation (a batch).
+# HOLDOUT rows exist only when the holdout was explicitly evaluated (section 15.2).
+backtest_runs = Table(
+    "backtest_runs",
+    metadata,
+    Column("run_id", Integer, primary_key=True, autoincrement=True),
+    Column("batch_id", String, nullable=False),
+    Column("strategy", String, nullable=False),
+    Column("kind", String, nullable=False),  # STRATEGY | BENCHMARK
+    Column("strategy_version", String),
+    Column("description", Text),
+    Column("period", String, nullable=False),  # DEVELOPMENT | HOLDOUT
+    Column("universe", Text, nullable=False),  # JSON list of the pool stocks
+    Column("start_date", Date, nullable=False),
+    Column("end_date", Date, nullable=False),
+    Column("initial_cash", Float, nullable=False),
+    Column("fee_bps", Float, nullable=False),
+    Column("slippage_bps", Float, nullable=False),
+    Column("min_trade_weight", Float, nullable=False),
+    Column("execution_convention", String, nullable=False),
+    Column("feature_version", String, nullable=False),
+    Column("model_version", String),  # regime version the strategies used
+    Column("benchmark", String),
+    Column("total_return", Float),
+    Column("cagr", Float),
+    Column("volatility", Float),
+    Column("sharpe", Float),
+    Column("sortino", Float),
+    Column("max_drawdown", Float),
+    Column("avg_invested", Float),
+    Column("turnover", Float),
+    Column("num_trades", Integer),
+    Column("win_rate", Float),
+    Column("profit_factor", Float),
+    Column("fees_paid", Float),
+    Column("benchmark_total_return", Float),
+    Column("benchmark_sharpe", Float),
+    Column("random_runs", Integer),
+    Column("random_sharpe_median", Float),
+    Column("sharpe_percentile", Float),
+    Column("random_cagr_median", Float),
+    Column("cagr_percentile", Float),
+    Column("parameters", Text),  # JSON: strategies and risk settings
+    Column("config_hash", String, nullable=False),
+    Column("git_commit", String),
+    Column("created_at", DateTime, nullable=False),
+    UniqueConstraint("batch_id", "strategy", "period", name="uq_backtest_runs"),
+    CheckConstraint("kind IN ('STRATEGY', 'BENCHMARK')", name="ck_backtest_runs_kind"),
+    CheckConstraint("period IN ('DEVELOPMENT', 'HOLDOUT')", name="ck_backtest_runs_period"),
+)
+
+
+# Daily equity curve of each backtest run (for the dashboard).
+backtest_equity = Table(
+    "backtest_equity",
+    metadata,
+    Column("run_id", Integer, ForeignKey("backtest_runs.run_id", ondelete="CASCADE"), nullable=False),
+    Column("date", Date, nullable=False),
+    Column("value", Float, nullable=False),
+    Column("invested", Float),
+    PrimaryKeyConstraint("run_id", "date", name="pk_backtest_equity"),
 )

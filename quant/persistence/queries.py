@@ -300,3 +300,26 @@ def load_regimes(engine: Engine, regime_method: str, model_version: str) -> pd.S
         name="regime",
         dtype=object,
     )
+
+
+def count_pipeline_runs(engine: Engine, command: str, stage: str) -> int:
+    """How many pipeline_runs rows a command/stage has, e.g. holdout evaluations."""
+    stmt = select(func.count()).select_from(tables.pipeline_runs).where(
+        tables.pipeline_runs.c.command == command, tables.pipeline_runs.c.stage == stage
+    )
+    with engine.connect() as conn:
+        return int(conn.execute(stmt).scalar_one())
+
+
+def save_backtest_runs(
+    engine: Engine, runs: Sequence[tuple[Mapping[str, Any], Sequence[Mapping[str, Any]]]]
+) -> list[int]:
+    """Insert backtest runs with their equity curves in one transaction; returns run ids."""
+    run_ids = []
+    with engine.begin() as conn:
+        for run, equity in runs:
+            run_id = conn.execute(tables.backtest_runs.insert().values(**run)).inserted_primary_key[0]
+            if equity:
+                conn.execute(tables.backtest_equity.insert(), [{**row, "run_id": run_id} for row in equity])
+            run_ids.append(run_id)
+    return run_ids
