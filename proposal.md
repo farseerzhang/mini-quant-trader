@@ -648,6 +648,19 @@ Limitations to keep in mind:
 - A label for row T uses prices up to `T+1+h`, so the label window spans `h+1` trading days. The embargo must be at least `h+1` days (section 15).
 - The horizon `h` is a parameter. Longer horizons (10 or 20 days) mean lower turnover; test them rather than assuming 5.
 
+### Measured label statistics (2026-10-10, development period only)
+
+Implemented in `quant/models/labels.py`. Over 249,888 stock-days (48 stocks, 2005-10 to 2025-10) with `k = 0.25` and a 0.5% floor:
+
+```text
+positive share     36.7% overall; 35-39% in every year; BULL 36.9%, SIDEWAYS 36.0%, BEAR 35.6% (regime at T)
+threshold          median 0.77% (10%-90%: 0.50%-1.57%); at the 0.5% floor on 16.6% of stock-days
+5-day excess       median +0.02%, standard deviation 3.52%
+by stock           DIS 32.6% (lowest) to NVDA 41.9% (highest)
+```
+
+The volatility scaling does what section 14 intends: the positive share is stable across years and regimes, so a model cannot score well just by learning when the market is calm. A model that always predicted 36.7% is the reference its log-loss and Brier score must beat.
+
 ### Alternatives to compare
 
 ```text

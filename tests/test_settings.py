@@ -38,9 +38,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.regime.enter_threshold, 3)
         self.assertEqual(settings.regime.min_dwell_days, 5)
         self.assertEqual(settings.regime.rule_version, "rule_based-v1")
-        self.assertEqual(settings.model["type"], "xgboost")
-        self.assertEqual(settings.model["target"]["kind"], "excess_vs_benchmark_vol_scaled")
-        self.assertGreaterEqual(settings.model["embargo_days"], settings.model["target"]["horizon_days"] + 1)
+        self.assertEqual(settings.model.type, "xgboost")
+        self.assertEqual(settings.model.target.kind, "excess_vs_benchmark_vol_scaled")
+        self.assertEqual((settings.model.target.horizon_days, settings.model.embargo_days), (5, 6))
         self.assertEqual(settings.retrain["validation"]["holdout_months"], 12)
         self.assertEqual(settings.retrain["search"]["seed"], 42)
         self.assertEqual(settings.backtest.fees, 0.0001)
@@ -131,6 +131,10 @@ class SettingsTests(unittest.TestCase):
             "unknown strategy key": lambda d: d["strategies"]["mean_reversion"].update(rsi_entri=25),
             "unknown benchmark": set_value("backtest", "benchmarks", ["SPY", "QQQ_buy_and_hold"]),
             "negative slippage": set_value("backtest", "slippage_bps", -1),
+            "embargo shorter than the label window": set_value("model", "embargo_days", 5),
+            "unknown model type": set_value("model", "type", "svm"),
+            "unknown target kind": lambda d: d["model"]["target"].update(kind="direction"),
+            "threshold below round-trip costs": lambda d: d["model"]["target"].update(min_threshold=0.001),
             "bad date": set_value("market", "initial_history", "not-a-date"),
         }
         for name, mutate in bad.items():

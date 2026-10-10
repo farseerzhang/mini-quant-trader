@@ -204,6 +204,50 @@ class StrategySettings:
             raise ConfigError("strategies.version must be >= 1")
 
 
+MODEL_TYPES = ("logistic_regression", "random_forest", "xgboost")
+TARGET_KINDS = ("excess_vs_benchmark_vol_scaled", "fixed_return", "cross_sectional_rank")
+CALIBRATIONS = ("isotonic", "sigmoid")
+
+
+@dataclass(frozen=True)
+class TargetSettings:
+    kind: str
+    benchmark: str
+    horizon_days: int
+    k: float
+    volatility_window_days: int
+    min_threshold: float
+
+    def __post_init__(self) -> None:
+        if self.kind not in TARGET_KINDS:
+            raise ConfigError(f"model.target.kind must be one of {', '.join(TARGET_KINDS)}")
+        if self.horizon_days < 1:
+            raise ConfigError("model.target.horizon_days must be >= 1")
+        if self.k < 0:
+            raise ConfigError("model.target.k must not be negative")
+        if self.volatility_window_days < 2:
+            raise ConfigError("model.target.volatility_window_days must be >= 2")
+        if self.min_threshold < 0:
+            raise ConfigError("model.target.min_threshold must not be negative")
+
+
+@dataclass(frozen=True)
+class ModelSettings:
+    type: str
+    target: TargetSettings
+    embargo_days: int
+    calibration: str
+
+    def __post_init__(self) -> None:
+        if self.type not in MODEL_TYPES:
+            raise ConfigError(f"model.type must be one of {', '.join(MODEL_TYPES)}")
+        if self.calibration not in CALIBRATIONS:
+            raise ConfigError(f"model.calibration must be one of {', '.join(CALIBRATIONS)}")
+        # A label for row T spans the opens of T+1 .. T+1+h (section 14).
+        if self.embargo_days < self.target.horizon_days + 1:
+            raise ConfigError("model.embargo_days must be >= model.target.horizon_days + 1 (section 15)")
+
+
 BENCHMARKS = ("SPY", "equal_weight")
 
 
@@ -248,9 +292,18 @@ class Settings:
     strategies: StrategySettings
     risk: RiskSettings
     backtest: BacktestSettings
-    # Sections for later phases are loaded as-is and validated when those phases land.
-    model: Mapping[str, Any]
+    model: ModelSettings
+    # Loaded as-is; validated as `quant retrain` uses it.
     retrain: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        round_trip = 2 * (self.backtest.fees + self.backtest.slippage)
+        if self.model.target.min_threshold <= round_trip:
+            raise ConfigError(
+                f"model.target.min_threshold ({self.model.target.min_threshold:g}) must exceed the round-trip "
+                f"trading cost ({round_trip:g} from backtest.fee_bps and slippage_bps), so a hit is worth "
+                "something after costs (section 14)"
+            )
 
     @property
     def holdout_months(self) -> int:
@@ -409,6 +462,11 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         ),
         risk=_build(RiskSettings, "risk", _section(raw, "risk")),
         backtest=_build(BacktestSettings, "backtest", _section(raw, "backtest"), {"benchmarks": _as_name_tuple}),
-        model=dict(_section(raw, "model")),
+        model=_build(
+            ModelSettings,
+            "model",
+            _section(raw, "model"),
+            {"target": _subsection(TargetSettings, "model.target")},
+        ),
         retrain=dict(_section(raw, "retrain")),
     )
