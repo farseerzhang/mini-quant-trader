@@ -204,6 +204,41 @@ class StrategySettings:
             raise ConfigError("strategies.version must be >= 1")
 
 
+BENCHMARKS = ("SPY", "equal_weight")
+
+
+@dataclass(frozen=True)
+class BacktestSettings:
+    initial_cash: float
+    fee_bps: float
+    slippage_bps: float
+    min_trade_weight: float
+    benchmarks: tuple[str, ...]
+    random_baseline_runs: int
+    random_seed: int
+
+    def __post_init__(self) -> None:
+        if self.initial_cash <= 0:
+            raise ConfigError("backtest.initial_cash must be positive")
+        if self.fee_bps < 0 or self.slippage_bps < 0:
+            raise ConfigError("backtest.fee_bps and backtest.slippage_bps must not be negative")
+        if not 0 <= self.min_trade_weight < 1:
+            raise ConfigError("backtest.min_trade_weight must be in [0, 1)")
+        unknown = sorted(set(self.benchmarks) - set(BENCHMARKS))
+        if unknown:
+            raise ConfigError(f"backtest.benchmarks: unknown {', '.join(unknown)}; use {', '.join(BENCHMARKS)}")
+        if self.random_baseline_runs < 0:
+            raise ConfigError("backtest.random_baseline_runs must not be negative")
+
+    @property
+    def fees(self) -> float:
+        return self.fee_bps / 10_000
+
+    @property
+    def slippage(self) -> float:
+        return self.slippage_bps / 10_000
+
+
 @dataclass(frozen=True)
 class Settings:
     database: DatabaseSettings
@@ -212,10 +247,21 @@ class Settings:
     regime: RegimeSettings
     strategies: StrategySettings
     risk: RiskSettings
+    backtest: BacktestSettings
     # Sections for later phases are loaded as-is and validated when those phases land.
     model: Mapping[str, Any]
     retrain: Mapping[str, Any]
-    backtest: Mapping[str, Any]
+
+    @property
+    def holdout_months(self) -> int:
+        """retrain.validation.holdout_months: the most recent period kept out of all tuning."""
+        try:
+            months = int(self.retrain["validation"]["holdout_months"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ConfigError("retrain.validation.holdout_months must be a whole number of months") from exc
+        if months < 1:
+            raise ConfigError("retrain.validation.holdout_months must be >= 1")
+        return months
 
 
 def _section(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -282,6 +328,12 @@ def _as_sector_pool(value: Any) -> dict[str, tuple[str, ...]]:
     return pool
 
 
+def _as_name_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError("expected a list of names")
+    return tuple(str(item).strip() for item in value)
+
+
 def _as_float_tuple(value: Any) -> tuple[float, ...]:
     if isinstance(value, str) or not isinstance(value, (list, tuple)):
         raise ValueError("expected a list of numbers")
@@ -345,7 +397,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
             },
         ),
         risk=_build(RiskSettings, "risk", _section(raw, "risk")),
+        backtest=_build(BacktestSettings, "backtest", _section(raw, "backtest"), {"benchmarks": _as_name_tuple}),
         model=dict(_section(raw, "model")),
         retrain=dict(_section(raw, "retrain")),
-        backtest=dict(_section(raw, "backtest")),
     )

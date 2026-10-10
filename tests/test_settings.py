@@ -43,7 +43,9 @@ class SettingsTests(unittest.TestCase):
         self.assertGreaterEqual(settings.model["embargo_days"], settings.model["target"]["horizon_days"] + 1)
         self.assertEqual(settings.retrain["validation"]["holdout_months"], 12)
         self.assertEqual(settings.retrain["search"]["seed"], 42)
-        self.assertEqual(settings.backtest["fee_bps"], 1)
+        self.assertEqual(settings.backtest.fees, 0.0001)
+        self.assertEqual(settings.backtest.slippage, 0.0005)
+        self.assertEqual(settings.holdout_months, 12)
         self.assertEqual(settings.risk.max_position_size, 0.10)
 
     def test_values_come_from_the_file_not_from_code(self):
@@ -127,6 +129,8 @@ class SettingsTests(unittest.TestCase):
             "bear exposure above 1": lambda d: d["strategies"]["regime_switch"].update(bear_exposures=[1.5]),
             "no baseline exposure": lambda d: d["strategies"]["regime_switch"].update(bear_exposures=[]),
             "unknown strategy key": lambda d: d["strategies"]["mean_reversion"].update(rsi_entri=25),
+            "unknown benchmark": set_value("backtest", "benchmarks", ["SPY", "QQQ_buy_and_hold"]),
+            "negative slippage": set_value("backtest", "slippage_bps", -1),
             "bad date": set_value("market", "initial_history", "not-a-date"),
         }
         for name, mutate in bad.items():

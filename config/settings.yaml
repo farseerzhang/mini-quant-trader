@@ -107,10 +107,15 @@ retrain:                           # used only by the manual `quant retrain`
       beats_rule_based_regime_after_costs: true
   final_refit: true
 
-backtest:
-  fee_bps: 1
-  slippage_bps: 5
-  benchmarks: [SPY, equal_weight]
+backtest:                          # signal at the close of T, fill at the open of T+1 (section 20)
+  initial_cash: 100000
+  fee_bps: 1                       # per trade side, on the filled amount
+  slippage_bps: 5                  # per trade side: buys fill at open x (1 + slippage), sells at open x (1 - slippage)
+  min_trade_weight: 0.02           # resize a held position only if its target moves at least this much
+                                   # (entries and exits always trade; section 18)
+  benchmarks: [SPY, equal_weight]  # SPY buy-and-hold; all pool stocks, equal weight, rebalanced monthly
+  random_baseline_runs: 100        # the strategy's weights reassigned to randomly permuted stocks
+  random_seed: 42
 
 risk:
   max_position_size: 0.10

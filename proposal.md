@@ -894,6 +894,15 @@ Never judge a strategy by return alone. A strategy that does not beat the benchm
 
 Known limitation to document in every report: the universe is chosen today, so results suffer from **survivorship bias**; and the history may be dominated by bull markets.
 
+## 20.1 Implementation (`quant/backtest/`)
+
+- **Execution:** target weights decided at the close of T are shifted one session and placed as `targetpercent` orders at the total-return open of T+1 (section 6.3). Buys fill at `open x (1 + slippage)`, sells at `open x (1 - slippage)`, the fee is charged on the filled amount, cash is shared across stocks, sells go before buys, and the portfolio is valued at the close. A buy is limited by the cash left, so a fully invested target can end slightly below its weight. Cash earns nothing.
+- **Minimum trade size (section 18):** entries and exits always trade; a held position is resized only when its target moves at least `backtest.min_trade_weight` from the last *ordered* target.
+- **Benchmarks:** `SPY` buy-and-hold (one buy at the first open), and `equal_weight` (every pool stock at 1/N, set at the start and rebalanced on the first session of each month), both with the same costs.
+- **Random baseline:** `random_baseline_runs` portfolios per strategy (seed `random_seed`) that keep the strategy's weights, and therefore its timing, number held, exposure and turnover, but assign each stock's weight series to a randomly permuted stock (sector caps are not re-applied). Where the strategy ranks among them shows whether its stock selection added anything beyond its timing and sizing.
+- **Periods:** every portfolio is simulated once over the whole history, starting at the first session with a stored regime (when every SMA200-based input exists). Metrics are reported separately for the development period and for the holdout (the last `retrain.validation.holdout_months`); the two chain to the full-history return. Development results also break down by calendar year and by regime (a session's return is attributed to the regime known at the previous close). The holdout is not shown while rules are being designed (section 15.2).
+- **Metrics:** daily returns of the value at the close, zero risk-free rate, 252 sessions a year; turnover is one-way (traded amount / 2 / average value, per year). Win rate and profit factor use VectorBT exit trades and only mean something for strategies: a monthly rebalance sells what has risen, so the equal-weight benchmark's "trades" are profitable almost by construction.
+
 ---
 
 # 21. Research / Backtest / Live Separation and Look-Ahead Tests
@@ -1114,10 +1123,15 @@ retrain:                           # used only by the manual `quant retrain`
       beats_rule_based_regime_after_costs: true
   final_refit: true
 
-backtest:
-  fee_bps: 1
-  slippage_bps: 5
-  benchmarks: [SPY, equal_weight]
+backtest:                          # signal at the close of T, fill at the open of T+1 (section 20)
+  initial_cash: 100000
+  fee_bps: 1                       # per trade side, on the filled amount
+  slippage_bps: 5                  # per trade side: buys fill at open x (1 + slippage), sells at open x (1 - slippage)
+  min_trade_weight: 0.02           # resize a held position only if its target moves at least this much
+                                   # (entries and exits always trade; section 18)
+  benchmarks: [SPY, equal_weight]  # SPY buy-and-hold; all pool stocks, equal weight, rebalanced monthly
+  random_baseline_runs: 100        # the strategy's weights reassigned to randomly permuted stocks
+  random_seed: 42
 
 risk:
   max_position_size: 0.10
