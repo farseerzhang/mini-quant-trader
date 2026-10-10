@@ -194,10 +194,23 @@ class RegimeSwitchSettings:
 
 
 @dataclass(frozen=True)
+class MLRegimeSettings:
+    top_n: int
+    rebalance_every_sessions: int
+
+    def __post_init__(self) -> None:
+        if self.top_n < 1:
+            raise ConfigError("strategies.ml_regime.top_n must be >= 1")
+        if self.rebalance_every_sessions < 1:
+            raise ConfigError("strategies.ml_regime.rebalance_every_sessions must be >= 1")
+
+
+@dataclass(frozen=True)
 class StrategySettings:
     version: int
     mean_reversion: MeanReversionSettings
     regime_switch: RegimeSwitchSettings
+    ml_regime: MLRegimeSettings
 
     def __post_init__(self) -> None:
         if self.version < 1:
@@ -530,6 +543,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                 "regime_switch": _subsection(
                     RegimeSwitchSettings, "strategies.regime_switch", {"bear_exposures": _as_float_tuple}
                 ),
+                "ml_regime": _subsection(MLRegimeSettings, "strategies.ml_regime"),
             },
         ),
         risk=_build(RiskSettings, "risk", _section(raw, "risk")),

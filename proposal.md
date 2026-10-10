@@ -741,6 +741,23 @@ Measured on 2026-10-10 (48 stocks, 250,800 rows from 2006-01-03): 11 folds valid
 
 The ML backtest is itself walk-forward: at each point in time the signal comes from a model trained only on data available before that point (plus the embargo). It is never one model trained once and replayed over the whole period.
 
+### 15.3.1 Implementation and first result (`quant/models/ml_backtest.py`, `quant/strategies/ml.py`)
+
+The fold predictions are stitched into one out-of-sample probability panel (a guard rejects any prediction not from the fold whose validation window contains it, or from a fold trained less than `embargo_days` before that window) and traded as **`ml_regime`**: the regime sets exposure every session exactly as in `regime_switch` (BEAR: the baseline bear exposure), and every `strategies.ml_regime.rebalance_every_sessions` (5) sessions the `top_n` (10) stocks with the highest calibrated probability are chosen, sized with the usual caps. All portfolios start from fresh cash on the first validation session and stop at the last one, so nothing in the holdout is used.
+
+Measured on 2026-10-10 (2014-09-26 .. 2025-10-01, best search parameters, after costs):
+
+```text
+                         CAGR    Sharpe   max DD    turnover/yr   higher Sharpe than regime_switch   random baseline (Sharpe beats)
+ml_logistic_regression   12.5%   0.92     -24.5%    16.5x         6 of 11 folds (55%)                97% of 100 runs
+ml_random_forest         10.0%   0.77     -26.7%    19.5x         3 of 11 folds (27%)                79% of 100 runs
+regime_switch            10.3%   0.86     -21.3%     3.9x         -
+SPY                      13.7%   0.81     -33.7%     -
+equal_weight             18.3%   1.07     -31.7%     0.3x
+```
+
+The Logistic Regression's stock selection is real (its picks beat 97% of random picks with the same timing and sizes), but it trades about four times as much as `regime_switch` (about 2% a year in costs at 6 bp per side), is ahead in only 6 of 11 years and has a deeper drawdown. Random Forest is worse than the baseline. A lower-turnover way to trade the probabilities would be a new, pre-registered trial.
+
 ## 15.4 Trials and pass criteria
 
 - Keep a **trial log** (how many models, targets and parameter sets were tried) in `model_versions` and the validation report. The more variants tried, the less any single good result means.
@@ -1127,6 +1144,9 @@ strategies:                        # rule-based baselines (section 17); weights 
     max_holding_days: 10           # ... or after this many sessions
   regime_switch:                   # BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x bear_exposure
     bear_exposures: [0.0, 0.5]     # first = baseline (all cash); others are variants fixed before any results
+  ml_regime:                       # regime timing as regime_switch (baseline bear exposure), stocks chosen by the PREDICTOR
+    top_n: 10                      # hold the N stocks with the highest calibrated probability (BULL / SIDEWAYS)
+    rebalance_every_sessions: 5    # refresh the selection every N sessions (= the target horizon); exposure is daily
 
 model:
   type: xgboost                    # PREDICTOR role: default type trained by `retrain`; run-daily uses the ACTIVE model
