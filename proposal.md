@@ -1141,6 +1141,12 @@ Each stage must be validated against the previous one with walk-forward, out-of-
 - Confirm how `yfinance` returns unadjusted prices and corporate actions.
 - Confirm the exchange calendar library covers the needed history.
 
+Findings (2026-10-10):
+
+- **VectorBT:** 1.1.2 installs and runs on Python 3.12.10 with numba 0.68, numpy 2.5 and pandas 3.0, without warnings. `Portfolio.from_orders` with `size_type="targetpercent"`, a separate fill `price` (the open), `fees`, `slippage`, `cash_sharing=True` and `call_seq="auto"` (sells before buys) does what section 20 needs: a weight decided at the close of T and shifted one row fills at the open of T+1 at `open * (1 + slippage)` for buys and `open * (1 - slippage)` for sells, the fee is charged on the filled notional, a NaN size places no order, and the portfolio is valued at the close. Order sizes are computed from the price before slippage, and buys are limited by the cash left, so a fully invested target can end slightly below its weight. 100 portfolios of 48 symbols over 5,500 sessions run in about 9 seconds (including numba compilation), which is fast enough for the random baseline.
+- **yfinance:** see section 8 (prices are not as traded; the provider reverses Yahoo's split rescaling).
+- **Calendar:** `exchange_calendars` 4.13 builds XNYS only about 20 years back by default (first session 2006-10-10 as of 2026-10), which is shorter than `market.initial_history`, and raises `DateOutOfBounds` for earlier dates. Requested with an explicit `start`, it covers 2005 fully: its 5,477 sessions from 2005-01-03 to 2026-10-09 match the 5,477 bars stored per stock. `quant/data/calendar.py` therefore always passes the start of the range it needs.
+
 ## Phase 1 — Data foundation
 
 SQLite (WAL), `symbols`, `daily_prices`, `corporate_actions`, provider interface, `YFinanceProvider`, incremental downloader, calendar, data validation, quarantine, `pipeline_runs`.

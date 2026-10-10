@@ -14,6 +14,7 @@ dependencies = [
     "SQLAlchemy>=2.0",
     "exchange-calendars>=4.5",
     "PyYAML>=6.0",
+    "vectorbt>=1.1.2",
 ]
 
 [tool.setuptools.packages.find]

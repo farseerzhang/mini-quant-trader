@@ -89,5 +89,15 @@ class IncrementalSyncTests(unittest.TestCase):
         self.assertEqual([summary.symbol for summary in report.summaries], ["AAPL"])
 
 
+class CalendarCoverageTests(unittest.TestCase):
+    def test_sessions_before_the_default_twenty_year_window_are_known(self):
+        from quant.data.calendar import next_session_after
+
+        calendar = SETTINGS.market.calendar
+        # 2005-01-03 is a Monday, so the session after the prior Friday; MLK Day 2005 is skipped.
+        self.assertEqual(next_session_after(date(2004, 12, 31), date(2026, 10, 9), calendar), date(2005, 1, 3))
+        self.assertEqual(next_session_after(date(2005, 1, 14), date(2026, 10, 9), calendar), date(2005, 1, 18))
+
+
 if __name__ == "__main__":
     unittest.main()
