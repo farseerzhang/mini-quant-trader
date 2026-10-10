@@ -83,7 +83,7 @@ def store_market_data(
     last_date = good[-1]["date"] if good else None
     queries.record_pipeline_run(
         engine,
-        command="store-market-data",
+        command="update-market-data",
         stage="ingest",
         status="OK",
         data_as_of_date=last_date,

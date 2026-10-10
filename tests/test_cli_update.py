@@ -34,47 +34,46 @@ class RecordingProvider:
         return pd.DataFrame(columns=["date", "action_type", "value"])
 
 
-class StoreCommandTests(unittest.TestCase):
+class UpdateCommandTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         document = yaml.safe_load(PROJECT_SETTINGS.read_text(encoding="utf-8"))
-        document["database"]["url"] = f"sqlite:///{Path(self.temp.name).as_posix()}/store.db"
+        document["database"]["url"] = f"sqlite:///{Path(self.temp.name).as_posix()}/update.db"
         self.config = Path(self.temp.name) / "settings.yaml"
         self.config.write_text(yaml.safe_dump(document), encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_store(self, provider, *extra):
+    def run_update(self, provider, *extra):
         with patch("quant.cli.YFinanceProvider", return_value=provider), patch(
-            "quant.cli.last_completed_session", return_value=date(2026, 10, 1)
+            "quant.data.store.last_completed_session", return_value=date(2026, 10, 1)
         ), redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            return main(["--config", str(self.config), "store-market-data", *extra])
+            return main(["--config", str(self.config), "update-market-data", *extra])
 
-    def test_without_arguments_uses_the_settings_file(self):
+    def test_without_arguments_updates_the_configured_pool_from_initial_history(self):
         provider = RecordingProvider()
-        self.assertEqual(self.run_store(provider), 0)
+        self.assertEqual(self.run_update(provider), 0)
         expected = [
             (symbol, SETTINGS.market.initial_history, date(2026, 10, 2))
             for symbol in SETTINGS.market.universe
         ]
         self.assertEqual(provider.calls, expected)
 
-    def test_explicit_arguments_override_the_defaults(self):
+    def test_initial_date_overrides_the_settings_file(self):
         provider = RecordingProvider()
-        code = self.run_store(provider, "--symbol", "aapl", "--start", "2026-09-29", "--end", "2026-10-02")
-        self.assertEqual(code, 0)
-        self.assertEqual(provider.calls, [("AAPL", date(2026, 9, 29), date(2026, 10, 2))])
+        self.assertEqual(self.run_update(provider, "--initial-date", "2026-09-29"), 0)
+        self.assertEqual({call[1] for call in provider.calls}, {date(2026, 9, 29)})
 
     def test_one_failing_symbol_does_not_abort_the_pool(self):
         failing = SETTINGS.market.universe[0]
         provider = RecordingProvider(failing=[failing])
-        self.assertEqual(self.run_store(provider), 1)
+        self.assertEqual(self.run_update(provider), 1)
         self.assertEqual(len(provider.calls), len(SETTINGS.market.universe))
 
-    def test_start_after_end_is_rejected_before_any_request(self):
+    def test_initial_date_after_the_last_session_is_rejected_before_any_request(self):
         provider = RecordingProvider()
-        self.assertEqual(self.run_store(provider, "--start", "2026-10-05"), 1)
+        self.assertEqual(self.run_update(provider, "--initial-date", "2026-10-05"), 1)
         self.assertEqual(provider.calls, [])
 
 

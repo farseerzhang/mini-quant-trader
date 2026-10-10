@@ -84,24 +84,7 @@ python -m quant calculate-features
 
 This recomputes feature history (including adjustment changes from stored corporate actions) and updates the `features` and `market_features` tables in `data/quant.db`. Warm-up rows remain NULL. SPY data is required for relative returns and market features; QQQ and ^VIX provide their respective optional market indicators.
 
-
-
-#### Store Market Data
-
-Fetch a date range and store it locally in SQLite (idempotent). With no arguments it stores every symbol in `market.symbols` and `market.market_symbols`, from `market.initial_history` through the last completed session:
-
-```bash
-python -m quant store-market-data
-python -m quant store-market-data --symbol AAPL --start 2020-01-01 --end 2026-10-02
-```
-
-Unlike `update-market-data`, this always re-requests the whole range (nothing is duplicated or overwritten). Use `update-market-data` for routine incremental refreshes.
-
-Options (all optional):
-- `--symbol`: One ticker (default: the whole pool)
-- `--start`: Inclusive start date, YYYY-MM-DD (default: `market.initial_history`)
-- `--end`: Exclusive end date, YYYY-MM-DD (default: the day after the last completed session)
-- `--db`: Path to SQLite database (default: `database.url` in `config/settings.yaml`)
+Both commands accept `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
 
 ### Configuration
 
