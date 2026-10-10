@@ -22,23 +22,66 @@ features:
   atr_period: 14
 
 regime:
-  method: rule_based               # rule_based | hmm
-  enter_threshold: 5
-  exit_threshold: 3
-  min_dwell_days: 5
+  version: 1                       # bump when the rules or any value below change (section 12)
+  method: rule_based               # REGIME role: type trained by `retrain` (rule_based | hmm); run-daily uses the ACTIVE model
+  enter_threshold: 3               # rule score runs from -5 to +5 (section 12)
+  exit_threshold: 1                # hysteresis: must satisfy 0 < exit_threshold < enter_threshold
+  min_dwell_days: 5                # sessions a regime is held before it may change
+  vix_low: 20                      # VIX below this scores +1
+  vix_high: 30                     # VIX above this scores -1
 
 model:
-  type: xgboost
-  target: future_5d_return_gt_2pct
-  target_horizon_days: 5
-  target_return: 0.02
-  embargo_days: 5
+  type: xgboost                    # PREDICTOR role: default type trained by `retrain`; run-daily uses the ACTIVE model
+  target:
+    kind: excess_vs_benchmark_vol_scaled   # | fixed_return | cross_sectional_rank
+    benchmark: SPY
+    horizon_days: 5
+    k: 0.25                                # volatility multiple; a parameter to test
+    volatility_window_days: 20
+    min_threshold: 0.005                   # floor; must exceed round-trip costs
+  embargo_days: 6                          # must be >= target.horizon_days + 1
   calibration: isotonic
 
 retrain:                           # used only by the manual `quant retrain`
-  window: expanding                # expanding | rolling
-  rolling_years: 5
-  holdout_start: 2024-01-01
+  validation:
+    scheme: expanding_walk_forward # expanding_walk_forward | rolling_walk_forward
+    rolling_years: 5               # only for rolling_walk_forward
+    min_train_years: 8             # length of the first training window
+    fold_length_months: 12
+    min_folds: 5
+    holdout_months: 12             # most recent N months; rolls forward with each retrain
+    holdout_requires_flag: true    # evaluated only with --evaluate-holdout
+    # embargo: uses model.embargo_days (must be >= model.target.horizon_days + 1)
+  search:
+    method: random                 # random search over `space`, not a full grid
+    max_trials: 30                 # number of hyperparameter sets tried (recorded in the trial log)
+    seed: 42                       # same data + config + seed -> same metrics
+    space:                         # illustrative values; tune to your own experiments
+      xgboost:
+        max_depth: [2, 3, 4, 5]
+        learning_rate: [0.01, 0.03, 0.05, 0.1]
+        n_estimators: [100, 300, 600]
+        min_child_weight: [5, 20, 50]
+        reg_lambda: [1, 5, 20]
+      random_forest:
+        max_depth: [4, 6, 8]
+        min_samples_leaf: [20, 50, 100]
+      logistic_regression:
+        C: [0.01, 0.1, 1.0]
+  gates:                           # fix these BEFORE running; do not edit after seeing results
+    predictor:
+      leak_tests_pass: true
+      beats_baseline_after_costs: true
+      min_fraction_of_folds_beating_baseline: 0.6
+      max_drawdown_not_worse_than_baseline: true
+      max_calibration_error: 0.05
+      holdout_not_worse_than_baseline: true   # checked only if the holdout was evaluated
+    regime:
+      filtered_only_test_pass: true           # no look-ahead in state estimates
+      state_mapping_stable_across_refits: true
+      min_avg_regime_dwell_days: 10
+      beats_rule_based_regime_after_costs: true
+  final_refit: true
 
 backtest:
   fee_bps: 1

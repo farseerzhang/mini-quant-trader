@@ -256,7 +256,7 @@ model_version, created_at
 PRIMARY KEY (date, regime_method, model_version)
 ```
 
-Historical regime values must be point-in-time (filtered), never smoothed over future data.
+Historical regime values must be point-in-time (filtered), never smoothed over future data. Rule-based regimes use `model_version = rule_based-v<regime.version>` (section 12.3).
 
 ## 6.7 predictions
 
@@ -398,6 +398,10 @@ MarketDataProvider
 
 The downloader depends on the abstraction only. The provider must return **unadjusted** prices and corporate actions separately.
 
+**Phase 0 finding — yfinance is not as traded.** With `auto_adjust=False`, Yahoo still rescales prices, volumes and dividends onto the share basis of every split known at fetch time; only the dividend adjustment (`Adj Close`) is left out. Examples: AAPL's close on 2020-08-28 (before the 4:1 split) comes back as 124.81 instead of 499.23, the 2014-06-06 close as 23.06 instead of 645.57 (7:1 and 4:1), and the 2020-08-07 dividend as 0.205 instead of 0.82. Storing this would break section 6.2 twice over: the rows would change every time a new split happens, and the local adjustment (section 6.3) would apply older splits a second time.
+
+`YFinanceProvider` therefore reverses the rescaling before returning data. It reads the symbol's full split history, and for each bar multiplies prices by the product of all split ratios with an ex-date after the bar, divides the volume by that product, and multiplies dividends by it. Split ratios are returned unchanged. Any future provider must likewise return values as traded.
+
 ---
 
 # 9. Incremental Downloader
@@ -497,31 +501,60 @@ Warm-up periods (e.g. first 200 days for SMA200) must be handled explicitly (NaN
 
 # 12. Market Regime Detection — Rule-Based
 
-Regimes: `BULL`, `SIDEWAYS`, `BEAR`.
+Regimes: `BULL`, `SIDEWAYS`, `BEAR`. One regime per NYSE session, computed after the close of T from stored features of the configured `features.version` (section 11), so it inherits their point-in-time guarantee.
 
-Illustrative inputs:
+## 12.1 Score
+
+Five inputs, each scored `-1`, `0` or `+1`. The score is their sum, an integer from `-5` to `+5`.
+
+| # | Input | Source at T | +1 | 0 | -1 |
+|---|---|---|---|---|---|
+| 1 | SPY trend | `market_features.spy_trend` (SPY vs its SMA of `features.sma[2]`) | > 0 | = 0 | < 0 |
+| 2 | QQQ trend | `market_features.qqq_trend` | > 0 | = 0 | < 0 |
+| 3 | SPY long-term trend | `features.sma50_vs_sma200` for SPY | > 0 | = 0 | < 0 |
+| 4 | SPY momentum | `features.return_3m` for SPY (63 sessions, total return) | > 0 | = 0 | < 0 |
+| 5 | VIX level | `market_features.vix` | < `vix_low` | between | > `vix_high` |
+
+Every input counts the same. Weights are not fitted; with five coarse inputs, weights tuned on history would mostly fit noise.
+
+**Missing inputs.** If any input is NULL at T (warm-up of the SMA200 or the 3-month return, missing QQQ or VIX data), no regime is produced for T. A missing input is never scored as `0`, because that would silently change the score's range. The state below carries over unchanged across such a day, and the day does not count towards the dwell time.
+
+## 12.2 State machine (hysteresis and dwell time)
+
+With `E = regime.enter_threshold` and `X = regime.exit_threshold` (`0 < X < E <= 5`), the thresholds are symmetric for BULL and BEAR. For each scorable session, in date order, the first matching row gives the **proposed** state:
 
 ```text
-SPY > SMA200
-QQQ > SMA200
-SMA50 > SMA200 (SPY)
-SPY momentum
-VIX level / trend
+condition                          proposed state
+score >= +E                        BULL
+score <= -E                        BEAR
+current = BULL and score <  +X     SIDEWAYS
+current = BEAR and score >  -X     SIDEWAYS
+otherwise                          current (no change)
 ```
 
-Illustrative scoring:
+- **Hysteresis:** entering BULL needs `score >= E`, but staying in BULL only needs `score >= X` (BEAR mirrors this). The gap between `E` and `X` stops daily flip-flopping near a boundary. BULL and BEAR can switch directly into each other when the score crosses the far threshold.
+- **Minimum dwell:** a proposed change takes effect only once the current state has been held for at least `regime.min_dwell_days` scorable sessions; otherwise the current state is kept. A suppressed proposal is not queued; the next session is evaluated afresh. The first scorable session starts in `SIDEWAYS` and is exempt from the dwell rule. The dwell rule also delays entering BEAR in a fast crash by up to `min_dwell_days - 1` sessions; whether that is worth the stability is tested, not assumed.
+- **Point in time:** the state at T is a forward-only recursion over scores up to T. It does depend on where the history starts, so the truncation test (section 21) cuts only the end of the history, never the start.
+
+## 12.3 Output
+
+Stored in `market_regimes` (section 6.6):
 
 ```text
-score >= +T_bull            BULL
--T_bear < score < +T_bull   SIDEWAYS
-score <= -T_bear            BEAR
+regime_method = RULE
+regime        = BULL | SIDEWAYS | BEAR
+regime_score  = the integer score (-5 .. +5)
+confidence    = |score| / 5
+model_version = rule_based-v<regime.version>
 ```
 
-Rules:
+Bump `regime.version` whenever the rules or any `regime` setting change, so stored regimes from different rules never mix (as with `features.version`).
 
-- Thresholds are starting points, configurable, and must be validated; they are not established optima.
-- Tuning thresholds on the full history is in-sample. Evaluate regime logic out-of-sample.
-- Add **hysteresis** (different enter/exit thresholds) and/or a **minimum dwell time** to prevent daily flip-flopping near boundaries.
+## 12.4 Validation
+
+- The configured values (`E = 3`, `X = 1`, `min_dwell_days = 5`, `vix_low = 20`, `vix_high = 30`) are starting points, not established optima.
+- The rule-based regime has nothing to fit. `quant retrain --role regime` with `method: rule_based` does no search: it evaluates the configured rules on the walk-forward folds against the regime gates (section 27) and registers a `CANDIDATE` with no model file.
+- Changing a threshold is a manual research trial: bump `regime.version`, record it in the trial log, and compare out-of-sample. Tuning thresholds on the full history is in-sample.
 - The rule-based regime is the baseline that HMM must beat to be adopted.
 
 ---
@@ -535,7 +568,7 @@ Critical rules:
 1. **No look-ahead in state estimation.** hmmlearn's `predict()` (Viterbi) and `predict_proba()` (smoothed posteriors) use the whole sequence, including the future. For the regime at date T, use only the **filtered** state probability computed from observations up to T (a forward-only pass, or equivalently the last-step posterior from a fit on data up to T).
 2. **Fit walk-forward.** Refit the HMM on an expanding or rolling window ending at the training cutoff; do not fit once on the full history and use it for the past.
 3. **State mapping.** HMM state numbers have no meaning. Map states to BULL / SIDEWAYS / BEAR from each fit's observed return/volatility characteristics, and check the mapping stays stable between refits.
-4. Use a long enough history (see section 27: `market.regime_history_start`) for the model to see more than one or two bear phases.
+4. Use a long enough history (see section 27: `market.initial_history`) for the model to see more than one or two bear phases.
 5. Treat results skeptically; compare against the rule-based baseline before adopting.
 
 ---
@@ -933,25 +966,32 @@ Use Python's `logging`. Log data ingestion, API failures, quality warnings, feat
 ```yaml
 database:
   url: sqlite:///data/quant.db
+  busy_timeout_ms: 5000
 
 market:
+  provider: yfinance
+  request_timeout_seconds: 20
+  calendar: XNYS                   # exchange_calendars name for the NYSE trading calendar
   initial_history: 2005-01-01      # regime work needs more than one or two bear phases
   timezone: America/New_York
   execution: next_open
-  symbols: [SPY, QQQ, AAPL, MSFT, NVDA]
+  symbols: [AAPL, MSFT, SPY, QQQ]
   market_symbols: [SPY, QQQ, ^VIX]
 
 features:
   version: 1
-  sma: [20, 50, 200]
+  sma: [20, 50, 200]               # must match the price_vs_sma<N> columns of the features table
   rsi_period: 14
   atr_period: 14
 
 regime:
+  version: 1                       # bump when the rules or any value below change (section 12)
   method: rule_based               # REGIME role: type trained by `retrain` (rule_based | hmm); run-daily uses the ACTIVE model
-  enter_threshold: 5
-  exit_threshold: 3
-  min_dwell_days: 5
+  enter_threshold: 3               # rule score runs from -5 to +5 (section 12)
+  exit_threshold: 1                # hysteresis: must satisfy 0 < exit_threshold < enter_threshold
+  min_dwell_days: 5                # sessions a regime is held before it may change
+  vix_low: 20                      # VIX below this scores +1
+  vix_high: 30                     # VIX above this scores -1
 
 model:
   type: xgboost                    # PREDICTOR role: default type trained by `retrain`; run-daily uses the ACTIVE model
@@ -1015,6 +1055,8 @@ risk:
   max_position_size: 0.10
   max_sector_weight: 0.30
 ```
+
+`config/settings.yaml` holds exactly this block. Every section and key is required and unknown keys are rejected at startup, so the two must be changed together.
 
 There is no `schedule` section. Secrets/API keys must not be committed; use environment variables or a local secrets mechanism.
 

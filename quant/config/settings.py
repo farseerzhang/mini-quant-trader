@@ -86,20 +86,39 @@ class FeatureSettings:
         return f"market-v{self.version}"
 
 
+# The rule-based regime sums five inputs scored -1, 0 or +1 (proposal section 12).
+RULE_SCORE_MAX = 5
+
+
 @dataclass(frozen=True)
 class RegimeSettings:
+    version: int
     method: str
     enter_threshold: float
     exit_threshold: float
     min_dwell_days: int
+    vix_low: float
+    vix_high: float
 
     def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ConfigError("regime.version must be >= 1")
         if self.method not in ("rule_based", "hmm"):
             raise ConfigError("regime.method must be 'rule_based' or 'hmm'")
-        if not 0 < self.exit_threshold < self.enter_threshold:
-            raise ConfigError("regime thresholds must satisfy 0 < exit_threshold < enter_threshold")
+        if not 0 < self.exit_threshold < self.enter_threshold <= RULE_SCORE_MAX:
+            raise ConfigError(
+                "regime thresholds must satisfy "
+                f"0 < exit_threshold < enter_threshold <= {RULE_SCORE_MAX} (the maximum rule score)"
+            )
         if self.min_dwell_days < 1:
             raise ConfigError("regime.min_dwell_days must be >= 1")
+        if not 0 < self.vix_low < self.vix_high:
+            raise ConfigError("regime VIX levels must satisfy 0 < vix_low < vix_high")
+
+    @property
+    def rule_version(self) -> str:
+        """model_version stored with rule-based regimes (market_regimes.model_version)."""
+        return f"rule_based-v{self.version}"
 
 
 @dataclass(frozen=True)

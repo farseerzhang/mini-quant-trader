@@ -29,10 +29,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.market.initial_history, date(2005, 1, 1))
         self.assertEqual(settings.market.universe, ["AAPL", "MSFT", "SPY", "QQQ", "^VIX"])
         self.assertEqual(settings.features.sma, (20, 50, 200))
-        self.assertEqual(settings.regime.enter_threshold, 5)
+        self.assertEqual(settings.regime.enter_threshold, 3)
         self.assertEqual(settings.regime.min_dwell_days, 5)
+        self.assertEqual(settings.regime.rule_version, "rule_based-v1")
         self.assertEqual(settings.model["type"], "xgboost")
-        self.assertEqual(settings.retrain["holdout_start"], date(2024, 1, 1))
+        self.assertEqual(settings.model["target"]["kind"], "excess_vs_benchmark_vol_scaled")
+        self.assertGreaterEqual(settings.model["embargo_days"], settings.model["target"]["horizon_days"] + 1)
+        self.assertEqual(settings.retrain["validation"]["holdout_months"], 12)
+        self.assertEqual(settings.retrain["search"]["seed"], 42)
         self.assertEqual(settings.backtest["fee_bps"], 1)
         self.assertEqual(settings.risk["max_position_size"], 0.10)
 
@@ -77,7 +81,9 @@ class SettingsTests(unittest.TestCase):
             "unknown key": set_value("market", "symbolz", ["SPY"]),
             "sma not increasing": set_value("features", "sma", [50, 20, 200]),
             "sma wrong length": set_value("features", "sma", [20, 50]),
-            "bad thresholds": set_value("regime", "enter_threshold", 2),
+            "bad thresholds": set_value("regime", "enter_threshold", 1),
+            "threshold above max score": set_value("regime", "enter_threshold", 6),
+            "bad vix levels": set_value("regime", "vix_low", 35),
             "bad database url": set_value("database", "url", "postgresql://host/db"),
             "symbols not a list": set_value("market", "symbols", "SPY"),
             "bad date": set_value("market", "initial_history", "not-a-date"),

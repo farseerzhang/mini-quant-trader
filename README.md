@@ -113,6 +113,8 @@ All settings live in one file, `config/settings.yaml`, laid out as in section 27
 
 The application uses SQLite with WAL mode for local data storage. The database file is set by `database.url` (default `data/quant.db`).
 
+`daily_prices` holds prices, volumes and dividends as originally traded. Yahoo returns them rescaled for later splits, and `YFinanceProvider` reverses that (see section 8 of `proposal.md`). Databases built before this fix hold Yahoo's split-rescaled values, and stored rows are never overwritten, so rebuild such a database: move `data/quant.db` aside, then run `python -m quant update-market-data` and `python -m quant calculate-features`.
+
 ## Project Structure
 
 ```
