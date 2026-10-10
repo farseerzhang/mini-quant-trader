@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Mapping, Sequence
 
 from sqlalchemy import Engine
 
@@ -51,6 +52,22 @@ def _actions_to_rows(symbol: str, provider_name: str, actions) -> list[dict]:
             }
         )
     return rows
+
+
+STOCK = "STOCK"
+BENCHMARK = "BENCHMARK"
+
+
+def sync_symbol_table(engine: Engine, sectors: Mapping[str, str], market_symbols: Sequence[str]) -> None:
+    """Write the configured universe into the symbols table: pool stocks with their
+    sector, market symbols (benchmarks and indicators) without one."""
+    rows = [{"symbol": symbol, "asset_type": STOCK, "sector": sector} for symbol, sector in sectors.items()]
+    rows += [
+        {"symbol": symbol, "asset_type": BENCHMARK, "sector": None}
+        for symbol in market_symbols
+        if symbol not in sectors
+    ]
+    queries.sync_symbols(engine, rows)
 
 
 def store_market_data(

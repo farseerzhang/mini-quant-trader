@@ -18,7 +18,7 @@ def _variant(directory: str, mutate=lambda document: None) -> Path:
     document = copy.deepcopy(document)
     mutate(document)
     path = Path(directory) / "settings.yaml"
-    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     return path
 
 
@@ -27,9 +27,13 @@ class SettingsTests(unittest.TestCase):
         settings = load_settings(PROJECT_SETTINGS)
         self.assertEqual(settings.database.path, "data/quant.db")
         self.assertEqual(settings.market.initial_history, date(2005, 1, 1))
-        self.assertGreaterEqual(len(settings.market.symbols), 30)
-        self.assertEqual(settings.market.symbols[:2], ("AAPL", "MSFT"))
+        self.assertGreaterEqual(len(settings.market.stocks), 30)
+        self.assertEqual(settings.market.stocks[:2], ("AAPL", "MSFT"))
         self.assertEqual(settings.market.universe[-3:], ["SPY", "QQQ", "^VIX"])
+        self.assertEqual(len(settings.market.symbols), 11)  # every GICS sector is represented
+        self.assertEqual(settings.market.sectors["XOM"], "energy")
+        self.assertEqual(settings.risk.max_sector_weight, 0.30)
+        self.assertEqual(settings.strategies.regime_switch.bear_exposures[0], 0.0)
         self.assertEqual(settings.features.sma, (20, 50, 200))
         self.assertEqual(settings.regime.enter_threshold, 3)
         self.assertEqual(settings.regime.min_dwell_days, 5)
@@ -40,13 +44,13 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.retrain["validation"]["holdout_months"], 12)
         self.assertEqual(settings.retrain["search"]["seed"], 42)
         self.assertEqual(settings.backtest["fee_bps"], 1)
-        self.assertEqual(settings.risk["max_position_size"], 0.10)
+        self.assertEqual(settings.risk.max_position_size, 0.10)
 
     def test_values_come_from_the_file_not_from_code(self):
         def change(document):
             document["features"]["rsi_period"] = 10
             document["features"]["version"] = 2
-            document["market"]["symbols"] = ["NVDA"]
+            document["market"]["symbols"] = {"information_technology": ["NVDA"]}
             document["market"]["request_timeout_seconds"] = 7
 
         with tempfile.TemporaryDirectory() as directory:
@@ -57,13 +61,34 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.market.request_timeout_seconds, 7)
         self.assertEqual(settings.market.universe, ["NVDA", "SPY", "QQQ", "^VIX"])
 
-    def test_symbols_may_be_grouped_into_sub_lists(self):
-        def group(document):
-            document["market"]["symbols"] = [["aapl", "MSFT"], ["XOM"], "KO", ["MSFT"]]
+    def test_symbols_map_gics_sectors_to_stocks(self):
+        def pool(document):
+            document["market"]["symbols"] = {"energy": ["xom", "CVX"], "information_technology": ["AAPL"]}
 
         with tempfile.TemporaryDirectory() as directory:
-            settings = load_settings(_variant(directory, group))
-        self.assertEqual(settings.market.symbols, ("AAPL", "MSFT", "XOM", "KO"))
+            settings = load_settings(_variant(directory, pool))
+        self.assertEqual(settings.market.stocks, ("XOM", "CVX", "AAPL"))
+        self.assertEqual(settings.market.sectors, {"XOM": "energy", "CVX": "energy", "AAPL": "information_technology"})
+        self.assertEqual(settings.market.universe, ["XOM", "CVX", "AAPL", "SPY", "QQQ", "^VIX"])
+
+    def test_rejects_invalid_sector_pools(self):
+        def pool(value):
+            def mutate(document):
+                document["market"]["symbols"] = value
+            return mutate
+
+        bad = {
+            "plain list": pool(["AAPL", "MSFT"]),
+            "unknown sector": pool({"finacials": ["JPM"]}),
+            "stock in two sectors": pool({"energy": ["XOM"], "materials": ["XOM"]}),
+            "empty sector": pool({"energy": []}),
+            "nested list": pool({"energy": [["XOM"]]}),
+            "benchmark in the pool": pool({"financials": ["SPY"]}),
+        }
+        for name, mutate in bad.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(ConfigError):
+                    load_settings(_variant(directory, mutate))
 
     def test_missing_sections_and_keys_are_errors_not_silent_defaults(self):
         def drop_section(document):
@@ -95,7 +120,13 @@ class SettingsTests(unittest.TestCase):
             "threshold above max score": set_value("regime", "enter_threshold", 6),
             "bad vix levels": set_value("regime", "vix_low", 35),
             "bad database url": set_value("database", "url", "postgresql://host/db"),
-            "symbols not a list": set_value("market", "symbols", "SPY"),
+            "symbols not a mapping": set_value("market", "symbols", "SPY"),
+            "position cap above 1": set_value("risk", "max_position_size", 1.5),
+            "sector cap below position cap": set_value("risk", "max_sector_weight", 0.05),
+            "rsi exit below entry": lambda d: d["strategies"]["mean_reversion"].update(rsi_exit=20),
+            "bear exposure above 1": lambda d: d["strategies"]["regime_switch"].update(bear_exposures=[1.5]),
+            "no baseline exposure": lambda d: d["strategies"]["regime_switch"].update(bear_exposures=[]),
+            "unknown strategy key": lambda d: d["strategies"]["mean_reversion"].update(rsi_entri=25),
             "bad date": set_value("market", "initial_history", "not-a-date"),
         }
         for name, mutate in bad.items():

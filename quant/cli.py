@@ -3,7 +3,7 @@ import sys
 from datetime import date
 
 from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, Settings, load_settings
-from quant.data.store import sync_market_data
+from quant.data.store import sync_market_data, sync_symbol_table
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
 from quant.persistence.database import create_db_engine, init_db
@@ -88,6 +88,7 @@ def _run_update(args: argparse.Namespace, settings: Settings) -> int:
 def _update_market_data(args: argparse.Namespace, settings: Settings) -> str:
     engine = _engine(settings, args.db)
     try:
+        sync_symbol_table(engine, settings.market.sectors, settings.market.market_symbols)
         report = sync_market_data(
             engine,
             _provider(settings),

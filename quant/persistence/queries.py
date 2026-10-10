@@ -22,13 +22,31 @@ def upsert_symbol(engine: Engine, symbol: str, **attrs: Any) -> None:
     now = _now()
     values = {"symbol": symbol, "active": attrs.pop("active", 1), "created_at": now, "updated_at": now, **attrs}
     stmt = sqlite_insert(tables.symbols).values(**values)
-    update_cols = {
-        column.name: stmt.excluded[column.name]
-        for column in tables.symbols.columns
-        if column.name not in ("symbol", "created_at")
-    }
+    # Only the columns given here are updated, so a bare upsert during ingestion
+    # never clears the sector or asset type synchronized from config.
+    update_cols = {name: stmt.excluded[name] for name in values if name not in ("symbol", "created_at")}
     with engine.begin() as conn:
         conn.execute(stmt.on_conflict_do_update(index_elements=["symbol"], set_=update_cols))
+
+
+def sync_symbols(engine: Engine, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Make the symbols table match config (section 6.1): upsert these rows as active,
+    and mark every other stored symbol inactive. History is kept either way."""
+    now = _now()
+    payload = [
+        {"active": 1, "created_at": now, "updated_at": now, **dict(row)}
+        for row in rows
+    ]
+    with engine.begin() as conn:
+        for values in payload:
+            stmt = sqlite_insert(tables.symbols).values(**values)
+            update_cols = {name: stmt.excluded[name] for name in values if name not in ("symbol", "created_at")}
+            conn.execute(stmt.on_conflict_do_update(index_elements=["symbol"], set_=update_cols))
+        conn.execute(
+            tables.symbols.update()
+            .where(tables.symbols.c.symbol.not_in([values["symbol"] for values in payload]))
+            .values(active=0, updated_at=now)
+        )
 
 
 def upsert_daily_prices(engine: Engine, rows: Sequence[Mapping[str, Any]]) -> int:
@@ -240,3 +258,45 @@ def replace_regimes(
         if payload:
             conn.execute(regimes.insert(), payload)
     return len(payload)
+
+
+def load_feature_panel(
+    engine: Engine, feature_version: str, symbols: Sequence[str], columns: Sequence[str]
+) -> dict[str, pd.DataFrame]:
+    """Per feature column, a dates x symbols frame (symbols in the given order)."""
+    feature_columns = [tables.features.c[name] for name in columns]
+    stmt = (
+        select(tables.features.c.symbol, tables.features.c.date, *feature_columns)
+        .where(
+            tables.features.c.feature_version == feature_version,
+            tables.features.c.symbol.in_(list(symbols)),
+        )
+        .order_by(tables.features.c.date)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    frame = pd.DataFrame([dict(row) for row in rows], columns=["symbol", "date", *columns])
+    frame["date"] = pd.DatetimeIndex(frame["date"])
+    panel = {}
+    for name in columns:
+        wide = frame.pivot(index="date", columns="symbol", values=name)
+        panel[name] = wide.reindex(columns=list(symbols)).astype(float)
+    return panel
+
+
+def load_regimes(engine: Engine, regime_method: str, model_version: str) -> pd.Series:
+    """Stored regime per date for one method and version."""
+    regimes = tables.market_regimes
+    stmt = (
+        select(regimes.c.date, regimes.c.regime)
+        .where(regimes.c.regime_method == regime_method, regimes.c.model_version == model_version)
+        .order_by(regimes.c.date)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).all()
+    return pd.Series(
+        [row.regime for row in rows],
+        index=pd.DatetimeIndex([row.date for row in rows]),
+        name="regime",
+        dtype=object,
+    )

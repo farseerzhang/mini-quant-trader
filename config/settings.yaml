@@ -12,21 +12,22 @@ market:
   initial_history: 2005-01-01      # regime work needs more than one or two bear phases
   timezone: America/New_York
   execution: next_open
-  # Stock pool for the pooled predictor: large caps listed before 2005 across all 11 sectors,
-  # avoiding stocks with large spin-offs (spin-offs are not modelled as corporate actions).
-  # Chosen today, so backtests carry survivorship bias (section 20).
+  # Stock pool by GICS sector (sector -> stocks), used for the sector cap (risk.max_sector_weight).
+  # Large caps listed before 2005, avoiding stocks with large spin-offs (spin-offs are not
+  # modelled as corporate actions). Chosen today, and sectors are today's classification,
+  # so backtests carry survivorship bias (section 20).
   symbols:
-    - [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]   # information technology
-    - [GOOGL, DIS, NFLX]                                          # communication services
-    - [AMZN, HD, NKE, SBUX, LOW, TJX]                             # consumer discretionary
-    - [PG, KO, PEP, WMT, COST]                                    # consumer staples
-    - [JNJ, UNH, AMGN, LLY, TMO]                                  # health care
-    - [JPM, BAC, WFC, GS, BLK]                                    # financials
-    - [CAT, UNP, LMT, DE]                                         # industrials
-    - [XOM, CVX, SLB]                                             # energy
-    - [SHW, NEM]                                                  # materials
-    - [NEE, SO, AEP]                                              # utilities
-    - [O, PSA]                                                    # real estate
+    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]
+    communication_services: [GOOGL, DIS, NFLX]
+    consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX]
+    consumer_staples: [PG, KO, PEP, WMT, COST]
+    health_care: [JNJ, UNH, AMGN, LLY, TMO]
+    financials: [JPM, BAC, WFC, GS, BLK]
+    industrials: [CAT, UNP, LMT, DE]
+    energy: [XOM, CVX, SLB]
+    materials: [SHW, NEM]
+    utilities: [NEE, SO, AEP]
+    real_estate: [O, PSA]
   market_symbols: [SPY, QQQ, ^VIX]
 
 features:
@@ -36,13 +37,22 @@ features:
   atr_period: 14
 
 regime:
-  version: 1                       # bump when the rules or any value below change (section 12)
+  version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)
   method: rule_based               # REGIME role: type trained by `retrain` (rule_based | hmm); run-daily uses the ACTIVE model
   enter_threshold: 3               # rule score runs from -5 to +5 (section 12)
   exit_threshold: 1                # hysteresis: must satisfy 0 < exit_threshold < enter_threshold
   min_dwell_days: 5                # sessions a regime is held before it may change
   vix_low: 20                      # VIX below this scores +1
   vix_high: 30                     # VIX above this scores -1
+
+strategies:                        # rule-based baselines (section 17); weights at the close of T
+  version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)
+  mean_reversion:
+    rsi_entry: 40                  # enter when RSI14 is below this (and above SMA200, MACD histogram rising)
+    rsi_exit: 50                   # exit when RSI14 is above this ...
+    max_holding_days: 10           # ... or after this many sessions
+  regime_switch:                   # BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x bear_exposure
+    bear_exposures: [0.0, 0.5]     # first = baseline (all cash); others are variants fixed before any results
 
 model:
   type: xgboost                    # PREDICTOR role: default type trained by `retrain`; run-daily uses the ACTIVE model

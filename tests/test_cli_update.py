@@ -40,7 +40,7 @@ class UpdateCommandTests(unittest.TestCase):
         document = yaml.safe_load(PROJECT_SETTINGS.read_text(encoding="utf-8"))
         document["database"]["url"] = f"sqlite:///{Path(self.temp.name).as_posix()}/update.db"
         self.config = Path(self.temp.name) / "settings.yaml"
-        self.config.write_text(yaml.safe_dump(document), encoding="utf-8")
+        self.config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()

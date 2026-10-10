@@ -200,7 +200,7 @@ symbol (PK), name, asset_type, exchange, currency,
 sector, industry, active, created_at, updated_at
 ```
 
-`sector` / `industry` are needed for sector concentration limits. The config file lists the universe; the `symbols` table is synchronized from it at the start of each run (config is the single source of truth).
+`sector` / `industry` are needed for sector concentration limits. The config file lists the universe; the `symbols` table is synchronized from it at the start of each run (config is the single source of truth). `market.symbols` maps GICS sectors to stocks; `update-market-data` writes each pool stock with `asset_type = STOCK` and its sector, each market symbol with `asset_type = BENCHMARK`, and marks symbols no longer in the config inactive (their history is kept).
 
 ## 6.2 daily_prices (unadjusted)
 
@@ -779,27 +779,44 @@ The strategy layer combines:
 Market regime + technical indicators + ML probability + risk constraints
 ```
 
-Example trend strategy:
+Phase 4 implements the rule-based baselines below (`quant/strategies/`). Each is a pure function from the stored features and regime at the close of T to a **target weight** per stock; the backtest fills the change at the open of T+1 (section 4.5). A missing input (warm-up) never counts as a signal. They are baselines for testing, not trading rules.
+
+## 17.1 Rules
+
+| Strategy | Holds a stock at T when | Exit |
+|---|---|---|
+| `trend` | entry: `price_vs_sma200 > 0` and `sma50_vs_sma200 > 0` and `macd_hist_over_price > 0` (MACD above its signal line) | when `price_vs_sma200 <= 0` or `sma50_vs_sma200 <= 0`; the MACD is an entry trigger only |
+| `mean_reversion` | entry: `price_vs_sma200 > 0` and `rsi14 < rsi_entry` and the MACD histogram above its value at T-1 | `rsi14 > rsi_exit`, or after `max_holding_days` sessions; no re-entry on the exit session |
+| `regime_switch` | BULL: `trend`; SIDEWAYS: `mean_reversion`, with new entries only on SIDEWAYS sessions; BEAR: `trend` scaled by `bear_exposure`; no regime: nothing | follows the rules above |
+
+`strategies.regime_switch.bear_exposures` lists the BEAR exposure of the baseline first (`0`: all cash) and then the pre-registered variants (`0.5`: trend at half size, reported as `regime_switch_bear50`). Variants are fixed in configuration before any result is seen; adding one later is a new trial (section 15.4).
+
+## 17.2 Sizing (section 19)
+
+1. Each held stock gets `1 / (number held)`, capped at `risk.max_position_size`.
+2. A sector whose total exceeds `risk.max_sector_weight` is scaled down proportionally to the cap. The excess stays in cash; it is not moved to other sectors.
+3. The result is multiplied by the regime exposure (regime_switch only).
+
+Whatever does not add up to 1 is cash. Sectors come from `market.symbols`, which maps GICS sectors to stocks (today's classification, not point-in-time).
+
+## 17.3 Signal frequency (measured 2026-10-10, 48 stocks, 2005-2026)
+
+Measured before any backtest result, so the rule changes below are design, not tuning on performance:
 
 ```text
-Price > SMA200 AND SMA50 > SMA200 AND MACD > MACD signal
+                 first version                         current rules
+trend            ~14 stocks, 80% invested, 30x/yr      ~28 stocks, 93% invested, 6.6x/yr
+                 (MACD > signal required every session: it flips ~20 times per stock
+                 per year, median holding 8 sessions -> now an entry trigger only,
+                 median holding 17 sessions, mean 72)
+mean_reversion   rsi_entry 30: ~0.2 stocks, 2% invested  rsi_entry 40: ~1.7 stocks, 16% invested
+                 (RSI < 30 above SMA200 on only 0.35% of stock-days)
+regime_switch    ~12 stocks, 65% invested, 26x/yr      ~24 stocks, 74% invested, 5.9x/yr
 ```
 
-Example mean-reversion strategy:
+About 2.7x of trend's turnover is resizing the other holdings when the number held changes; the backtest removes most of it with a minimum trade size (section 18: ignore tiny weight changes).
 
-```text
-Price > SMA200 AND RSI is low AND MACD turning upward
-```
-
-Regime selects the strategy family:
-
-```text
-BULL     -> trend
-SIDEWAYS -> mean reversion
-BEAR     -> defensive / reduced exposure
-```
-
-These are examples for testing, not trading rules.
+Once a strategy has been backtested, any change to its rules or settings is a new trial (section 15.4).
 
 ---
 
@@ -1002,21 +1019,22 @@ market:
   initial_history: 2005-01-01      # regime work needs more than one or two bear phases
   timezone: America/New_York
   execution: next_open
-  # Stock pool for the pooled predictor: large caps listed before 2005 across all 11 sectors,
-  # avoiding stocks with large spin-offs (spin-offs are not modelled as corporate actions).
-  # Chosen today, so backtests carry survivorship bias (section 20).
+  # Stock pool by GICS sector (sector -> stocks), used for the sector cap (risk.max_sector_weight).
+  # Large caps listed before 2005, avoiding stocks with large spin-offs (spin-offs are not
+  # modelled as corporate actions). Chosen today, and sectors are today's classification,
+  # so backtests carry survivorship bias (section 20).
   symbols:
-    - [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]   # information technology
-    - [GOOGL, DIS, NFLX]                                          # communication services
-    - [AMZN, HD, NKE, SBUX, LOW, TJX]                             # consumer discretionary
-    - [PG, KO, PEP, WMT, COST]                                    # consumer staples
-    - [JNJ, UNH, AMGN, LLY, TMO]                                  # health care
-    - [JPM, BAC, WFC, GS, BLK]                                    # financials
-    - [CAT, UNP, LMT, DE]                                         # industrials
-    - [XOM, CVX, SLB]                                             # energy
-    - [SHW, NEM]                                                  # materials
-    - [NEE, SO, AEP]                                              # utilities
-    - [O, PSA]                                                    # real estate
+    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]
+    communication_services: [GOOGL, DIS, NFLX]
+    consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX]
+    consumer_staples: [PG, KO, PEP, WMT, COST]
+    health_care: [JNJ, UNH, AMGN, LLY, TMO]
+    financials: [JPM, BAC, WFC, GS, BLK]
+    industrials: [CAT, UNP, LMT, DE]
+    energy: [XOM, CVX, SLB]
+    materials: [SHW, NEM]
+    utilities: [NEE, SO, AEP]
+    real_estate: [O, PSA]
   market_symbols: [SPY, QQQ, ^VIX]
 
 features:
@@ -1026,13 +1044,22 @@ features:
   atr_period: 14
 
 regime:
-  version: 1                       # bump when the rules or any value below change (section 12)
+  version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)
   method: rule_based               # REGIME role: type trained by `retrain` (rule_based | hmm); run-daily uses the ACTIVE model
   enter_threshold: 3               # rule score runs from -5 to +5 (section 12)
   exit_threshold: 1                # hysteresis: must satisfy 0 < exit_threshold < enter_threshold
   min_dwell_days: 5                # sessions a regime is held before it may change
   vix_low: 20                      # VIX below this scores +1
   vix_high: 30                     # VIX above this scores -1
+
+strategies:                        # rule-based baselines (section 17); weights at the close of T
+  version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)
+  mean_reversion:
+    rsi_entry: 40                  # enter when RSI14 is below this (and above SMA200, MACD histogram rising)
+    rsi_exit: 50                   # exit when RSI14 is above this ...
+    max_holding_days: 10           # ... or after this many sessions
+  regime_switch:                   # BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x bear_exposure
+    bear_exposures: [0.0, 0.5]     # first = baseline (all cash); others are variants fixed before any results
 
 model:
   type: xgboost                    # PREDICTOR role: default type trained by `retrain`; run-daily uses the ACTIVE model

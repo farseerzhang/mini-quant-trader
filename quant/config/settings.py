@@ -39,6 +39,22 @@ class DatabaseSettings:
         return make_url(self.url).database
 
 
+# The 11 GICS sectors; market.symbols is keyed by these names.
+GICS_SECTORS = (
+    "energy",
+    "materials",
+    "industrials",
+    "consumer_discretionary",
+    "consumer_staples",
+    "health_care",
+    "financials",
+    "information_technology",
+    "communication_services",
+    "utilities",
+    "real_estate",
+)
+
+
 @dataclass(frozen=True)
 class MarketSettings:
     provider: str
@@ -47,19 +63,36 @@ class MarketSettings:
     initial_history: date
     timezone: str
     execution: str
-    symbols: tuple[str, ...]
+    # Stock pool by GICS sector, in config order: sector -> stocks.
+    symbols: Mapping[str, tuple[str, ...]]
     market_symbols: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if self.request_timeout_seconds <= 0:
             raise ConfigError("market.request_timeout_seconds must be positive")
-        if not (self.symbols or self.market_symbols):
+        if not (self.stocks or self.market_symbols):
             raise ConfigError("market.symbols and market.market_symbols must not both be empty")
+        both = sorted(set(self.stocks) & set(self.market_symbols))
+        if both:
+            raise ConfigError(
+                f"{', '.join(both)} listed in both market.symbols and market.market_symbols; "
+                "the stock pool holds tradable stocks, market_symbols holds benchmarks and indicators"
+            )
+
+    @property
+    def stocks(self) -> tuple[str, ...]:
+        """The stock pool as one flat tuple, in config order."""
+        return tuple(symbol for members in self.symbols.values() for symbol in members)
+
+    @property
+    def sectors(self) -> dict[str, str]:
+        """Each pool stock's GICS sector (today's classification, not point-in-time)."""
+        return {symbol: sector for sector, members in self.symbols.items() for symbol in members}
 
     @property
     def universe(self) -> list[str]:
         """Every symbol to keep up to date: the stock pool plus market-level symbols."""
-        return list(dict.fromkeys((*self.symbols, *self.market_symbols)))
+        return list(dict.fromkeys((*self.stocks, *self.market_symbols)))
 
 
 @dataclass(frozen=True)
@@ -122,16 +155,67 @@ class RegimeSettings:
 
 
 @dataclass(frozen=True)
+class RiskSettings:
+    max_position_size: float
+    max_sector_weight: float
+
+    def __post_init__(self) -> None:
+        if not 0 < self.max_position_size <= 1:
+            raise ConfigError("risk.max_position_size must be in (0, 1]")
+        if not self.max_position_size <= self.max_sector_weight <= 1:
+            raise ConfigError("risk.max_sector_weight must be in [max_position_size, 1]")
+
+
+@dataclass(frozen=True)
+class MeanReversionSettings:
+    rsi_entry: float
+    rsi_exit: float
+    max_holding_days: int
+
+    def __post_init__(self) -> None:
+        if not 0 < self.rsi_entry < self.rsi_exit < 100:
+            raise ConfigError("strategies.mean_reversion must satisfy 0 < rsi_entry < rsi_exit < 100")
+        if self.max_holding_days < 1:
+            raise ConfigError("strategies.mean_reversion.max_holding_days must be >= 1")
+
+
+@dataclass(frozen=True)
+class RegimeSwitchSettings:
+    # The first value is the baseline; any others are variants fixed before seeing results.
+    bear_exposures: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if not self.bear_exposures:
+            raise ConfigError("strategies.regime_switch.bear_exposures must list at least the baseline")
+        if any(not 0 <= value <= 1 for value in self.bear_exposures):
+            raise ConfigError("strategies.regime_switch.bear_exposures must be in [0, 1]")
+        if len(set(self.bear_exposures)) != len(self.bear_exposures):
+            raise ConfigError("strategies.regime_switch.bear_exposures must not repeat a value")
+
+
+@dataclass(frozen=True)
+class StrategySettings:
+    version: int
+    mean_reversion: MeanReversionSettings
+    regime_switch: RegimeSwitchSettings
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ConfigError("strategies.version must be >= 1")
+
+
+@dataclass(frozen=True)
 class Settings:
     database: DatabaseSettings
     market: MarketSettings
     features: FeatureSettings
     regime: RegimeSettings
+    strategies: StrategySettings
+    risk: RiskSettings
     # Sections for later phases are loaded as-is and validated when those phases land.
     model: Mapping[str, Any]
     retrain: Mapping[str, Any]
     backtest: Mapping[str, Any]
-    risk: Mapping[str, Any]
 
 
 def _section(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -168,18 +252,51 @@ def _as_date(value: Any) -> date:
 
 
 def _as_str_tuple(value: Any) -> tuple[str, ...]:
-    """A list of symbols, optionally grouped into sub-lists (e.g. one per sector)."""
     if isinstance(value, str) or not isinstance(value, (list, tuple)):
         raise ValueError("expected a list of symbols")
-    items: list[Any] = []
-    for item in value:
-        if isinstance(item, (list, tuple)):
-            items.extend(item)
-        else:
-            items.append(item)
-    if any(isinstance(item, (list, tuple, dict)) for item in items):
-        raise ValueError("symbol groups must not be nested more than one level")
-    return tuple(dict.fromkeys(str(item).strip().upper() for item in items if str(item).strip()))
+    if any(isinstance(item, (list, tuple, Mapping)) for item in value):
+        raise ValueError("expected a flat list of symbols")
+    return tuple(dict.fromkeys(str(item).strip().upper() for item in value if str(item).strip()))
+
+
+def _as_sector_pool(value: Any) -> dict[str, tuple[str, ...]]:
+    """market.symbols: a mapping of GICS sector -> list of stocks; each stock in one sector."""
+    if not isinstance(value, Mapping):
+        raise ConfigError("market.symbols must map GICS sectors to stock lists, e.g. 'energy: [XOM, CVX]'")
+    pool: dict[str, tuple[str, ...]] = {}
+    seen: dict[str, str] = {}
+    for sector, members in value.items():
+        if sector not in GICS_SECTORS:
+            raise ConfigError(f"market.symbols: unknown sector {sector!r}; use one of {', '.join(GICS_SECTORS)}")
+        try:
+            stocks = _as_str_tuple(members)
+        except ValueError as exc:
+            raise ConfigError(f"market.symbols.{sector}: {exc}") from exc
+        if not stocks:
+            raise ConfigError(f"market.symbols.{sector} is empty; remove the sector or add stocks")
+        for stock in stocks:
+            if stock in seen:
+                raise ConfigError(f"{stock} is listed under both {seen[stock]} and {sector}")
+            seen[stock] = sector
+        pool[sector] = stocks
+    return pool
+
+
+def _as_float_tuple(value: Any) -> tuple[float, ...]:
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError("expected a list of numbers")
+    return tuple(float(item) for item in value)
+
+
+def _subsection(cls, name: str, converters: Mapping[str, Any] | None = None):
+    """Converter for a nested mapping such as strategies.mean_reversion."""
+
+    def convert(value: Any):
+        if not isinstance(value, Mapping):
+            raise ConfigError(f"'{name}' must be a mapping")
+        return _build(cls, name, value, converters)
+
+    return convert
 
 
 def _as_int_tuple(value: Any) -> tuple[int, ...]:
@@ -212,12 +329,23 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
             MarketSettings,
             "market",
             _section(raw, "market"),
-            {"initial_history": _as_date, "symbols": _as_str_tuple, "market_symbols": _as_str_tuple},
+            {"initial_history": _as_date, "symbols": _as_sector_pool, "market_symbols": _as_str_tuple},
         ),
         features=_build(FeatureSettings, "features", _section(raw, "features"), {"sma": _as_int_tuple}),
         regime=_build(RegimeSettings, "regime", _section(raw, "regime")),
+        strategies=_build(
+            StrategySettings,
+            "strategies",
+            _section(raw, "strategies"),
+            {
+                "mean_reversion": _subsection(MeanReversionSettings, "strategies.mean_reversion"),
+                "regime_switch": _subsection(
+                    RegimeSwitchSettings, "strategies.regime_switch", {"bear_exposures": _as_float_tuple}
+                ),
+            },
+        ),
+        risk=_build(RiskSettings, "risk", _section(raw, "risk")),
         model=dict(_section(raw, "model")),
         retrain=dict(_section(raw, "retrain")),
         backtest=dict(_section(raw, "backtest")),
-        risk=dict(_section(raw, "risk")),
     )

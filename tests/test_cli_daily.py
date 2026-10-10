@@ -71,9 +71,9 @@ class RunDailyEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             document = yaml.safe_load(PROJECT_SETTINGS.read_text(encoding="utf-8"))
             document["database"]["url"] = f"sqlite:///{Path(directory).as_posix()}/daily.db"
-            document["market"]["symbols"] = ["AAPL"]
+            document["market"]["symbols"] = {"information_technology": ["AAPL"]}
             config = Path(directory) / "settings.yaml"
-            config.write_text(yaml.safe_dump(document), encoding="utf-8")
+            config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
             output = StringIO()
             with patch("quant.cli.YFinanceProvider", return_value=RisingMarketProvider()), patch(
