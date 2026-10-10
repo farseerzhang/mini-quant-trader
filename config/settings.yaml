@@ -64,7 +64,9 @@ model:
     volatility_window_days: 20
     min_threshold: 0.005                   # floor; must exceed round-trip costs
   embargo_days: 6                          # must be >= target.horizon_days + 1
-  calibration: isotonic
+  calibration: sigmoid                     # sigmoid | isotonic; isotonic overfits the weak signal (section 14)
+  calibration_months: 12                   # per fold: calibrate on the last N months of training,
+                                           # which the model is not fit on (purged)
 
 retrain:                           # used only by the manual `quant retrain`
   validation:

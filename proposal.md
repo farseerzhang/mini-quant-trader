@@ -674,7 +674,23 @@ Targets are research parameters. The target definition is stored with every mode
 
 ## Probability calibration
 
-Raw tree-model probabilities are not calibrated. Fit a calibration step (isotonic or Platt) on a validation fold, and track Brier score and log-loss in addition to AUC. A probability of 0.73 means 73% **under the defined target and model assumptions**, not a 73% chance of making money.
+Raw tree-model probabilities are not calibrated. Fit a calibration step (Platt/sigmoid, the configured choice; isotonic is available but overfits here, see below) on data the model was not fit on, and track Brier score and log-loss in addition to AUC. A probability of 0.73 means 73% **under the defined target and model assumptions**, not a 73% chance of making money.
+
+### Measured (2026-10-10, development folds only, before any hyperparameter search)
+
+Per fold the calibrator is fit on the last `model.calibration_months` (12) of the training window, which the model is not fit on (purged by `embargo_days`). Mean over the 11 folds, compared with always predicting the fold's training base rate:
+
+```text
+                      calibration   log-loss skill   Brier skill   calib. error   AUC     folds beating the reference
+logistic_regression   none (raw)    +0.28%           +0.36%        0.020          0.534   9/11
+                      isotonic      -0.93%           +0.06%        0.026          0.533   2/11
+                      sigmoid       +0.23%           +0.29%        0.022          0.534   9/11
+random_forest         none (raw)    +0.28%           +0.37%        0.019          0.534   9/11
+                      isotonic      -0.71%           +0.03%        0.028          0.530   2/11
+                      sigmoid       +0.19%           +0.25%        0.023          0.534   9/11
+```
+
+With a weak signal and one year of calibration data, isotonic regression overfits: its step function pushes probabilities to the extremes (on average 0.05-0.76 against raw 0.16-0.55), and log-loss punishes the confident misses, so it does worse than no calibration. Sigmoid (Platt) calibration, with two parameters, keeps nearly all of the raw scores' accuracy. These three variants count as calibration trials (section 15.4). **Decision (2026-10-10): `model.calibration: sigmoid`.**
 
 ## Regime as an input
 
@@ -1106,7 +1122,9 @@ model:
     volatility_window_days: 20
     min_threshold: 0.005                   # floor; must exceed round-trip costs
   embargo_days: 6                          # must be >= target.horizon_days + 1
-  calibration: isotonic
+  calibration: sigmoid                     # sigmoid | isotonic; isotonic overfits the weak signal (section 14)
+  calibration_months: 12                   # per fold: calibrate on the last N months of training,
+                                           # which the model is not fit on (purged)
 
 retrain:                           # used only by the manual `quant retrain`
   validation:

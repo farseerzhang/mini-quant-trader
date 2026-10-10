@@ -237,8 +237,13 @@ class ModelSettings:
     target: TargetSettings
     embargo_days: int
     calibration: str
+    # Each fold's calibration is fit on the last calibration_months of its training window,
+    # which the model itself is not fit on (purged by embargo_days).
+    calibration_months: int
 
     def __post_init__(self) -> None:
+        if self.calibration_months < 1:
+            raise ConfigError("model.calibration_months must be >= 1")
         if self.type not in MODEL_TYPES:
             raise ConfigError(f"model.type must be one of {', '.join(MODEL_TYPES)}")
         if self.calibration not in CALIBRATIONS:
