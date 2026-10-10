@@ -80,6 +80,51 @@ class CorporateActionAdjustmentTests(unittest.TestCase):
         self.assertAlmostEqual(adjusted.loc[dates[2], "total_return_close"], 25.0)
 
 
+class TotalReturnOpenTests(unittest.TestCase):
+    """The open on the total-return basis, which backtests fill at (signal at T, fill at T+1 open)."""
+
+    def setUp(self):
+        dates = pd.bdate_range("2026-01-05", periods=3)
+        self.dates = dates
+        prices = pd.DataFrame(
+            {
+                "open": [99.0, 98.0, 99.5],
+                "high": [101.0, 100.0, 101.0],
+                "low": [98.0, 97.0, 99.0],
+                "close": [100.0, 99.0, 100.0],
+                "volume": [100, 100, 100],
+            },
+            index=dates,
+        )
+        # A 2.00 dividend goes ex on day 2: the day-2 open of 98 is already ex-dividend.
+        actions = pd.DataFrame([{"ex_date": dates[1].date(), "action_type": "DIVIDEND", "value": 2.0}])
+        self.adjusted = prepare_adjusted_series(prices, actions)
+
+    def test_holding_overnight_into_the_ex_date_earns_the_dividend(self):
+        tr = self.adjusted
+        overnight = tr.loc[self.dates[1], "total_return_open"] / tr.loc[self.dates[0], "total_return_close"] - 1
+        # Exact for a holder: (98 + 2) / 100 - 1 = 0. The index reinvests the dividend at the
+        # ex-date close (99), not the open (98): error = 2/100 * (98 - 99)/99, about -0.02%.
+        self.assertAlmostEqual(overnight, 98 * (101 / 99) / 100 - 1)
+        self.assertAlmostEqual(overnight, 0.0, places=3)
+        raw_overnight = 98 / 100 - 1
+        self.assertGreater(overnight - raw_overnight, 0.019)  # the dividend, not a 2% loss
+
+    def test_buying_at_the_ex_date_open_does_not_earn_the_dividend(self):
+        tr = self.adjusted
+        intraday = tr.loc[self.dates[1], "total_return_close"] / tr.loc[self.dates[1], "total_return_open"] - 1
+        self.assertAlmostEqual(intraday, 99 / 98 - 1)
+
+    def test_without_dividends_the_open_is_the_split_adjusted_open(self):
+        dates = pd.bdate_range("2026-01-05", periods=3)
+        prices = _price_frame(dates, [100.0, 100.0, 25.0])
+        prices["open"] = [99.0, 101.0, 24.0]
+        actions = pd.DataFrame([{"ex_date": dates[2].date(), "action_type": "SPLIT", "value": 4.0}])
+        adjusted = prepare_adjusted_series(prices, actions)
+        np.testing.assert_allclose(adjusted["total_return_open"], [99 / 4, 101 / 4, 24.0])
+        np.testing.assert_allclose(adjusted["total_return_open"], adjusted["open"])
+
+
 class TechnicalFeatureTests(unittest.TestCase):
     def test_warmup_periods_are_null_not_backfilled(self):
         dates = pd.bdate_range("2025-01-01", periods=20)

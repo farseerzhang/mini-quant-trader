@@ -228,6 +228,15 @@ PRIMARY KEY (symbol, ex_date, action_type)
 
 Adjusted prices and total-return series are **computed** from `daily_prices` + `corporate_actions` (a view or a function), so every consumer (features, labels, backtests) uses one consistent adjustment basis. Features that need adjusted series (long moving averages, momentum, labels) must read the computed series, never raw closes across split dates.
 
+The total-return series covers the open as well as the close, because labels (section 14) and backtest fills (section 20) use the open of T+1:
+
+```text
+total_return_close[T] = total_return_close[T-1] * (close[T] + dividend[T]) / close[T-1]   (split-adjusted values)
+total_return_open[T]  = open[T] * total_return_close[T] / close[T]
+```
+
+Holding overnight into an ex-date therefore earns the dividend, and buying at the ex-date open does not. Dividends are treated as reinvested at the ex-date close; the error against reinvesting at the open is the dividend yield times that day's open-to-close move (about 0.005% for a 0.5% dividend and a 1% move).
+
 ## 6.4 market_features
 
 Market-level features keyed by date only (not duplicated per symbol):

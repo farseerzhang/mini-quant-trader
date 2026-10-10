@@ -77,6 +77,15 @@ def prepare_adjusted_series(prices: pd.DataFrame, actions: pd.DataFrame) -> pd.D
     are divided by the split ratio and pre-split volumes are multiplied by it.
     Dividends are similarly scaled for splits occurring after their ex-date.
     The total-return index is chained from the first available adjusted close.
+
+    ``total_return_open`` puts the open on the same basis: it applies the
+    close's total-return factor of that day (``total_return_close / close``) to
+    the adjusted open. Backtests fill at it (signal at the close of T, fill at
+    the open of T+1), so holding overnight into an ex-date earns the dividend
+    and buying at the ex-date open does not. Like any total-return index built
+    from closes, it assumes dividends are reinvested at the ex-date close; the error
+    against reinvesting at the open is the dividend yield times that day's
+    open-to-close move (about 0.005% for a 0.5% dividend and a 1% move).
     """
     required = {"open", "high", "low", "close", "volume"}
     if not required.issubset(prices.columns):
@@ -133,6 +142,7 @@ def prepare_adjusted_series(prices: pd.DataFrame, actions: pd.DataFrame) -> pd.D
     if len(adjusted):
         daily_total_return.iloc[0] = 0.0
     adjusted["total_return_close"] = adjusted["close"].iloc[0] * (1.0 + daily_total_return).cumprod()
+    adjusted["total_return_open"] = adjusted["open"] * (adjusted["total_return_close"] / adjusted["close"])
     return adjusted
 
 
