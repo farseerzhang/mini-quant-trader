@@ -27,14 +27,6 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     db_help = "SQLite database path (overrides database.url in the settings file)"
 
-    fetch_command = commands.add_parser(
-        "fetch-market-data",
-        help="fetch daily market data from Yahoo Finance without saving it locally",
-    )
-    fetch_command.add_argument("--symbol", required=True, help="ticker symbol, e.g. AAPL")
-    fetch_command.add_argument("--start", required=True, type=_iso_date, help="inclusive start date")
-    fetch_command.add_argument("--end", required=True, type=_iso_date, help="exclusive end date")
-
     store_command = commands.add_parser(
         "store-market-data",
         help="fetch a date range and store it locally in SQLite (idempotent); defaults come from the settings file",
@@ -81,17 +73,6 @@ def _engine(settings: Settings, db_override: str | None):
     )
     init_db(engine)
     return engine
-
-
-def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
-    try:
-        prices = _provider(settings).get_daily_data(args.symbol, args.start, args.end)
-    except MarketDataError as exc:
-        print(f"Market data request failed: {exc}", file=sys.stderr)
-        return 1
-    print(f"Received {len(prices)} daily bars for {args.symbol.upper()} from Yahoo Finance:")
-    print(prices.to_string())
-    return 0
 
 
 def _run_store(args: argparse.Namespace, settings: Settings) -> int:
@@ -174,13 +155,8 @@ def _run_features(args: argparse.Namespace, settings: Settings) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "fetch-market-data" and args.start >= args.end:
-        parser.error("--start must be earlier than --end")
-
     try:
         settings = load_settings(args.config)
-        if args.command == "fetch-market-data":
-            return _run_fetch(args, settings)
         if args.command == "store-market-data":
             return _run_store(args, settings)
         if args.command == "update-market-data":

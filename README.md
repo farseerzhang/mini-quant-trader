@@ -64,14 +64,6 @@ This will install the required packages:
 
 The application provides a CLI for market data operations:
 
-#### Import Market Data (Preview)
-
-Fetch daily market data from Yahoo Finance without saving it locally:
-
-```bash
-python -m quant fetch-market-data --symbol AAPL --start 2026-09-25 --end 2026-10-02
-```
-
 #### Update the Configured Symbol Pool
 
 Fetch missing daily bars for `market.symbols` and `market.market_symbols` (from `config/settings.yaml`) through the last completed NYSE session:
