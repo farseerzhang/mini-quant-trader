@@ -748,6 +748,22 @@ The ML backtest is itself walk-forward: at each point in time the signal comes f
 - Judge models by out-of-sample, after-cost trading metrics, stability across folds, sub-periods and regimes, and complexity, never training accuracy.
 - Compare against: rule-based baseline, Logistic Regression, SPY buy-and-hold, and a random / shuffled-signal baseline.
 
+### 15.4.1 Implementation and first search (`quant/models/search.py`)
+
+Candidates are every combination in `retrain.search.space` when there are at most `max_trials`, otherwise `max_trials` drawn at random with `seed`. Each runs the full walk-forward. The selection score is the **mean minus one standard deviation of the per-fold log-loss skill** (log-loss relative to that fold's base-rate reference, so folds of different difficulty are comparable); the first of equal scores wins. Trading results are left to the gates.
+
+Measured on 2026-10-10 (11 development folds, sigmoid calibration; 12 trials):
+
+```text
+logistic_regression   C = 0.01 / 0.1 / 1.0          log-loss skill +0.25% / +0.23% / +0.22% (std ~0.23%)   best: C = 0.01
+random_forest         max_depth 4-8 x leaf 20-100    log-loss skill +0.14% .. +0.21% (std 0.31-0.41%)       best: depth 8, leaf 20
+all candidates        AUC 0.532-0.535, calibration error 0.022-0.025, better than the reference in 9 of 11 folds
+```
+
+The differences between candidates are far smaller than the year-to-year spread, so the hyperparameters barely matter here, and Random Forest is not better than Logistic Regression. The best Random Forest sits at the edge of the grid (deepest trees, smallest leaves); widening the grid after seeing this would be a new trial.
+
+Trial log so far: 12 search trials, plus 6 earlier calibration comparisons (none / isotonic / sigmoid for each model type).
+
 ## 15.5 Final refit
 
 After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).
