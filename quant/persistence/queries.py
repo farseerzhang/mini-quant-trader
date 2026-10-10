@@ -183,3 +183,60 @@ def save_features(
             result = conn.execute(stmt, market_rows)
             market_count = result.rowcount or 0
     return symbol_count, market_count
+
+def load_regime_inputs(engine: Engine, feature_version: str, market_feature_version: str) -> pd.DataFrame:
+    """Market features joined with SPY's per-symbol trend and momentum, indexed by date."""
+    market = tables.market_features
+    spy = tables.features
+    stmt = (
+        select(
+            market.c.date,
+            market.c.spy_trend,
+            market.c.qqq_trend,
+            market.c.vix,
+            spy.c.sma50_vs_sma200.label("spy_sma50_vs_sma200"),
+            spy.c.return_3m.label("spy_return_3m"),
+        )
+        .select_from(
+            market.outerjoin(
+                spy,
+                (spy.c.date == market.c.date)
+                & (spy.c.symbol == "SPY")
+                & (spy.c.feature_version == feature_version),
+            )
+        )
+        .where(market.c.feature_version == market_feature_version)
+        .order_by(market.c.date)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    columns = ["spy_trend", "qqq_trend", "spy_sma50_vs_sma200", "spy_return_3m", "vix"]
+    frame = pd.DataFrame([dict(row) for row in rows], columns=["date", *columns])
+    frame = frame.set_index("date")
+    frame.index = pd.DatetimeIndex(frame.index)
+    return frame.astype(float)
+
+
+def replace_regimes(
+    engine: Engine, regime_method: str, model_version: str, rows: Sequence[Mapping[str, Any]]
+) -> int:
+    """Replace the stored history of one method and version with freshly computed rows.
+
+    The regime is path-dependent, so a recomputed history replaces the old one
+    as a whole (in one transaction) rather than being merged row by row.
+    """
+    now = _now()
+    payload = [
+        {**row, "regime_method": regime_method, "model_version": model_version, "created_at": now}
+        for row in rows
+    ]
+    regimes = tables.market_regimes
+    with engine.begin() as conn:
+        conn.execute(
+            regimes.delete().where(
+                regimes.c.regime_method == regime_method, regimes.c.model_version == model_version
+            )
+        )
+        if payload:
+            conn.execute(regimes.insert(), payload)
+    return len(payload)

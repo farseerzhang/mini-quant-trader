@@ -7,6 +7,7 @@ from quant.data.store import sync_market_data
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
 from quant.persistence.database import create_db_engine, init_db
+from quant.regime.pipeline import calculate_and_store_regimes
 
 
 def _iso_date(value: str) -> date:
@@ -42,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="calculate and persist versioned technical and market features",
     )
     feature_command.add_argument("--db", help=db_help)
+
+    regime_command = commands.add_parser(
+        "calculate-regime",
+        help="calculate and persist the rule-based BULL/SIDEWAYS/BEAR regime from stored features",
+    )
+    regime_command.add_argument("--db", help=db_help)
     return parser
 
 
@@ -105,6 +112,25 @@ def _run_features(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
+    try:
+        summary = calculate_and_store_regimes(engine, settings.regime, settings.features)
+    except ValueError as exc:
+        print(f"Regime calculation failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    counts = ", ".join(f"{name} {count}" for name, count in summary.sessions_by_regime.items())
+    print(
+        f"Calculated {summary.rows} {summary.model_version} regimes "
+        f"from {summary.first_date} through {summary.last_date}."
+    )
+    print(f"Latest: {summary.latest_regime} (score {summary.latest_score:+d})")
+    print(f"Sessions: {counts}; average dwell {summary.average_dwell_days:.1f} sessions")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -114,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_update(args, settings)
         if args.command == "calculate-features":
             return _run_features(args, settings)
+        if args.command == "calculate-regime":
+            return _run_regime(args, settings)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1

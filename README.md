@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 2 - Features** (In Progress)
+**Phase 3 - Rule-based regime** (Done; next: Phase 4 - rule-based strategies and backtesting)
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -29,6 +29,7 @@ The project is currently in early development. Implemented features include:
 - CLI interface for data import and storage
 - Split-adjusted OHLCV and dividend-aware total-return price series
 - Versioned technical and market feature calculation
+- Rule-based BULL/SIDEWAYS/BEAR market regime with hysteresis and minimum dwell time
 
 ## Installation
 
@@ -84,7 +85,17 @@ python -m quant calculate-features
 
 This recomputes feature history (including adjustment changes from stored corporate actions) and updates the `features` and `market_features` tables in `data/quant.db`. Warm-up rows remain NULL. SPY data is required for relative returns and market features; QQQ and ^VIX provide their respective optional market indicators.
 
-Both commands accept `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
+#### Calculate the Market Regime
+
+After calculating features, classify every session as BULL, SIDEWAYS or BEAR:
+
+```bash
+python -m quant calculate-regime
+```
+
+The score at each session sums five -1/0/+1 inputs (SPY trend, QQQ trend, SPY SMA50 vs SMA200, SPY 3-month return, VIX level), and a state machine with hysteresis (`regime.enter_threshold` / `regime.exit_threshold`) and a minimum dwell time (`regime.min_dwell_days`) turns scores into regimes; the full rules are in section 12 of `proposal.md`. Sessions missing any input get no regime. The whole history is recomputed and replaces the stored rows of the `market_regimes` table for `rule_based-v<regime.version>`; bump `regime.version` when changing any `regime` setting.
+
+Every command accepts `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
 
 ### Configuration
 

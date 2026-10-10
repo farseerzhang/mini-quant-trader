@@ -149,3 +149,20 @@ features = Table(
         "symbol", "date", "feature_version", name="pk_features"
     ),
 )
+
+
+# 6.6 market_regimes — one point-in-time regime per session, per method and version.
+market_regimes = Table(
+    "market_regimes",
+    metadata,
+    Column("date", Date, nullable=False),
+    Column("regime_method", String, nullable=False),  # RULE | HMM
+    Column("regime", String, nullable=False),  # BULL | SIDEWAYS | BEAR
+    Column("regime_score", Float),
+    Column("confidence", Float),
+    Column("model_version", String, nullable=False),
+    Column("created_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("date", "regime_method", "model_version", name="pk_market_regimes"),
+    CheckConstraint("regime_method IN ('RULE', 'HMM')", name="ck_market_regimes_method"),
+    CheckConstraint("regime IN ('BULL', 'SIDEWAYS', 'BEAR')", name="ck_market_regimes_regime"),
+)
