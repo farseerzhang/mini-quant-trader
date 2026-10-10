@@ -206,13 +206,13 @@ sector, industry, active, created_at, updated_at
 
 ```sql
 CREATE TABLE daily_prices (
-    symbol TEXT NOT NULL,
-    date DATE NOT NULL,
-    open REAL, high REAL, low REAL, close REAL,   -- as traded (split-unadjusted)
-    volume INTEGER,                                -- NULL allowed (e.g. ^VIX)
-    provider TEXT NOT NULL,
-    ingested_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (symbol, date)
+                              symbol TEXT NOT NULL,
+                              date DATE NOT NULL,
+                              open REAL, high REAL, low REAL, close REAL,   -- as traded (split-unadjusted)
+                              volume INTEGER,                                -- NULL allowed (e.g. ^VIX)
+                              provider TEXT NOT NULL,
+                              ingested_at TIMESTAMP NOT NULL,
+                              PRIMARY KEY (symbol, date)
 );
 ```
 
@@ -300,11 +300,15 @@ target_weight = 0 and held      -> EXIT
 ## 6.10 model_versions
 
 ```text
-model_id (PK), model_type, version, status (CANDIDATE | ACTIVE | RETIRED),
+model_id (PK), role (REGIME | PREDICTOR), model_type, version,
+status (CANDIDATE | ACTIVE | RETIRED), depends_on_model_id,
 training_start, training_end, feature_version, target_definition,
-hyperparameters, metrics, library_versions, config_hash, git_commit,
+hyperparameters, metrics, validation_report_path, gates_passed, trial_count,
+holdout_evaluated, library_versions, config_hash, git_commit,
 model_path, created_at
 ```
+
+`role` is what the model is used for (see section 16.1). At most one model per role is `ACTIVE` at a time. `depends_on_model_id` records which model supplied an input at training time (for example, the regime model whose output a predictor used as a feature).
 
 The serialized model lives on disk; SQLite holds metadata and the path:
 
@@ -552,20 +556,48 @@ A **single pooled model** across all symbols (with scale-free features and optio
 
 ## Target
 
-Default (configurable):
+### Default: volatility-scaled excess return vs the benchmark
 
 ```text
-future_5d_return > 2%
+entry          = open of T+1                 (execution convention, section 4.5)
+exit           = open of T+1+h               (h = horizon in trading days, default 5)
+stock_return   = adjusted return from entry to exit
+bench_return   = the same window for the benchmark (default SPY)
+excess         = stock_return - bench_return
+sigma_T        = trailing daily volatility of the stock, using data <= T only
+threshold      = max( k * sigma_T * sqrt(h), min_threshold )
+target         = 1 if excess > threshold else 0
 ```
 
-Preferred alternatives to evaluate (a fixed 2% means very different things for high- and low-volatility stocks):
+Reasons:
+
+- It removes the market's overall move. The predictor answers "is this stock stronger than the market?" (stock selection), while the `REGIME` role handles market direction. The two roles do not duplicate each other.
+- Scaling the threshold by volatility makes the target comparable across stocks (a move that is large for a low-volatility stock is not for a high-volatility one) and keeps the share of positive labels more stable over time.
+- `min_threshold` is a floor that must be above the round-trip trading cost (fees plus slippage), so a "hit" is worth something after costs.
+
+Limitations to keep in mind:
+
+- In a falling market a stock can beat SPY and still lose money. A high probability is therefore never a reason to buy by itself; the regime and risk layers decide exposure.
+- A tiny threshold turns the label into noise. Treat `k` and `min_threshold` as parameters to test, not as established values.
+
+### Implementation rules
+
+- Labels start from the real entry price (open of T+1), not the close of T, so they match what can actually be traded.
+- Returns use the adjusted series (section 6.3), including dividends.
+- `sigma_T` and every other input to the label threshold use data available at or before T.
+- A label for row T uses prices up to `T+1+h`, so the label window spans `h+1` trading days. The embargo must be at least `h+1` days (section 15).
+- The horizon `h` is a parameter. Longer horizons (10 or 20 days) mean lower turnover; test them rather than assuming 5.
+
+### Alternatives to compare
 
 ```text
-future_5d_excess_return_vs_SPY > 0
-future_5d_return > k * recent_volatility
+fixed_return        future return over h days > fixed threshold (e.g. 2%)   # reference only
+cross_sectional_rank  each day, top ~30% = 1, bottom ~30% = 0, middle dropped
 ```
 
-The target definition is stored with every model and prediction.
+The rank target gives cleaner labels but needs a universe large enough for a daily ranking to mean something (dozens of symbols). It is not useful with a handful of stocks.
+
+Targets are research parameters. The target definition is stored with every model and prediction, and every variant tried is counted in the trial log. **Do not compare AUC or log-loss across different targets**, because they are different questions. Compare targets by out-of-sample, after-cost backtest results against the baselines, using the same walk-forward folds.
 
 ## Probability calibration
 
@@ -579,13 +611,48 @@ The rule-based regime may be an input feature. HMM regime becomes an input only 
 
 # 15. ML Validation Rules
 
-- **Never** use random train/test splits.
-- Use walk-forward (expanding or rolling) validation.
-- **Purge and embargo:** because the target looks `h` days ahead, labels in adjacent rows overlap. Leave a gap of at least `h` trading days between the end of training data and the start of validation data.
-- Keep a **final untouched out-of-sample holdout**. It is evaluated once per major model decision, not repeatedly tuned against.
-- Keep a **trial log** (how many models, targets, parameter sets were tried) in `model_versions` / experiment notes. The more variants tried, the less any single good result means.
-- Judge models by out-of-sample, after-cost trading metrics, stability across sub-periods and regimes, and complexity, not training accuracy.
-- Compare against: rule-based baseline, Logistic Regression, a random/shuffled-signal baseline.
+## 15.1 Scheme: expanding walk-forward plus a final holdout
+
+A single train / validate / test split is not enough: one validation year may contain only one kind of market, and a short final test period is too noisy to tell skill from luck. The default scheme is:
+
+```text
+Fold 1: train [start .. Y1]   -> validate Y1+1
+Fold 2: train [start .. Y2]   -> validate Y2+1
+Fold 3: train [start .. Y3]   -> validate Y3+1
+  ...
+Fold n: train [start .. Yn]   -> validate Yn+1
+Final holdout: the most recent period (never used for tuning)
+```
+
+Rules:
+
+- **Never** use random train/test splits. Training data always precedes validation data in time.
+- Validation folds must cover different market conditions (for example 2020 and 2022 style volatility, not only calm bull years). Require a minimum number of folds and a minimum initial training length (see section 27).
+- **Purge and embargo:** because the target looks ahead, labels in adjacent rows overlap (a label spans `h+1` trading days, see section 14). Leave a gap of at least `h+1` trading days at **every** boundary: between training and validation, and between validation and the holdout.
+- Select hyperparameters by the **average and the stability across all folds**, not by the best single fold.
+- Dates are never hardcoded. Fold length, minimum training length and holdout length are configured as relative rules, so the windows move forward by themselves on the next retrain.
+
+## 15.2 Final holdout
+
+- The holdout is evaluated only when explicitly requested (`--evaluate-holdout`). It is never part of the normal retrain loop.
+- Every holdout evaluation is logged (timestamp, model id, result). Reports show how many times the holdout has been used.
+- If the holdout result is used to change the model, features, target or parameters, that period is consumed and is no longer an out-of-sample test. Treat it as ordinary validation data from then on and rely on a later period (and forward testing) for new evidence.
+- When the holdout window rolls forward on a later retrain, the previous holdout period becomes ordinary data.
+
+## 15.3 Backtests of ML strategies
+
+The ML backtest is itself walk-forward: at each point in time the signal comes from a model trained only on data available before that point (plus the embargo). It is never one model trained once and replayed over the whole period.
+
+## 15.4 Trials and pass criteria
+
+- Keep a **trial log** (how many models, targets and parameter sets were tried) in `model_versions` and the validation report. The more variants tried, the less any single good result means.
+- Pass criteria ("gates") are defined in configuration **before** a run, and are not changed after seeing the results. Typical gates: leakage tests pass; the strategy beats the rule-based baseline after costs in at least a minimum fraction of folds; maximum drawdown is not worse than the baseline; calibration error is below a limit; the holdout (if evaluated) is not worse than the baseline.
+- Judge models by out-of-sample, after-cost trading metrics, stability across folds, sub-periods and regimes, and complexity, never training accuracy.
+- Compare against: rule-based baseline, Logistic Regression, SPY buy-and-hold, and a random / shuffled-signal baseline.
+
+## 15.5 Final refit
+
+After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).
 
 ---
 
@@ -602,18 +669,47 @@ When you decide to retrain:        quant retrain
 When a candidate looks good:       quant promote <model_id>
 ```
 
-`quant retrain`:
+## 16.1 Model roles
 
-1. Builds the training set from stored data up to a chosen cutoff (default: last completed session).
-2. Trains the configured model type(s) using purged walk-forward validation.
-3. Calibrates probabilities.
-4. Registers a new model as `CANDIDATE` with metrics, feature version, library versions, config hash and git commit.
-5. Prints a comparison against the currently `ACTIVE` model and the rule-based baseline.
-6. **Does not change the active model.**
+The system has more than one kind of model, each with a different job. Each kind is a **role**, and each role has its own `ACTIVE` model.
 
-`quant promote <model_id>` sets a candidate `ACTIVE` (previous active becomes `RETIRED`). `quant run-daily` never trains; it only loads the active model. If no active model exists, it falls back to rule-based signals and says so.
+| Role | Question it answers | Candidate models | ACTIVE at a time |
+|---|---|---|---|
+| `REGIME` | What state is the market in? | Rule-based, HMM | one |
+| `PREDICTOR` | How likely is this stock to meet the target over the horizon? | Logistic Regression, Random Forest, XGBoost | one |
 
-Retrain parameters (window type/length, horizon, embargo) come from configuration, with CLI overrides.
+Rules:
+
+- `quant promote` only affects the role of the candidate being promoted. Promoting a new HMM does not touch the active XGBoost model, and the other way round.
+- Candidates **within** a role compete: Logistic Regression, Random Forest and XGBoost are compared for the `PREDICTOR` role, and the winner is promoted. Combining several into an ensemble is a later research decision.
+- Roles are validated differently. A `PREDICTOR` is judged by out-of-sample predictive quality, calibration and after-cost trading results (section 15). A `REGIME` model is judged by: filtered-only (no look-ahead) tests, stability of the state mapping across refits, reasonable average dwell time, and whether downstream strategies do better after costs than with the rule-based regime. Each role has its own gates in configuration.
+- **Dependency:** if the regime is an input feature of the predictor, a new `REGIME` model changes the predictor's inputs. When a regime model is promoted, the active predictor (whose `depends_on_model_id` points to the old regime model) is marked stale. `quant status` and `quant run-daily` show a warning until the predictor is retrained and validated on the new regime history. The old predictor keeps running meanwhile.
+
+## 16.2 What `quant retrain` automates
+
+1. Builds the dataset from stored data up to a cutoff (default: last completed session).
+2. Generates the folds and the holdout window from configuration, applying the embargo at every boundary.
+3. Trains, calibrates and evaluates the configured model type(s) on every fold, drawing hyperparameter sets from `retrain.search.space` (random search, fixed seed). The number of trials is recorded.
+4. Runs the leakage tests (section 21). Any failure aborts the run.
+5. Runs the walk-forward backtest with fees and slippage and compares it with the rule-based baseline, Logistic Regression, SPY buy-and-hold and the random baseline, with breakdowns by fold, year and market regime.
+6. Evaluates the pre-defined gates and reports PASS or FAIL for each.
+7. Only if `--evaluate-holdout` is passed: evaluates the holdout once and logs it.
+8. Refits the chosen configuration on all data up to the cutoff (section 15.5).
+9. Registers a new model as `CANDIDATE` with metrics, validation report, gate results, trial count, feature version, library versions, config hash and git commit.
+10. Prints a summary against the currently `ACTIVE` model of the same role.
+11. **Does not change any active model.**
+
+## 16.3 What stays manual
+
+- Defining the gates and the validation configuration (before looking at results).
+- Reading the report and deciding whether a candidate is worth activating.
+- `quant promote <model_id>`, which sets a candidate `ACTIVE` for its role (the previous active model of that role becomes `RETIRED`; other roles are untouched). Promotion refuses a candidate whose gates failed, unless `--override "<reason>"` is given; the override and reason are logged.
+- Research decisions: changing features, the target definition or the model type.
+- Deciding to evaluate the holdout.
+
+`quant run-daily` never trains; it only loads the `ACTIVE` model of each role. If no active `REGIME` model exists, it uses the rule-based regime. If no active `PREDICTOR` exists, it uses rule-based signals only. In both cases it says so.
+
+Retrain parameters (window type, fold length, horizon, embargo, search space, gates) come from configuration, with CLI overrides.
 
 ---
 
@@ -772,8 +868,8 @@ Run manually, whenever fresh signals are wanted. Because ingestion fills any gap
 3.  Run data-quality checks (quarantine bad rows)
 4.  Recompute adjustments if new corporate actions appeared
 5.  Calculate/update features and market features
-6.  Calculate market regime
-7.  Load the ACTIVE model (fallback: rule-based only)
+6.  Calculate market regime (ACTIVE regime model; fallback: rule-based)
+7.  Load the ACTIVE predictor (fallback: rule-based signals only)
 8.  Generate predictions
 9.  Run strategy selection
 10. Apply risk management -> target weights
@@ -793,10 +889,12 @@ There is no APScheduler and no background process.
 ```text
 python -m quant ingest                 # step 2-3 only
 python -m quant run-daily              # full daily pipeline
-python -m quant retrain [--model xgb]  # MANUAL; registers a CANDIDATE
-python -m quant promote <model_id>     # activate a candidate
+python -m quant retrain --role predictor|regime [--model xgb] [--evaluate-holdout]
+                                       # MANUAL; validates, then registers a CANDIDATE
+python -m quant promote <model_id> [--override "<reason>"]
+                                       # activate a candidate for its role (refuses failed gates)
 python -m quant backtest [--strategy ...]
-python -m quant status                 # last runs, data freshness, active model
+python -m quant status                 # last runs, data freshness, active model per role, stale warnings
 streamlit run dashboard/app.py         # dashboard (separate process)
 ```
 
@@ -808,7 +906,7 @@ If the user later wants automation, a scheduler can be added in a later phase wi
 
 Read-only view of the database.
 
-**Status:** last successful `run-daily`, data as-of date, active model version, warnings (stale data, quarantined rows).
+**Status:** last successful `run-daily`, data as-of date, active model version per role, warnings (stale data, quarantined rows).
 
 **Market Overview:** current regime and score, SPY, QQQ, VIX.
 
@@ -850,23 +948,63 @@ features:
   atr_period: 14
 
 regime:
-  method: rule_based               # rule_based | hmm
+  method: rule_based               # REGIME role: type trained by `retrain` (rule_based | hmm); run-daily uses the ACTIVE model
   enter_threshold: 5
   exit_threshold: 3
   min_dwell_days: 5
 
 model:
-  type: xgboost
-  target: future_5d_return_gt_2pct
-  target_horizon_days: 5
-  target_return: 0.02
-  embargo_days: 5
+  type: xgboost                    # PREDICTOR role: default type trained by `retrain`; run-daily uses the ACTIVE model
+  target:
+    kind: excess_vs_benchmark_vol_scaled   # | fixed_return | cross_sectional_rank
+    benchmark: SPY
+    horizon_days: 5
+    k: 0.25                                # volatility multiple; a parameter to test
+    volatility_window_days: 20
+    min_threshold: 0.005                   # floor; must exceed round-trip costs
+  embargo_days: 6                          # must be >= target.horizon_days + 1
   calibration: isotonic
 
 retrain:                           # used only by the manual `quant retrain`
-  window: expanding                # expanding | rolling
-  rolling_years: 5
-  holdout_start: 2024-01-01
+  validation:
+    scheme: expanding_walk_forward # expanding_walk_forward | rolling_walk_forward
+    rolling_years: 5               # only for rolling_walk_forward
+    min_train_years: 8             # length of the first training window
+    fold_length_months: 12
+    min_folds: 5
+    holdout_months: 12             # most recent N months; rolls forward with each retrain
+    holdout_requires_flag: true    # evaluated only with --evaluate-holdout
+    # embargo: uses model.embargo_days (must be >= model.target.horizon_days + 1)
+  search:
+    method: random                 # random search over `space`, not a full grid
+    max_trials: 30                 # number of hyperparameter sets tried (recorded in the trial log)
+    seed: 42                       # same data + config + seed -> same metrics
+    space:                         # illustrative values; tune to your own experiments
+      xgboost:
+        max_depth: [2, 3, 4, 5]
+        learning_rate: [0.01, 0.03, 0.05, 0.1]
+        n_estimators: [100, 300, 600]
+        min_child_weight: [5, 20, 50]
+        reg_lambda: [1, 5, 20]
+      random_forest:
+        max_depth: [4, 6, 8]
+        min_samples_leaf: [20, 50, 100]
+      logistic_regression:
+        C: [0.01, 0.1, 1.0]
+  gates:                           # fix these BEFORE running; do not edit after seeing results
+    predictor:
+      leak_tests_pass: true
+      beats_baseline_after_costs: true
+      min_fraction_of_folds_beating_baseline: 0.6
+      max_drawdown_not_worse_than_baseline: true
+      max_calibration_error: 0.05
+      holdout_not_worse_than_baseline: true   # checked only if the holdout was evaluated
+    regime:
+      filtered_only_test_pass: true           # no look-ahead in state estimates
+      state_mapping_stable_across_refits: true
+      min_avg_regime_dwell_days: 10
+      beats_rule_based_regime_after_costs: true
+  final_refit: true
 
 backtest:
   fee_bps: 1
@@ -901,7 +1039,9 @@ There is no `schedule` section. Secrets/API keys must not be committed; use envi
 - Feature pipeline -> SQLite
 - Prediction -> signal pipeline
 - `retrain` registers a candidate and does not change the active model
-- `promote` switches the active model correctly
+- `promote` switches the active model for its role only and leaves the other role untouched
+- Promoting a new regime model marks the dependent predictor stale and shows a warning
+- `promote` refuses a candidate whose gates failed unless `--override` is given, and logs the override
 - `run-daily` twice produces no duplicates
 
 ## Look-ahead / correctness tests
@@ -909,6 +1049,10 @@ There is no `schedule` section. Secrets/API keys must not be committed; use envi
 - Truncation test (section 21)
 - Execution timing and fees on small deterministic datasets
 - Embargo test for training/validation windows
+- Fold generator: training always precedes validation, folds do not overlap, the embargo is applied at every boundary, no label window crosses into the holdout
+- Holdout guard: not evaluated without `--evaluate-holdout`; every evaluation is logged
+- Gate evaluation is deterministic for a given report
+- Reproducibility: the same data, config and seed produce the same metrics
 - HMM: the state at T is unchanged when later data is appended
 
 ---
@@ -1034,8 +1178,9 @@ and the system can:
 10. Persist signals with reasons.
 11. Run a VectorBT backtest against benchmarks.
 12. Display results in Streamlit.
-13. Retrain a model on demand with `python -m quant retrain` (registers a candidate,
-    changes nothing until `promote`).
+13. Retrain a model on demand with `python -m quant retrain`: it runs the walk-forward
+    validation and the pre-defined pass/fail gates, writes a report, and registers a
+    candidate. Nothing changes until `promote`.
 14. Re-run safely without creating duplicate data.
 15. Reproduce historical predictions from stored model versions and feature snapshots.
 ```
@@ -1078,7 +1223,7 @@ Prefer this incremental approach to building the whole architecture at once.
 | Features | pandas / NumPy, scale-free |
 | Regime | Rule-based first (with hysteresis), filtered HMM later |
 | ML | Logistic Regression, Random Forest, XGBoost; pooled; calibrated |
-| Validation | Purged walk-forward + final holdout + trial log |
+| Validation | Expanding walk-forward with embargo + final holdout + trial log; automated inside `retrain` against pre-defined gates |
 | Backtest | VectorBT, portfolio-level, with benchmarks |
 | Output | Target weights -> BUY/HOLD/REDUCE/EXIT vs positions |
 | Scheduler | **None** |
