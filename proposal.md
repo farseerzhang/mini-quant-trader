@@ -705,6 +705,15 @@ Rules:
 - Select hyperparameters by the **average and the stability across all folds**, not by the best single fold.
 - Dates are never hardcoded. Fold length, minimum training length and holdout length are configured as relative rules, so the windows move forward by themselves on the next retrain.
 
+### 15.1.1 Implementation (`quant/models/folds.py`, `quant/models/dataset.py`)
+
+- **Rows:** one per (session, pool stock); SPY, QQQ and ^VIX are not rows. Inputs at T: the 23 stock features, the 9 market features and the rule-based regime at T as three indicator columns (35 inputs). Rows with a missing input (warm-up) are dropped; rows whose label is not known yet are kept for scoring.
+- **Purging:** `embargo_days = h + 1` sessions are dropped before every boundary (training -> validation, and development -> holdout), so the last kept session's exit open is the session before the boundary.
+- **Anchoring:** the last validation window ends at the last purged development session, and windows step back `fold_length_months` at a time; a fold is kept only if at least `min_train_years` of history precede it. Nothing is hardcoded, so the windows move forward on the next retrain.
+- **Sampling:** training uses every `retrain.sample_every_sessions`-th session (counted on all sessions, so every fold picks the same calendar sessions); validation scores every session.
+
+Measured on 2026-10-10 (48 stocks, 250,800 rows from 2006-01-03): 11 folds validating 2014-09-26 .. 2025-10-01, training from 2006-01-03 on 21,072 sampled rows (fold 1) up to 45,264 (fold 11), each validating about 12,000 rows; the holdout starts 2025-10-10, six sessions after the last validation day.
+
 ## 15.2 Final holdout
 
 - The holdout is evaluated only when explicitly requested (`--evaluate-holdout`). It is never part of the normal retrain loop.
@@ -1109,6 +1118,8 @@ retrain:                           # used only by the manual `quant retrain`
     holdout_months: 12             # most recent N months; rolls forward with each retrain
     holdout_requires_flag: true    # evaluated only with --evaluate-holdout
     # embargo: uses model.embargo_days (must be >= model.target.horizon_days + 1)
+  sample_every_sessions: 5         # training rows: every Nth session (labels of neighbouring sessions overlap);
+                                   # validation still scores every session
   search:
     method: random                 # random search over `space`, not a full grid
     max_trials: 30                 # number of hyperparameter sets tried (recorded in the trial log)

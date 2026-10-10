@@ -76,6 +76,8 @@ retrain:                           # used only by the manual `quant retrain`
     holdout_months: 12             # most recent N months; rolls forward with each retrain
     holdout_requires_flag: true    # evaluated only with --evaluate-holdout
     # embargo: uses model.embargo_days (must be >= model.target.horizon_days + 1)
+  sample_every_sessions: 5         # training rows: every Nth session (labels of neighbouring sessions overlap);
+                                   # validation still scores every session
   search:
     method: random                 # random search over `space`, not a full grid
     max_trials: 30                 # number of hyperparameter sets tried (recorded in the trial log)

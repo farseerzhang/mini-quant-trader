@@ -41,8 +41,10 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.model.type, "xgboost")
         self.assertEqual(settings.model.target.kind, "excess_vs_benchmark_vol_scaled")
         self.assertEqual((settings.model.target.horizon_days, settings.model.embargo_days), (5, 6))
-        self.assertEqual(settings.retrain["validation"]["holdout_months"], 12)
-        self.assertEqual(settings.retrain["search"]["seed"], 42)
+        self.assertEqual(settings.retrain.validation.holdout_months, 12)
+        self.assertEqual(settings.retrain.search.seed, 42)
+        self.assertEqual(settings.retrain.search.space["logistic_regression"]["C"], (0.01, 0.1, 1.0))
+        self.assertEqual(settings.retrain.sample_every_sessions, 5)
         self.assertEqual(settings.backtest.fees, 0.0001)
         self.assertEqual(settings.backtest.slippage, 0.0005)
         self.assertEqual(settings.holdout_months, 12)
@@ -135,6 +137,11 @@ class SettingsTests(unittest.TestCase):
             "unknown model type": set_value("model", "type", "svm"),
             "unknown target kind": lambda d: d["model"]["target"].update(kind="direction"),
             "threshold below round-trip costs": lambda d: d["model"]["target"].update(min_threshold=0.001),
+            "unknown validation scheme": lambda d: d["retrain"]["validation"].update(scheme="random_split"),
+            "zero folds": lambda d: d["retrain"]["validation"].update(min_folds=0),
+            "search space for an unknown model": lambda d: d["retrain"]["search"]["space"].update(svm={"C": [1]}),
+            "empty candidate list": lambda d: d["retrain"]["search"]["space"]["random_forest"].update(max_depth=[]),
+            "missing sampling stride": lambda d: d["retrain"].pop("sample_every_sessions"),
             "bad date": set_value("market", "initial_history", "not-a-date"),
         }
         for name, mutate in bad.items():

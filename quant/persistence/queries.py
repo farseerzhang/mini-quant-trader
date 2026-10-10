@@ -323,3 +323,33 @@ def save_backtest_runs(
                 conn.execute(tables.backtest_equity.insert(), [{**row, "run_id": run_id} for row in equity])
             run_ids.append(run_id)
     return run_ids
+
+
+def load_features_long(
+    engine: Engine, feature_version: str, symbols: Sequence[str], columns: Sequence[str]
+) -> pd.DataFrame:
+    """Per-symbol features as rows indexed by (date, symbol)."""
+    stmt = (
+        select(tables.features.c.date, tables.features.c.symbol, *[tables.features.c[name] for name in columns])
+        .where(tables.features.c.feature_version == feature_version, tables.features.c.symbol.in_(list(symbols)))
+        .order_by(tables.features.c.date, tables.features.c.symbol)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    frame = pd.DataFrame([dict(row) for row in rows], columns=["date", "symbol", *columns])
+    frame["date"] = pd.DatetimeIndex(frame["date"])
+    return frame.set_index(["date", "symbol"]).astype(float)
+
+
+def load_market_features(engine: Engine, market_feature_version: str, columns: Sequence[str]) -> pd.DataFrame:
+    """Market features indexed by date."""
+    stmt = (
+        select(tables.market_features.c.date, *[tables.market_features.c[name] for name in columns])
+        .where(tables.market_features.c.feature_version == market_feature_version)
+        .order_by(tables.market_features.c.date)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    frame = pd.DataFrame([dict(row) for row in rows], columns=["date", *columns])
+    frame["date"] = pd.DatetimeIndex(frame["date"])
+    return frame.set_index("date").astype(float)

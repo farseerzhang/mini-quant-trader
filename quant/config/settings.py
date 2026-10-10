@@ -248,6 +248,61 @@ class ModelSettings:
             raise ConfigError("model.embargo_days must be >= model.target.horizon_days + 1 (section 15)")
 
 
+VALIDATION_SCHEMES = ("expanding_walk_forward", "rolling_walk_forward")
+
+
+@dataclass(frozen=True)
+class ValidationSettings:
+    scheme: str
+    rolling_years: int
+    min_train_years: int
+    fold_length_months: int
+    min_folds: int
+    holdout_months: int
+    holdout_requires_flag: bool
+
+    def __post_init__(self) -> None:
+        if self.scheme not in VALIDATION_SCHEMES:
+            raise ConfigError(f"retrain.validation.scheme must be one of {', '.join(VALIDATION_SCHEMES)}")
+        for name in ("rolling_years", "min_train_years", "fold_length_months", "min_folds", "holdout_months"):
+            if getattr(self, name) < 1:
+                raise ConfigError(f"retrain.validation.{name} must be >= 1")
+        if not isinstance(self.holdout_requires_flag, bool):
+            raise ConfigError("retrain.validation.holdout_requires_flag must be true or false")
+
+
+@dataclass(frozen=True)
+class SearchSettings:
+    method: str
+    max_trials: int
+    seed: int
+    space: Mapping[str, Mapping[str, tuple]]
+
+    def __post_init__(self) -> None:
+        if self.method != "random":
+            raise ConfigError("retrain.search.method must be 'random'")
+        if self.max_trials < 1:
+            raise ConfigError("retrain.search.max_trials must be >= 1")
+        unknown = sorted(set(self.space) - set(MODEL_TYPES))
+        if unknown:
+            raise ConfigError(f"retrain.search.space: unknown model type(s) {', '.join(unknown)}")
+
+
+@dataclass(frozen=True)
+class RetrainSettings:
+    validation: ValidationSettings
+    # Training rows: every Nth session. Labels of neighbouring sessions overlap (h + 1
+    # sessions), so consecutive rows are near-duplicates; validation scores every session.
+    sample_every_sessions: int
+    search: SearchSettings
+    gates: Mapping[str, Any]
+    final_refit: bool
+
+    def __post_init__(self) -> None:
+        if self.sample_every_sessions < 1:
+            raise ConfigError("retrain.sample_every_sessions must be >= 1")
+
+
 BENCHMARKS = ("SPY", "equal_weight")
 
 
@@ -293,8 +348,7 @@ class Settings:
     risk: RiskSettings
     backtest: BacktestSettings
     model: ModelSettings
-    # Loaded as-is; validated as `quant retrain` uses it.
-    retrain: Mapping[str, Any]
+    retrain: RetrainSettings
 
     def __post_init__(self) -> None:
         round_trip = 2 * (self.backtest.fees + self.backtest.slippage)
@@ -308,24 +362,12 @@ class Settings:
     @property
     def holdout_months(self) -> int:
         """retrain.validation.holdout_months: the most recent period kept out of all tuning."""
-        try:
-            months = int(self.retrain["validation"]["holdout_months"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ConfigError("retrain.validation.holdout_months must be a whole number of months") from exc
-        if months < 1:
-            raise ConfigError("retrain.validation.holdout_months must be >= 1")
-        return months
+        return self.retrain.validation.holdout_months
 
     @property
     def holdout_requires_flag(self) -> bool:
         """retrain.validation.holdout_requires_flag: show the holdout only on explicit request."""
-        try:
-            value = self.retrain["validation"]["holdout_requires_flag"]
-        except (KeyError, TypeError) as exc:
-            raise ConfigError("retrain.validation.holdout_requires_flag is required") from exc
-        if not isinstance(value, bool):
-            raise ConfigError("retrain.validation.holdout_requires_flag must be true or false")
-        return value
+        return self.retrain.validation.holdout_requires_flag
 
 
 def _section(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -404,6 +446,31 @@ def _as_float_tuple(value: Any) -> tuple[float, ...]:
     return tuple(float(item) for item in value)
 
 
+def _as_mapping(name: str):
+    def convert(value: Any) -> dict:
+        if not isinstance(value, Mapping):
+            raise ConfigError(f"'{name}' must be a mapping")
+        return dict(value)
+
+    return convert
+
+
+def _as_search_space(value: Any) -> dict[str, dict[str, tuple]]:
+    """retrain.search.space: model type -> hyperparameter -> list of candidate values."""
+    if not isinstance(value, Mapping):
+        raise ConfigError("retrain.search.space must map model types to hyperparameter lists")
+    space: dict[str, dict[str, tuple]] = {}
+    for model_type, parameters in value.items():
+        if not isinstance(parameters, Mapping):
+            raise ConfigError(f"retrain.search.space.{model_type} must map hyperparameters to lists")
+        space[model_type] = {}
+        for name, candidates in parameters.items():
+            if isinstance(candidates, str) or not isinstance(candidates, (list, tuple)) or not candidates:
+                raise ConfigError(f"retrain.search.space.{model_type}.{name} must be a non-empty list")
+            space[model_type][name] = tuple(candidates)
+    return space
+
+
 def _subsection(cls, name: str, converters: Mapping[str, Any] | None = None):
     """Converter for a nested mapping such as strategies.mean_reversion."""
 
@@ -468,5 +535,14 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
             _section(raw, "model"),
             {"target": _subsection(TargetSettings, "model.target")},
         ),
-        retrain=dict(_section(raw, "retrain")),
+        retrain=_build(
+            RetrainSettings,
+            "retrain",
+            _section(raw, "retrain"),
+            {
+                "validation": _subsection(ValidationSettings, "retrain.validation"),
+                "search": _subsection(SearchSettings, "retrain.search", {"space": _as_search_space}),
+                "gates": _as_mapping("retrain.gates"),
+            },
+        ),
     )
