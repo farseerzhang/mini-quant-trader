@@ -63,7 +63,17 @@ This will install the required packages:
 
 ### Command Line Interface
 
-The application provides a CLI for market data operations:
+The application provides a CLI for market data operations.
+
+#### Daily Pipeline
+
+Run every stage in one step:
+
+```bash
+python -m quant run-daily
+```
+
+This runs `update-market-data`, `calculate-features` and `calculate-regime` in that order (they are described below). A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features and the regime are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`.
 
 #### Update the Configured Symbol Pool
 

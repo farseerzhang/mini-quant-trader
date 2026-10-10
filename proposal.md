@@ -936,8 +936,10 @@ Each stage writes a `pipeline_runs` row. Stages persist inside their own transac
 There is no APScheduler and no background process.
 
 ```text
-python -m quant ingest                 # step 2-3 only
-python -m quant run-daily              # full daily pipeline
+python -m quant update-market-data     # steps 1-3 only
+python -m quant calculate-features     # step 5 only
+python -m quant calculate-regime       # step 6 only (rule-based regime)
+python -m quant run-daily              # full daily pipeline (implemented so far: steps 1-6)
 python -m quant retrain --role predictor|regime [--model xgb] [--evaluate-holdout]
                                        # MANUAL; validates, then registers a CANDIDATE
 python -m quant promote <model_id> [--override "<reason>"]

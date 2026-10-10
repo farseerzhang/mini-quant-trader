@@ -49,6 +49,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="calculate and persist the rule-based BULL/SIDEWAYS/BEAR regime from stored features",
     )
     regime_command.add_argument("--db", help=db_help)
+
+    daily_command = commands.add_parser(
+        "run-daily",
+        help="update market data, then calculate features and the regime (stops at the first failed stage)",
+    )
+    daily_command.add_argument(
+        "--initial-date",
+        type=_iso_date,
+        help="start date for symbols not yet stored (overrides market.initial_history)",
+    )
+    daily_command.add_argument("--db", help=db_help)
     return parser
 
 
@@ -66,7 +77,15 @@ def _engine(settings: Settings, db_override: str | None):
     return engine
 
 
+# Outcome of the market-data stage: some symbols failing still leaves usable data.
+_OK, _PARTIAL, _FAILED = "ok", "partial", "failed"
+
+
 def _run_update(args: argparse.Namespace, settings: Settings) -> int:
+    return 0 if _update_market_data(args, settings) == _OK else 1
+
+
+def _update_market_data(args: argparse.Namespace, settings: Settings) -> str:
     engine = _engine(settings, args.db)
     try:
         report = sync_market_data(
@@ -79,7 +98,7 @@ def _run_update(args: argparse.Namespace, settings: Settings) -> int:
         )
     except (MarketDataError, ValueError) as exc:
         print(f"Market data update failed: {exc}", file=sys.stderr)
-        return 1
+        return _FAILED
     finally:
         engine.dispose()
     print(f"Market data updated through {report.as_of}")
@@ -92,7 +111,7 @@ def _run_update(args: argparse.Namespace, settings: Settings) -> int:
         print(f"{symbol}: already current")
     for failure in report.failures:
         print(f"{failure.symbol}: FAILED: {failure.error}", file=sys.stderr)
-    return 1 if report.failures else 0
+    return _PARTIAL if report.failures else _OK
 
 
 def _run_features(args: argparse.Namespace, settings: Settings) -> int:
@@ -131,6 +150,35 @@ def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
+    """Run the pipeline stages in order (proposal section 23, steps 1-6 so far).
+
+    Every stage persists its own results and pipeline_runs row, so a failure
+    leaves earlier stages intact and a rerun resumes safely. A stage that fails
+    outright stops the run, because later stages read its output. Symbols that
+    fail to download do not stop it: features and the regime are calculated
+    from the data that is stored, and the exit code still reports the failure.
+    """
+    print("[1/3] update-market-data")
+    market_data = _update_market_data(args, settings)
+    if market_data == _FAILED:
+        print("run-daily stopped: market data update failed", file=sys.stderr)
+        return 1
+    for step, name, run in (
+        (2, "calculate-features", _run_features),
+        (3, "calculate-regime", _run_regime),
+    ):
+        print(f"[{step}/3] {name}")
+        if run(args, settings) != 0:
+            print(f"run-daily stopped: {name} failed", file=sys.stderr)
+            return 1
+    if market_data == _PARTIAL:
+        print("run-daily finished, but some symbols failed to update (see above)", file=sys.stderr)
+        return 1
+    print("run-daily finished")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -142,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_features(args, settings)
         if args.command == "calculate-regime":
             return _run_regime(args, settings)
+        if args.command == "run-daily":
+            return _run_daily(args, settings)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
