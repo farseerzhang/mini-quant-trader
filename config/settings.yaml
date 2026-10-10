@@ -12,7 +12,21 @@ market:
   initial_history: 2005-01-01      # regime work needs more than one or two bear phases
   timezone: America/New_York
   execution: next_open
-  symbols: [AAPL, MSFT, SPY, QQQ]
+  # Stock pool for the pooled predictor: large caps listed before 2005 across all 11 sectors,
+  # avoiding stocks with large spin-offs (spin-offs are not modelled as corporate actions).
+  # Chosen today, so backtests carry survivorship bias (section 20).
+  symbols:
+    - [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]   # information technology
+    - [GOOGL, DIS, NFLX]                                          # communication services
+    - [AMZN, HD, NKE, SBUX, LOW, TJX]                             # consumer discretionary
+    - [PG, KO, PEP, WMT, COST]                                    # consumer staples
+    - [JNJ, UNH, AMGN, LLY, TMO]                                  # health care
+    - [JPM, BAC, WFC, GS, BLK]                                    # financials
+    - [CAT, UNP, LMT, DE]                                         # industrials
+    - [XOM, CVX, SLB]                                             # energy
+    - [SHW, NEM]                                                  # materials
+    - [NEE, SO, AEP]                                              # utilities
+    - [O, PSA]                                                    # real estate
   market_symbols: [SPY, QQQ, ^VIX]
 
 features:

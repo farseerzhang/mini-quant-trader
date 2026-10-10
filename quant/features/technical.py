@@ -30,6 +30,13 @@ FEATURE_COLUMNS = (
     "realized_volatility_20d",
     "volume_ratio_20d",
     "relative_return_1m_spy",
+    "return_5d",
+    "relative_return_3m_spy",
+    "relative_return_6m_spy",
+    "beta_spy_60d",
+    "corr_spy_60d",
+    "volatility_ratio_20_60",
+    "drawdown_252d",
 )
 
 MARKET_FEATURE_COLUMNS = (
@@ -38,6 +45,10 @@ MARKET_FEATURE_COLUMNS = (
     "vix",
     "vix_change",
     "market_volatility",
+    "spy_return_1d",
+    "qqq_return_1d",
+    "log_vix",
+    "log_market_volatility",
 )
 
 
@@ -191,12 +202,29 @@ def calculate_symbol_features(
     else:
         features["volume_ratio_20d"] = np.nan
 
+    features["return_5d"] = close / close.shift(5) - 1.0
+    volatility_60d = daily_return.rolling(60, min_periods=60).std()
+    features["volatility_ratio_20_60"] = daily_return.rolling(20, min_periods=20).std() / volatility_60d.where(
+        volatility_60d != 0
+    )
+    features["drawdown_252d"] = close / close.rolling(252, min_periods=252).max() - 1.0
+
+    relative_columns = ("relative_return_1m_spy", "relative_return_3m_spy", "relative_return_6m_spy")
     if spy_total_return_close is None:
-        features["relative_return_1m_spy"] = np.nan
+        for name in (*relative_columns, "beta_spy_60d", "corr_spy_60d"):
+            features[name] = np.nan
     else:
-        spy_return = spy_total_return_close / spy_total_return_close.shift(20) - 1.0
-        symbol_return = close / close.shift(20) - 1.0
-        features["relative_return_1m_spy"] = symbol_return - spy_return.reindex(features.index)
+        spy_close = spy_total_return_close.astype(float)
+        for name, periods in zip(relative_columns, (20, 63, 126)):
+            spy_return = (spy_close / spy_close.shift(periods) - 1.0).reindex(features.index)
+            features[name] = (close / close.shift(periods) - 1.0) - spy_return
+
+        # SPY's daily returns on its own sessions, aligned to this symbol's sessions.
+        spy_daily = spy_close.pct_change(fill_method=None).reindex(features.index)
+        covariance = daily_return.rolling(60, min_periods=60).cov(spy_daily)
+        spy_variance = spy_daily.rolling(60, min_periods=60).var()
+        features["beta_spy_60d"] = covariance / spy_variance.where(spy_variance != 0)
+        features["corr_spy_60d"] = daily_return.rolling(60, min_periods=60).corr(spy_daily)
 
     return features.loc[:, FEATURE_COLUMNS]
 
@@ -234,4 +262,16 @@ def calculate_market_features(
 
     spy_returns = spy["total_return_close"].astype(float).pct_change(fill_method=None)
     market["market_volatility"] = spy_returns.rolling(20, min_periods=20).std().mul(np.sqrt(252))
+
+    # HMM observations (section 13): daily log total returns and log levels, which are
+    # far closer to Gaussian than the raw, right-skewed VIX and volatility levels.
+    for symbol, column in (("SPY", "spy_return_1d"), ("QQQ", "qqq_return_1d")):
+        frame = adjusted_by_symbol.get(symbol)
+        if frame is None or frame.empty:
+            market[column] = np.nan
+            continue
+        log_close = np.log(frame["total_return_close"].astype(float))
+        market[column] = log_close.diff().reindex(market.index)
+    market["log_vix"] = np.log(market["vix"].where(market["vix"] > 0))
+    market["log_market_volatility"] = np.log(market["market_volatility"].where(market["market_volatility"] > 0))
     return market.loc[:, MARKET_FEATURE_COLUMNS]

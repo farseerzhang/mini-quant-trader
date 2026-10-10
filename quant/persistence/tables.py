@@ -118,6 +118,11 @@ market_features = Table(
     Column("vix", Float),
     Column("vix_change", Float),
     Column("market_volatility", Float),
+    # Daily log returns and log levels: observations for the HMM regime (section 13).
+    Column("spy_return_1d", Float),
+    Column("qqq_return_1d", Float),
+    Column("log_vix", Float),
+    Column("log_market_volatility", Float),
     PrimaryKeyConstraint("date", "feature_version", name="pk_market_features"),
 )
 
@@ -145,6 +150,13 @@ features = Table(
     Column("realized_volatility_20d", Float),
     Column("volume_ratio_20d", Float),
     Column("relative_return_1m_spy", Float),
+    Column("return_5d", Float),
+    Column("relative_return_3m_spy", Float),
+    Column("relative_return_6m_spy", Float),
+    Column("beta_spy_60d", Float),
+    Column("corr_spy_60d", Float),
+    Column("volatility_ratio_20_60", Float),
+    Column("drawdown_252d", Float),
     PrimaryKeyConstraint(
         "symbol", "date", "feature_version", name="pk_features"
     ),

@@ -233,7 +233,8 @@ Adjusted prices and total-return series are **computed** from `daily_prices` + `
 Market-level features keyed by date only (not duplicated per symbol):
 
 ```text
-date, spy_trend, qqq_trend, vix, vix_change, market_volatility, ...
+date, spy_trend, qqq_trend, vix, vix_change, market_volatility,
+spy_return_1d, qqq_return_1d, log_vix, log_market_volatility
 feature_version
 ```
 
@@ -468,25 +469,40 @@ price_vs_sma20, price_vs_sma50, price_vs_sma200, sma50_vs_sma200
 ### Momentum
 
 ```text
-return_1m, return_3m, return_6m, return_12m
+return_5d, return_1m, return_3m, return_6m, return_12m
 RSI14
 MACD / price, MACD signal / price (or normalized MACD histogram)
+drawdown_252d (close vs its 252-session high)
 ```
+
+`return_5d` matches the default 5-day target horizon (short-term reversal).
 
 ### Risk / volatility
 
 ```text
 ATR14 / price
 realized_volatility (e.g. 20d, annualized)
+volatility_ratio_20_60 (20d vs 60d volatility: rising or falling risk)
 volume_ratio (volume / rolling average volume)
 ```
 
-### Relative / market-level (stored in market_features)
+### Relative to the market (per symbol, stored in features)
+
+```text
+symbol return minus SPY return over 1m, 3m, 6m
+beta and correlation of daily returns to SPY over 60 sessions
+```
+
+The default target is excess return over SPY (section 14), so relative strength and market sensitivity are the most direct inputs.
+
+### Market-level (stored in market_features)
 
 ```text
 SPY trend, QQQ trend, VIX level and change, market realized volatility
-symbol return relative to SPY
+SPY and QQQ daily log total return, log VIX, log market volatility
 ```
+
+The daily log returns and log levels are the HMM observations (section 13). The trend and momentum columns change slowly (day-to-day autocorrelation about 0.99), and raw VIX is strongly right-skewed (skewness about 2.6, against 0.9 for log VIX), so neither suits a Gaussian HMM well.
 
 Raw SMA/ATR values may be stored for charting but are not model inputs.
 
@@ -975,7 +991,21 @@ market:
   initial_history: 2005-01-01      # regime work needs more than one or two bear phases
   timezone: America/New_York
   execution: next_open
-  symbols: [AAPL, MSFT, SPY, QQQ]
+  # Stock pool for the pooled predictor: large caps listed before 2005 across all 11 sectors,
+  # avoiding stocks with large spin-offs (spin-offs are not modelled as corporate actions).
+  # Chosen today, so backtests carry survivorship bias (section 20).
+  symbols:
+    - [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]   # information technology
+    - [GOOGL, DIS, NFLX]                                          # communication services
+    - [AMZN, HD, NKE, SBUX, LOW, TJX]                             # consumer discretionary
+    - [PG, KO, PEP, WMT, COST]                                    # consumer staples
+    - [JNJ, UNH, AMGN, LLY, TMO]                                  # health care
+    - [JPM, BAC, WFC, GS, BLK]                                    # financials
+    - [CAT, UNP, LMT, DE]                                         # industrials
+    - [XOM, CVX, SLB]                                             # energy
+    - [SHW, NEM]                                                  # materials
+    - [NEE, SO, AEP]                                              # utilities
+    - [O, PSA]                                                    # real estate
   market_symbols: [SPY, QQQ, ^VIX]
 
 features:

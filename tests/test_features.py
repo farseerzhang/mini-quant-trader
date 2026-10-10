@@ -12,6 +12,8 @@ from quant.config.settings import ConfigError
 from quant.features.pipeline import calculate_and_store_features
 from quant.features.technical import (
     FEATURE_COLUMNS,
+    MARKET_FEATURE_COLUMNS,
+    calculate_market_features,
     calculate_symbol_features,
     prepare_adjusted_series,
 )
@@ -97,8 +99,71 @@ class TechnicalFeatureTests(unittest.TestCase):
         truncated = calculate_symbol_features(truncated_adjusted, SETTINGS.features)
         pd.testing.assert_series_equal(full.loc[cut], truncated.loc[cut], check_names=False)
 
+    def test_market_relative_features_against_known_values(self):
+        sessions = 300
+        dates = pd.bdate_range("2024-01-01", periods=sessions)
+        spy_returns = 0.01 * np.sin(np.arange(sessions) / 5) + 0.0003
+        spy_returns[0] = 0.0
+        spy_close = 100 * np.cumprod(1 + spy_returns)
+        # The stock moves exactly twice as much as SPY every day: beta 2, correlation 1.
+        stock_close = 50 * np.cumprod(1 + 2 * spy_returns)
+        spy = prepare_adjusted_series(_price_frame(dates, spy_close), pd.DataFrame())
+        stock = prepare_adjusted_series(_price_frame(dates, stock_close), pd.DataFrame())
+
+        features = calculate_symbol_features(stock, SETTINGS.features, spy["total_return_close"])
+        last = features.iloc[-1]
+        stock_series = pd.Series(stock_close, index=dates)
+
+        self.assertAlmostEqual(last["beta_spy_60d"], 2.0)
+        self.assertAlmostEqual(last["corr_spy_60d"], 1.0)
+        self.assertAlmostEqual(last["return_5d"], stock_close[-1] / stock_close[-6] - 1)
+        self.assertAlmostEqual(
+            last["relative_return_3m_spy"],
+            (stock_close[-1] / stock_close[-64] - 1) - (spy_close[-1] / spy_close[-64] - 1),
+        )
+        self.assertAlmostEqual(last["drawdown_252d"], stock_close[-1] / stock_series.iloc[-252:].max() - 1)
+        daily = stock_series.pct_change()
+        self.assertAlmostEqual(
+            last["volatility_ratio_20_60"], daily.iloc[-20:].std() / daily.iloc[-60:].std()
+        )
+        self.assertTrue(features["beta_spy_60d"].iloc[:60].isna().all())  # 60 returns need 61 sessions
+        self.assertTrue(features["drawdown_252d"].iloc[:251].isna().all())
+
+    def test_hmm_market_features_are_log_returns_and_log_levels(self):
+        sessions = 60
+        dates = pd.bdate_range("2024-01-01", periods=sessions)
+        spy_close = 100 + np.arange(sessions) + 3 * np.sin(np.arange(sessions))
+        vix_close = 20 + 5 * np.sin(np.arange(sessions) / 4)
+        benchmarks = {
+            "SPY": prepare_adjusted_series(_price_frame(dates, spy_close), pd.DataFrame()),
+            "^VIX": prepare_adjusted_series(_price_frame(dates, vix_close), pd.DataFrame()),
+        }
+        market = calculate_market_features(benchmarks, SETTINGS.features)
+
+        np.testing.assert_allclose(market["spy_return_1d"].iloc[1:], np.diff(np.log(spy_close)))
+        np.testing.assert_allclose(market["log_vix"], np.log(vix_close))
+        np.testing.assert_allclose(
+            market["log_market_volatility"].dropna(), np.log(market["market_volatility"].dropna())
+        )
+        self.assertTrue(market["qqq_return_1d"].isna().all())  # QQQ is optional
+
+    def test_truncation_with_spy_does_not_change_relative_features_at_t(self):
+        dates = pd.bdate_range("2024-01-01", periods=320)
+        spy_close = 100 * np.exp(np.cumsum(np.cos(np.arange(320) / 11) * 0.003 + 0.0003))
+        stock_close = 80 * np.exp(np.cumsum(np.sin(np.arange(320) / 7) * 0.004 + 0.0002))
+        spy = prepare_adjusted_series(_price_frame(dates, spy_close), pd.DataFrame())
+        stock = prepare_adjusted_series(_price_frame(dates, stock_close), pd.DataFrame())
+        cut = dates[280]
+        full = calculate_symbol_features(stock, SETTINGS.features, spy["total_return_close"])
+        truncated = calculate_symbol_features(
+            stock.loc[:cut], SETTINGS.features, spy.loc[:cut, "total_return_close"]
+        )
+        pd.testing.assert_series_equal(full.loc[cut], truncated.loc[cut], check_names=False)
+        self.assertFalse(full.loc[cut].isna().any())
+
     def test_feature_names_match_persisted_model_inputs(self):
         self.assertEqual(tuple(tables.features.c.keys())[3:], FEATURE_COLUMNS)
+        self.assertEqual(tuple(tables.market_features.c.keys())[2:], MARKET_FEATURE_COLUMNS)
         self.assertEqual(SETTINGS.features.feature_version, "technical-v1")
 
 

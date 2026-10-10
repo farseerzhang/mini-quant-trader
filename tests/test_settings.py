@@ -27,7 +27,9 @@ class SettingsTests(unittest.TestCase):
         settings = load_settings(PROJECT_SETTINGS)
         self.assertEqual(settings.database.path, "data/quant.db")
         self.assertEqual(settings.market.initial_history, date(2005, 1, 1))
-        self.assertEqual(settings.market.universe, ["AAPL", "MSFT", "SPY", "QQQ", "^VIX"])
+        self.assertGreaterEqual(len(settings.market.symbols), 30)
+        self.assertEqual(settings.market.symbols[:2], ("AAPL", "MSFT"))
+        self.assertEqual(settings.market.universe[-3:], ["SPY", "QQQ", "^VIX"])
         self.assertEqual(settings.features.sma, (20, 50, 200))
         self.assertEqual(settings.regime.enter_threshold, 3)
         self.assertEqual(settings.regime.min_dwell_days, 5)
@@ -54,6 +56,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.features.market_feature_version, "market-v2")
         self.assertEqual(settings.market.request_timeout_seconds, 7)
         self.assertEqual(settings.market.universe, ["NVDA", "SPY", "QQQ", "^VIX"])
+
+    def test_symbols_may_be_grouped_into_sub_lists(self):
+        def group(document):
+            document["market"]["symbols"] = [["aapl", "MSFT"], ["XOM"], "KO", ["MSFT"]]
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = load_settings(_variant(directory, group))
+        self.assertEqual(settings.market.symbols, ("AAPL", "MSFT", "XOM", "KO"))
 
     def test_missing_sections_and_keys_are_errors_not_silent_defaults(self):
         def drop_section(document):

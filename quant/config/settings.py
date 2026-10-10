@@ -168,9 +168,18 @@ def _as_date(value: Any) -> date:
 
 
 def _as_str_tuple(value: Any) -> tuple[str, ...]:
+    """A list of symbols, optionally grouped into sub-lists (e.g. one per sector)."""
     if isinstance(value, str) or not isinstance(value, (list, tuple)):
         raise ValueError("expected a list of symbols")
-    return tuple(str(item).strip().upper() for item in value if str(item).strip())
+    items: list[Any] = []
+    for item in value:
+        if isinstance(item, (list, tuple)):
+            items.extend(item)
+        else:
+            items.append(item)
+    if any(isinstance(item, (list, tuple, dict)) for item in items):
+        raise ValueError("symbol groups must not be nested more than one level")
+    return tuple(dict.fromkeys(str(item).strip().upper() for item in items if str(item).strip()))
 
 
 def _as_int_tuple(value: Any) -> tuple[int, ...]:
