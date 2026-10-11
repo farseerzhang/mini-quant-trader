@@ -331,6 +331,10 @@ models/
 
 Avoid raw `pickle` where a native or joblib format is available.
 
+As implemented (`quant/models/final.py`, `registry.py`, `report.py`): the chosen configuration is refit on every purged development session (sampled like the folds) and calibrated on the walk-forward out-of-sample predictions, since a refit on all data leaves nothing unseen to calibrate on. The model and its calibrator are saved together with joblib as `models/<model_type>/<model_id>.joblib`; the report is `reports/<model_id>.md` (gates, walk-forward backtest against `regime_switch`, per-fold probability quality, the search table, coefficients or importances, leak checks, caveats). Both folders are generated and git-ignored. `model_id` is `<model_type>-<UTC timestamp>-<random>`; `version` counts up per model type; `depends_on` holds the regime version whose indicator columns are inputs; `trial_count` is the number of search candidates of that run (earlier research trials are listed in section 15.4). Registration inserts one CANDIDATE row and never changes another row.
+
+First registration (2026-10-11): `logistic_regression-20261011T090716Z-67f9c0`, version 1, C = 0.01, refit 2006-01-03 .. 2025-09-29 (47,712 rows), gates FAILED, holdout not evaluated.
+
 ## 6.11 backtest_runs
 
 ```text

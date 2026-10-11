@@ -244,3 +244,35 @@ backtest_equity = Table(
     Column("invested", Float),
     PrimaryKeyConstraint("run_id", "date", name="pk_backtest_equity"),
 )
+
+
+# 6.10 model_versions — every trained model; at most one ACTIVE per role (section 16.1).
+model_versions = Table(
+    "model_versions",
+    metadata,
+    Column("model_id", String, primary_key=True),
+    Column("role", String, nullable=False),  # PREDICTOR | REGIME
+    Column("model_type", String, nullable=False),
+    Column("version", Integer, nullable=False),  # 1, 2, ... per model_type
+    Column("status", String, nullable=False),  # CANDIDATE | ACTIVE | RETIRED
+    Column("depends_on", String),  # e.g. the regime version used as an input (rule_based-v1)
+    Column("training_start", Date, nullable=False),
+    Column("training_end", Date, nullable=False),
+    Column("feature_version", String, nullable=False),
+    Column("target_definition", Text, nullable=False),  # JSON
+    Column("hyperparameters", Text, nullable=False),  # JSON
+    Column("metrics", Text, nullable=False),  # JSON: walk-forward and backtest summary
+    Column("gates_passed", Integer, nullable=False),  # 1 / 0
+    Column("gate_results", Text, nullable=False),  # JSON: gate -> status, observed, required
+    Column("trial_count", Integer, nullable=False),
+    Column("holdout_evaluated", Integer, nullable=False),
+    Column("validation_report_path", String),
+    Column("model_path", String, nullable=False),
+    Column("library_versions", Text, nullable=False),  # JSON
+    Column("config_hash", String, nullable=False),
+    Column("git_commit", String),
+    Column("created_at", DateTime, nullable=False),
+    UniqueConstraint("model_type", "version", name="uq_model_versions_type_version"),
+    CheckConstraint("role IN ('PREDICTOR', 'REGIME')", name="ck_model_versions_role"),
+    CheckConstraint("status IN ('CANDIDATE', 'ACTIVE', 'RETIRED')", name="ck_model_versions_status"),
+)
