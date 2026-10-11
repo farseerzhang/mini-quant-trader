@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 4 - Rule-based strategies and backtesting** (Done; next: Phase 5 - ML baselines)
+**Phase 5 - ML baselines** (Done: no candidate passed its gates, so the rule-based system ships; next: Phase 6 - XGBoost)
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -32,6 +32,7 @@ The project is currently in early development. Implemented features include:
 - Rule-based BULL/SIDEWAYS/BEAR market regime with hysteresis and minimum dwell time
 - Rule-based trend, mean-reversion and regime-switch strategies with position and sector caps
 - VectorBT backtests against SPY, equal weight and a random baseline, saved per run
+- Logistic Regression and Random Forest predictors with purged walk-forward validation, calibration, pre-defined gates and a model registry (`quant retrain`)
 
 ## Installation
 
@@ -118,6 +119,18 @@ python -m quant backtest --evaluate-holdout
 ```
 
 Orders are decided at the close and filled at the next open, with fees, slippage and a minimum trade size from the `backtest` settings; the strategies are described in section 17 of `proposal.md` and the engine in section 20.1. The report shows the development period. The holdout (the last `retrain.validation.holdout_months`) is shown only with `--evaluate-holdout`; every evaluation is logged in `pipeline_runs`, and the report says how many times the holdout has been viewed. Each run is saved as a batch in `backtest_runs` (metrics, costs, parameters, config hash, git commit) and `backtest_equity` (daily value), with holdout rows only when it was evaluated. A run takes about 40 seconds, mostly the random baseline.
+
+#### Retrain a Predictor (manual)
+
+Train and validate a machine-learning stock predictor, and register it as a candidate:
+
+```bash
+python -m quant retrain --role predictor --model logistic_regression
+python -m quant retrain --role predictor --model random_forest
+python -m quant retrain --role predictor --model logistic_regression --evaluate-holdout
+```
+
+This builds the dataset (label: stock vs SPY over the next `model.target.horizon_days` sessions, section 14 of `proposal.md`), searches the hyperparameters in `retrain.search.space` on purged walk-forward folds, backtests the best candidate walk-forward as `ml_select` against `regime_switch` after costs, evaluates the gates in `retrain.gates.predictor`, refits the model on all development data and registers it as a CANDIDATE in `model_versions`. The model file goes to `retrain.models_dir` and a readable validation report to `retrain.reports_dir` (both git-ignored). It never changes an active model, and the holdout is used only with `--evaluate-holdout` (logged; the count is shared with `backtest`). Logistic Regression takes about 20 seconds, Random Forest a few minutes. `--role regime` and XGBoost arrive in later phases.
 
 Every command accepts `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
 

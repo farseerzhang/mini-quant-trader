@@ -349,8 +349,15 @@ class RetrainSettings:
     search: SearchSettings
     gates: Mapping[str, Any]
     final_refit: bool
+    # Where `quant retrain` writes model files and validation reports (relative to the run directory).
+    models_dir: str
+    reports_dir: str
 
     def __post_init__(self) -> None:
+        if not self.final_refit:
+            raise ConfigError("retrain.final_refit must be true (section 15.5); there is no other final model")
+        if not str(self.models_dir).strip() or not str(self.reports_dir).strip():
+            raise ConfigError("retrain.models_dir and retrain.reports_dir must not be empty")
         if self.sample_every_sessions < 1:
             raise ConfigError("retrain.sample_every_sessions must be >= 1")
         _check_predictor_gates(self.gates)

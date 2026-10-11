@@ -353,3 +353,19 @@ def load_market_features(engine: Engine, market_feature_version: str, columns: S
     frame = pd.DataFrame([dict(row) for row in rows], columns=["date", *columns])
     frame["date"] = pd.DatetimeIndex(frame["date"])
     return frame.set_index("date").astype(float)
+
+
+def count_holdout_evaluations(engine: Engine) -> int:
+    """How many times the holdout has been evaluated, by any command (it is one shared resource)."""
+    stmt = select(func.count()).select_from(tables.pipeline_runs).where(tables.pipeline_runs.c.stage == "holdout")
+    with engine.connect() as conn:
+        return int(conn.execute(stmt).scalar_one())
+
+
+def active_model(engine: Engine, role: str):
+    """The ACTIVE model_versions row of a role, or None."""
+    stmt = select(tables.model_versions).where(
+        tables.model_versions.c.role == role, tables.model_versions.c.status == "ACTIVE"
+    )
+    with engine.connect() as conn:
+        return conn.execute(stmt).mappings().first()

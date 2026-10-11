@@ -1096,8 +1096,10 @@ python -m quant update-market-data     # steps 1-3 only
 python -m quant calculate-features     # step 5 only
 python -m quant calculate-regime       # step 6 only (rule-based regime)
 python -m quant run-daily              # full daily pipeline (implemented so far: steps 1-6)
-python -m quant retrain --role predictor|regime [--model xgb] [--evaluate-holdout]
+python -m quant retrain --role predictor|regime [--model logistic_regression|random_forest|xgboost] [--evaluate-holdout]
                                        # MANUAL; validates, then registers a CANDIDATE
+                                       # (implemented: --role predictor with logistic_regression / random_forest;
+                                       #  regime in Phase 7, xgboost in Phase 6; holdout count shared with backtest)
 python -m quant promote <model_id> [--override "<reason>"]
                                        # activate a candidate for its role (refuses failed gates)
 python -m quant backtest [--strategy NAME ...] [--evaluate-holdout]
@@ -1253,6 +1255,8 @@ retrain:                           # used only by the manual `quant retrain`
       min_avg_regime_dwell_days: 10
       beats_rule_based_regime_after_costs: true
   final_refit: true
+  models_dir: models               # model files: <models_dir>/<model_type>/<model_id>.joblib (git-ignored)
+  reports_dir: reports             # validation reports: <reports_dir>/<model_id>.md (git-ignored)
 
 backtest:                          # signal at the close of T, fill at the open of T+1 (section 20)
   initial_cash: 100000
