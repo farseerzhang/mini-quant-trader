@@ -675,6 +675,22 @@ First BEAR session in each sell-off (SPY's fall from its peak by then):
 
 The HMM reacts faster to sudden volatility shocks (2020, 2025) and slower to grinding declines (2018, 2022). Its BEAR is a high-volatility state, and volatility stays high through the rebounds, so SPY still rose 43% a year during its BEAR sessions: the late-exit problem of the rule-based regime remains. It also calls 40% of sessions SIDEWAYS, when SPY rose 13% a year.
 
+### Trading comparison (2026-10-11; `quant/regime/comparison.py`)
+
+The same strategies, settings and costs, once with each regime, from fresh cash over the walk-forward window 2014-09-26 .. 2025-10-01:
+
+```text
+                              CAGR    Sharpe   Sortino   max DD    vol     invested   turnover/yr
+regime_switch [rule]          10.3%   0.8644   1.18      -21.3%    12.3%   75%        3.9x
+regime_switch [hmm]            7.5%   0.8630   1.22      -13.5%     8.9%   55%        6.5x
+regime_switch_bear50 [rule]   12.2%   0.9616   1.32      -25.0%    12.9%   82%        4.8x
+regime_switch_bear50 [hmm]     9.2%   0.9604   1.36      -12.2%     9.6%   60%        7.6x
+SPY                           13.7%   0.81     1.14      -33.7%    17.8%   100%       -
+equal_weight                  18.3%   1.07     1.52      -31.7%    17.2%   100%       0.3x
+```
+
+With the HMM regime the strategies earn the same return per unit of risk (Sharpe lower by 0.0015 and 0.0012) at a lower level of risk: about 20 percentage points less invested, roughly a third less volatility and a much shallower drawdown (-13.5% against -21.3%), and therefore about 3 points less return a year. Year by year the HMM version has the higher Sharpe in 5 of 11 years (bear50: 7 of 11); it does best where the rule-based regime struggled (2021-22: Sharpe 1.18 vs 0.09; calendar 2022: +1% vs -10%) and worst in the 2020-21 recovery (Sharpe -0.62 vs 1.60), which it spent largely out of BULL. By the pre-registered criterion (a higher Sharpe after costs) the HMM regime does not beat the rule-based one; it is a lower-risk alternative of equal risk-adjusted quality, not an improvement.
+
 # 14. ML Models
 
 ## Candidates
