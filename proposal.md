@@ -829,6 +829,24 @@ h20 keep20   0.520   +0.03%            8.1%   0.65 (0.83)     -20.2% (-21.3%)   
 
 No trial passes; every one fails `min_fraction_of_folds_beating_baseline` (at most 6 of 11 years). The keep band works mechanically (median holding 10 -> 20 sessions, changes per rebalance 3.7 -> 1.9) and halves the costs, but the stocks it keeps are lower-ranked, so the selection edge shrinks by about as much as the costs fall (random-baseline percentile 97% -> 88%). Longer horizons lose the signal itself: the skill falls from +0.25% (5 days) to +0.20% (10) and +0.03% (20), so whatever the model knows is short-term. Holding longer, by either route, removes edge as fast as it removes cost. (The baseline Sharpe differs slightly per horizon because the purge, h + 1 sessions, shifts the evaluation window.)
 
+### 15.4.4 Phase 6: XGBoost (registered 2026-10-11, before running)
+
+XGBoost (`xgboost` 3.4.1, `tree_method: hist`, `objective: binary:logistic`) runs through the same chain as Logistic Regression and Random Forest: the same label (5-day horizon), dataset, folds, sigmoid calibration, `ml_select` trading rule (`top_n: 10`, `keep_rank: 10`, every 5 sessions) and gates. Its search space is the one in `retrain.search.space.xgboost`, which was written into the configuration before any result existed: 432 combinations, of which `max_trials: 30` are drawn at random with `seed: 42`. This adds 30 trials (trial log: 53). The final model is stored in XGBoost's native format (`.ubj`) next to the joblib file holding its calibrator (section 6.10).
+
+Result (2026-10-11): best of 30 trials `max_depth 2, learning_rate 0.1, n_estimators 300, min_child_weight 5, reg_lambda 5` (the shallowest trees; the deepest, fastest-learning settings scored worst, AUC down to 0.514). Registered as `xgboost-20261011T110317Z-42e83b`, gates FAILED.
+
+**Phase 6 comparison** (the same 11 development folds, 2014-09-26 .. 2025-10-01, after costs):
+
+```text
+                      AUC     log-loss skill   CAGR    Sharpe   max DD    turnover/yr   years > regime_switch   gates
+logistic_regression   0.535   +0.25%           12.5%   0.92     -24.5%    16.5x         6/11                    FAILED (2 of 5)
+random_forest         0.534   +0.21%           10.0%   0.77     -26.7%    19.5x         3/11                    FAILED (3 of 5)
+xgboost               0.531   +0.19%            9.3%   0.72     -30.5%    22.5x         4/11                    FAILED (3 of 5)
+regime_switch (rule)  -       -                10.3%   0.86     -21.3%     3.9x         -                       baseline
+```
+
+The more flexible the model, the worse it does: each step from linear to bagged trees to boosted trees adds a little noise-fitting and turnover and loses a little skill, and within XGBoost the simplest settings win. XGBoost is not better than the linear baseline (section 14 says it is not assumed to win), Random Forest remains only a benchmark, and no predictor beats the rule-based baseline. Under section 32 the rule-based `regime_switch` is what ships.
+
 ## 15.5 Final refit
 
 After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).

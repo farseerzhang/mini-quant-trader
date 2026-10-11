@@ -19,7 +19,11 @@ SHORT = dataclasses.replace(
         validation=dataclasses.replace(SETTINGS.retrain.validation, min_train_years=2, min_folds=3),
     ),
 )
-PARAMETERS = {"logistic_regression": {"C": 0.1}, "random_forest": {"max_depth": 4, "min_samples_leaf": 20}}
+PARAMETERS = {
+    "logistic_regression": {"C": 0.1},
+    "random_forest": {"max_depth": 4, "min_samples_leaf": 20},
+    "xgboost": {"max_depth": 3, "learning_rate": 0.05, "n_estimators": 100, "min_child_weight": 20, "reg_lambda": 5},
+}
 
 
 def _synthetic(signal: float, sessions=1500, symbols=12, seed=0) -> Dataset:
@@ -126,3 +130,22 @@ class WalkForwardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FinalModelStorageTests(unittest.TestCase):
+    def test_xgboost_is_saved_natively_and_reloads_with_identical_predictions(self):
+        import tempfile
+        from pathlib import Path
+
+        from quant.models.final import load_final_model, refit_final
+
+        dataset = _synthetic(signal=1.0)
+        folds = _folds(dataset)
+        result = run_walk_forward(dataset, folds, "xgboost", PARAMETERS["xgboost"], SHORT)
+        final = refit_final(dataset, dataset.sessions[-120], result, SHORT)
+        with tempfile.TemporaryDirectory() as directory:
+            path = final.save(Path(directory) / "xgboost" / "model.joblib")
+            self.assertTrue(path.with_suffix(".ubj").exists())  # XGBoost's own format
+            reloaded = load_final_model(path)
+            inputs = dataset.inputs.iloc[-200:]
+            pd.testing.assert_series_equal(final.predict(inputs), reloaded.predict(inputs))

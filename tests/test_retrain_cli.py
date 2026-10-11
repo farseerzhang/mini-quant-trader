@@ -110,9 +110,9 @@ class RetrainCommandTests(unittest.TestCase):
         code, _, errors = self.run_cli("retrain", "--role", "regime")
         self.assertEqual(code, 1)
         self.assertIn("Phase 7", errors)
-        code, _, errors = self.run_cli("retrain", "--role", "predictor", "--model", "xgboost")
+        code, _, errors = self.run_cli("retrain", "--role", "predictor", "--model", "svm")
         self.assertEqual(code, 1)
-        self.assertIn("Phase 6", errors)
+        self.assertIn("use one of: logistic_regression, random_forest, xgboost", errors)
         self.assertEqual(self.models()[0], [])
 
 

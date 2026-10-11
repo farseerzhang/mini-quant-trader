@@ -12,7 +12,7 @@ data for the model itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,8 @@ class FinalModel:
     training_start: pd.Timestamp
     training_end: pd.Timestamp
     training_rows: int
+    # XGBoost is stored in its own format next to the joblib file (section 6.10).
+    native_model_file: str | None = None
 
     def predict(self, inputs: pd.DataFrame) -> pd.Series:
         """Calibrated probability per row; ``inputs`` must have the training input columns."""
@@ -48,15 +50,28 @@ class FinalModel:
         return pd.Series(self.calibrator.transform(raw), index=inputs.index, name="probability")
 
     def save(self, path: Path) -> Path:
+        """joblib file with everything; XGBoost's booster goes to ``<path>.ubj`` in its native format."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path)
+        if self.model_type == "xgboost":
+            native = path.with_suffix(".ubj")
+            self.model.save_model(native)
+            joblib.dump(replace(self, model=None, native_model_file=native.name), path)
+        else:
+            joblib.dump(self, path)
         return path
 
 
 def load_final_model(path: Path) -> FinalModel:
+    path = Path(path)
     model = joblib.load(path)
     if not isinstance(model, FinalModel):
         raise ValueError(f"{path} does not hold a FinalModel")
+    if model.native_model_file is not None:
+        from xgboost import XGBClassifier
+
+        booster = XGBClassifier()
+        booster.load_model(path.parent / model.native_model_file)
+        model = replace(model, model=booster)
     return model
 
 

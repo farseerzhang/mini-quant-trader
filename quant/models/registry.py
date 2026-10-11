@@ -46,10 +46,12 @@ class Registration:
 
 def library_versions() -> dict[str, str]:
     import vectorbt
+    import xgboost
 
     return {
         "python": platform.python_version(),
         "scikit-learn": sklearn.__version__,
+        "xgboost": xgboost.__version__,
         "numpy": np.__version__,
         "pandas": pd.__version__,
         "vectorbt": vectorbt.__version__,

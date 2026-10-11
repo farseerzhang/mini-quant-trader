@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 5 - ML baselines** (Done: no candidate passed its gates, so the rule-based system ships; next: Phase 6 - XGBoost)
+**Phase 6 - XGBoost** (Done: Logistic Regression, Random Forest and XGBoost all fail their gates, so the rule-based system ships; next: Phase 7 - HMM regime)
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -32,7 +32,7 @@ The project is currently in early development. Implemented features include:
 - Rule-based BULL/SIDEWAYS/BEAR market regime with hysteresis and minimum dwell time
 - Rule-based trend, mean-reversion and regime-switch strategies with position and sector caps
 - VectorBT backtests against SPY, equal weight and a random baseline, saved per run
-- Logistic Regression and Random Forest predictors with purged walk-forward validation, calibration, pre-defined gates and a model registry (`quant retrain`)
+- Logistic Regression, Random Forest and XGBoost predictors with purged walk-forward validation, calibration, pre-defined gates and a model registry (`quant retrain`)
 
 ## Installation
 
@@ -127,10 +127,11 @@ Train and validate a machine-learning stock predictor, and register it as a cand
 ```bash
 python -m quant retrain --role predictor --model logistic_regression
 python -m quant retrain --role predictor --model random_forest
+python -m quant retrain --role predictor --model xgboost
 python -m quant retrain --role predictor --model logistic_regression --evaluate-holdout
 ```
 
-This builds the dataset (label: stock vs SPY over the next `model.target.horizon_days` sessions, section 14 of `proposal.md`), searches the hyperparameters in `retrain.search.space` on purged walk-forward folds, backtests the best candidate walk-forward as `ml_select` against `regime_switch` after costs, evaluates the gates in `retrain.gates.predictor`, refits the model on all development data and registers it as a CANDIDATE in `model_versions`. The model file goes to `retrain.models_dir` and a readable validation report to `retrain.reports_dir` (both git-ignored). It never changes an active model, and the holdout is used only with `--evaluate-holdout` (logged; the count is shared with `backtest`). Logistic Regression takes about 20 seconds, Random Forest a few minutes. `--role regime` and XGBoost arrive in later phases.
+This builds the dataset (label: stock vs SPY over the next `model.target.horizon_days` sessions, section 14 of `proposal.md`), searches the hyperparameters in `retrain.search.space` on purged walk-forward folds, backtests the best candidate walk-forward as `ml_select` against `regime_switch` after costs, evaluates the gates in `retrain.gates.predictor`, refits the model on all development data and registers it as a CANDIDATE in `model_versions`. The model file goes to `retrain.models_dir` and a readable validation report to `retrain.reports_dir` (both git-ignored). It never changes an active model, and the holdout is used only with `--evaluate-holdout` (logged; the count is shared with `backtest`). Logistic Regression takes about 20 seconds, Random Forest about 3 minutes, XGBoost longer (30 random search trials). `--role regime` arrives in Phase 7.
 
 Every command accepts `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
 

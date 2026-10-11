@@ -63,8 +63,7 @@ def portfolio_name(model_type: str) -> str:
 def run_retrain(engine: Engine, settings: Settings, model_type: str, evaluate_holdout: bool) -> RetrainOutcome:
     if model_type not in IMPLEMENTED_MODELS:
         raise NotImplementedError(
-            f"model type {model_type!r} is not implemented yet (XGBoost arrives in Phase 6); "
-            f"use one of: {', '.join(IMPLEMENTED_MODELS)}"
+            f"model type {model_type!r} is not implemented; use one of: {', '.join(IMPLEMENTED_MODELS)}"
         )
     stocks = list(settings.market.stocks)
     embargo = settings.model.embargo_days
