@@ -1,3 +1,4 @@
+import logging
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -51,7 +52,7 @@ class RunDailyStageOrderTests(unittest.TestCase):
             cli, "_run_signals", stage("signals", signals)
         ), patch.object(  # these runs use the project settings: never log into the real database
             cli, "_record_daily", lambda args, settings, status, message: calls.append(f"logged {status}")
-        ), redirect_stdout(
+        ), patch.object(cli, "configure_logging", lambda settings, database: logging.NullHandler()), redirect_stdout(
             StringIO()
         ), redirect_stderr(StringIO()):
             code = cli.main(["--config", str(PROJECT_SETTINGS), "run-daily"])

@@ -1340,6 +1340,8 @@ The dashboard should show a clear note that outputs are research signals, not ad
 
 Use Python's `logging`. Log data ingestion, API failures, quality warnings, feature calculation, model training/loading, predictions, signals, backtests and every CLI command. Prefer structured, readable logs.
 
+Implementation (`quant/logs.py`, Phase 9): every command logs to `<database directory>/logs/quant.log` (`data/logs/quant.log`, git-ignored with `data/`), rotated at `logging.max_megabytes` with `logging.backups` old files, at `logging.level`, with UTC timestamps. Each command logs its start, its finish (exit code, duration) or its crash with the traceback; every message printed to stderr is also an ERROR line; every `pipeline_runs` row (ingestion per symbol, features, regime, signal stages, backtests, holdout views, retrains, promotions with any override and reason, run-daily) is also a log line; download failures, quarantined rows and signal warnings are WARNING lines. Terminal output is unchanged. The log sits next to the database it describes, so `--db` and test databases log next to their own file.
+
 ---
 
 # 27. Configuration
@@ -1490,6 +1492,11 @@ positions:                         # section 6.8; your holdings, read by run-dai
 signals:                           # section 18.1; BUY / HOLD / REDUCE / EXIT at the close of T
   strategy: regime_switch          # a rule-based strategy from section 17.1 (baseline or a variant)
   hold_band: 0.02                  # HOLD while |target - current| is below this; = backtest.min_trade_weight
+
+logging:                           # section 26; written to <database directory>/logs/quant.log
+  level: INFO                      # DEBUG | INFO | WARNING | ERROR
+  max_megabytes: 5                 # rotate the file at this size ...
+  backups: 5                       # ... keeping this many old files
 ```
 
 `config/settings.yaml` holds exactly this block. Every section and key is required and unknown keys are rejected at startup, so the two must be changed together.

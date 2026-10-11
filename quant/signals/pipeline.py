@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import Engine
@@ -17,6 +18,7 @@ from quant.persistence import queries
 from quant.signals.engine import Signals, load_signals
 from quant.signals.positions import snapshot_rows
 
+log = logging.getLogger(__name__)
 COMMAND = "generate-signals"
 PREDICTOR = "PREDICTOR"
 
@@ -56,6 +58,8 @@ def generate_and_store_signals(engine: Engine, settings: Settings) -> SignalRun:
         )
     signals = load_signals(engine, settings)
     session = signals.session.date()
+    for warning in signals.warnings:
+        log.warning("%s: %s", session, warning)
     queries.record_pipeline_run(
         engine, command=COMMAND, stage="predictor", status="SKIPPED", data_as_of_date=session,
         message="no ACTIVE predictor: rule-based signals only",

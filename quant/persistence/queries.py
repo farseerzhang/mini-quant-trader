@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
@@ -12,6 +13,10 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from quant.persistence import tables
+
+
+log = logging.getLogger("quant.pipeline")
+LEVELS = {"OK": logging.INFO, "SKIPPED": logging.INFO, "STARTED": logging.INFO, "FAILED": logging.ERROR}
 
 
 def _now() -> datetime:
@@ -120,6 +125,8 @@ def record_pipeline_run(
     message: str | None = None,
 ) -> None:
     now = _now()
+    log.log(LEVELS.get(status, logging.INFO), "%s/%s %s%s: %s", command, stage, status,
+            f" (data to {data_as_of_date})" if data_as_of_date else "", message or "-")
     with engine.begin() as conn:
         conn.execute(
             tables.pipeline_runs.insert().values(

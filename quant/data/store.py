@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Mapping, Sequence
@@ -13,6 +14,8 @@ from quant.data.data_quality import validate_prices
 from quant.data.provider import MarketDataProvider
 from quant.data.yfinance_provider import MarketDataError
 from quant.persistence import queries
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -94,6 +97,8 @@ def store_market_data(
 
     stored_prices = queries.upsert_daily_prices(engine, good)
     quarantined = queries.quarantine_rows(engine, provider_name, bad)
+    if quarantined:
+        log.warning("%s: %d rows quarantined (see data_quarantine)", symbol, quarantined)
     action_rows = _actions_to_rows(symbol, provider_name, actions)
     stored_actions = queries.upsert_corporate_actions(engine, action_rows)
 
@@ -163,6 +168,7 @@ def sync_market_data(
             )
             summaries.append(summary)
         except MarketDataError as exc:
+            log.warning("%s: download failed: %s", symbol, exc)
             failures.append(SyncFailure(symbol=symbol, error=str(exc)))
 
     return SyncReport(as_of=as_of, summaries=summaries, skipped=skipped, failures=failures)

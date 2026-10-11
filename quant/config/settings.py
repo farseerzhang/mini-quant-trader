@@ -482,6 +482,24 @@ class BacktestSettings:
         return self.slippage_bps / 10_000
 
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+
+
+@dataclass(frozen=True)
+class LoggingSettings:
+    level: str
+    max_megabytes: float
+    backups: int
+
+    def __post_init__(self) -> None:
+        if self.level not in LOG_LEVELS:
+            raise ConfigError(f"logging.level must be one of {', '.join(LOG_LEVELS)}")
+        if self.max_megabytes <= 0:
+            raise ConfigError("logging.max_megabytes must be positive")
+        if self.backups < 0:
+            raise ConfigError("logging.backups must not be negative")
+
+
 @dataclass(frozen=True)
 class Settings:
     database: DatabaseSettings
@@ -495,6 +513,7 @@ class Settings:
     retrain: RetrainSettings
     positions: PositionSettings
     signals: SignalSettings
+    logging: LoggingSettings
 
     def __post_init__(self) -> None:
         if self.signals.strategy not in self.strategies.rule_names:
@@ -710,4 +729,5 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         ),
         positions=_build(PositionSettings, "positions", _section(raw, "positions")),
         signals=_build(SignalSettings, "signals", _section(raw, "signals")),
+        logging=_build(LoggingSettings, "logging", _section(raw, "logging")),
     )

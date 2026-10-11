@@ -1,5 +1,7 @@
 import argparse
+import logging
 import sys
+import time
 from datetime import date
 
 import pandas as pd
@@ -11,6 +13,7 @@ from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, Settings, lo
 from quant.data.store import sync_market_data, sync_symbol_table
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
+from quant.logs import close_logging, configure_logging
 from quant.models.ml_backtest import BASELINE
 from quant.models.retrain import run_retrain
 from quant.ops.promote import PromotionError, promote_model
@@ -22,6 +25,15 @@ from quant.regime.retrain import run_regime_retrain
 from quant.signals.pipeline import generate_and_store_signals
 from quant.signals.positions import PositionsError
 from quant.strategies import build_strategies
+
+
+log = logging.getLogger("quant.cli")
+
+
+def _error(message: str) -> None:
+    """Print to stderr and log: every refusal and failure the user sees is also in the log."""
+    print(message, file=sys.stderr)
+    log.error(message)
 
 
 def _iso_date(value: str) -> date:
@@ -172,7 +184,7 @@ def _update_market_data(args: argparse.Namespace, settings: Settings) -> str:
             calendar_name=settings.market.calendar,
         )
     except (MarketDataError, ValueError) as exc:
-        print(f"Market data update failed: {exc}", file=sys.stderr)
+        _error(f"Market data update failed: {exc}")
         return _FAILED
     finally:
         engine.dispose()
@@ -185,7 +197,7 @@ def _update_market_data(args: argparse.Namespace, settings: Settings) -> str:
     for symbol in report.skipped:
         print(f"{symbol}: already current")
     for failure in report.failures:
-        print(f"{failure.symbol}: FAILED: {failure.error}", file=sys.stderr)
+        _error(f"{failure.symbol}: FAILED: {failure.error}")
     return _PARTIAL if report.failures else _OK
 
 
@@ -194,7 +206,7 @@ def _run_features(args: argparse.Namespace, settings: Settings) -> int:
     try:
         summary = calculate_and_store_features(engine, settings.features)
     except ValueError as exc:
-        print(f"Feature calculation failed: {exc}", file=sys.stderr)
+        _error(f"Feature calculation failed: {exc}")
         return 1
     finally:
         engine.dispose()
@@ -211,7 +223,7 @@ def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
     try:
         summary = calculate_and_store_regimes(engine, settings.regime, settings.features)
     except ValueError as exc:
-        print(f"Regime calculation failed: {exc}", file=sys.stderr)
+        _error(f"Regime calculation failed: {exc}")
         return 1
     finally:
         engine.dispose()
@@ -231,10 +243,7 @@ def _run_backtest(args: argparse.Namespace, settings: Settings) -> int:
         known = {strategy.name for strategy in strategies}
         unknown = [name for name in args.strategy if name not in known]
         if unknown:
-            print(
-                f"Unknown strategy: {', '.join(unknown)}; choose from {', '.join(sorted(known))}",
-                file=sys.stderr,
-            )
+            _error(f"Unknown strategy: {', '.join(unknown)}; choose from {', '.join(sorted(known))}")
             return 1
         strategies = [strategy for strategy in strategies if strategy.name in args.strategy]
     show_holdout = args.evaluate_holdout or not settings.holdout_requires_flag
@@ -265,7 +274,7 @@ def _run_backtest(args: argparse.Namespace, settings: Settings) -> int:
             message=f"batch {batch_id}: {names}",
         )
     except ValueError as exc:
-        print(f"Backtest failed: {exc}", file=sys.stderr)
+        _error(f"Backtest failed: {exc}")
         return 1
     finally:
         engine.dispose()
@@ -361,16 +370,16 @@ def _print_regime_retrain(outcome) -> None:
 def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
     if args.role == "regime":
         if args.evaluate_holdout:
-            print("--evaluate-holdout does not apply to --role regime: no regime gate uses the holdout", file=sys.stderr)
+            _error("--evaluate-holdout does not apply to --role regime: no regime gate uses the holdout")
             return 1
         if args.model and args.model != "hmm":
-            print(f"--role regime trains the HMM; --model {args.model} is not a regime model", file=sys.stderr)
+            _error(f"--role regime trains the HMM; --model {args.model} is not a regime model")
             return 1
         engine = _engine(settings, args.db)
         try:
             outcome = run_regime_retrain(engine, settings)
         except ValueError as exc:
-            print(f"Retrain failed: {exc}", file=sys.stderr)
+            _error(f"Retrain failed: {exc}")
             return 1
         finally:
             engine.dispose()
@@ -382,7 +391,7 @@ def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
     try:
         outcome = run_retrain(engine, settings, model_type, evaluate_holdout)
     except (NotImplementedError, ValueError) as exc:
-        print(f"Retrain failed: {exc}", file=sys.stderr)
+        _error(f"Retrain failed: {exc}")
         return 1
     finally:
         engine.dispose()
@@ -431,7 +440,7 @@ def _run_signals(args: argparse.Namespace, settings: Settings) -> int:
     try:
         run = generate_and_store_signals(engine, settings)
     except (PositionsError, ValueError, NotImplementedError) as exc:
-        print(f"Signal generation failed: {exc}", file=sys.stderr)
+        _error(f"Signal generation failed: {exc}")
         return 1
     finally:
         engine.dispose()
@@ -444,7 +453,7 @@ def _run_promote(args: argparse.Namespace, settings: Settings) -> int:
     try:
         promotion = promote_model(engine, settings, args.model_id, args.override)
     except PromotionError as exc:
-        print(f"Promotion refused: {exc}", file=sys.stderr)
+        _error(f"Promotion refused: {exc}")
         return 1
     finally:
         engine.dispose()
@@ -500,7 +509,7 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     print("[1/4] update-market-data")
     market_data = _update_market_data(args, settings)
     if market_data == _FAILED:
-        print("run-daily stopped: market data update failed", file=sys.stderr)
+        _error("run-daily stopped: market data update failed")
         return 1
     for step, name, run in (
         (2, "calculate-features", _run_features),
@@ -509,13 +518,26 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     ):
         print(f"[{step}/4] {name}")
         if run(args, settings) != 0:
-            print(f"run-daily stopped: {name} failed", file=sys.stderr)
+            _error(f"run-daily stopped: {name} failed")
             return 1
     if market_data == _PARTIAL:
-        print("run-daily finished, but some symbols failed to update (see above)", file=sys.stderr)
+        _error("run-daily finished, but some symbols failed to update (see above)")
         return 1
     print("run-daily finished")
     return 0
+
+
+COMMANDS = {
+    "update-market-data": lambda args, settings: _run_update(args, settings),
+    "calculate-features": lambda args, settings: _run_features(args, settings),
+    "calculate-regime": lambda args, settings: _run_regime(args, settings),
+    "promote": lambda args, settings: _run_promote(args, settings),
+    "status": lambda args, settings: _run_status(args, settings),
+    "generate-signals": lambda args, settings: _run_signals(args, settings),
+    "run-daily": lambda args, settings: _run_daily(args, settings),
+    "backtest": lambda args, settings: _run_backtest(args, settings),
+    "retrain": lambda args, settings: _run_retrain(args, settings),
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -523,26 +545,27 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         settings = load_settings(args.config)
-        if args.command == "update-market-data":
-            return _run_update(args, settings)
-        if args.command == "calculate-features":
-            return _run_features(args, settings)
-        if args.command == "calculate-regime":
-            return _run_regime(args, settings)
-        if args.command == "promote":
-            return _run_promote(args, settings)
-        if args.command == "status":
-            return _run_status(args, settings)
-        if args.command == "generate-signals":
-            return _run_signals(args, settings)
-        if args.command == "run-daily":
-            return _run_daily(args, settings)
-        if args.command == "backtest":
-            return _run_backtest(args, settings)
-        if args.command == "retrain":
-            return _run_retrain(args, settings)
     except ConfigError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
+        print(f"Configuration error: {exc}", file=sys.stderr)  # no log yet: its settings are the problem
         return 1
-    parser.error(f"unknown command: {args.command}")
-    return 2
+    if args.command not in COMMANDS:
+        parser.error(f"unknown command: {args.command}")
+        return 2
+    handler = configure_logging(settings.logging, getattr(args, "db", None) or settings.database.path)
+    words = " ".join(argv if argv is not None else sys.argv[1:])
+    log.info("command started: %s", words)
+    started = time.monotonic()
+    try:
+        code = COMMANDS[args.command](args, settings)
+    except ConfigError as exc:
+        _error(f"Configuration error: {exc}")
+        code = 1
+    except Exception:
+        log.exception("command crashed: %s", words)
+        raise
+    else:
+        log.log(logging.INFO if code == 0 else logging.WARNING, "command finished: %s -> exit %d in %.1fs",
+                args.command, code, time.monotonic() - started)
+        return code
+    finally:
+        close_logging(handler)

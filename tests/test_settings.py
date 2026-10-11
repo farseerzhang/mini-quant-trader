@@ -54,6 +54,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.positions.path, "data/positions.csv")
         self.assertEqual(settings.signals.strategy, "regime_switch")
         self.assertEqual(settings.signals.hold_band, settings.backtest.min_trade_weight)
+        self.assertEqual((settings.logging.level, settings.logging.max_megabytes, settings.logging.backups), ("INFO", 5, 5))
         self.assertEqual(
             settings.strategies.rule_names, ("trend", "mean_reversion", "regime_switch", "regime_switch_bear50")
         )
@@ -177,6 +178,10 @@ class SettingsTests(unittest.TestCase):
             "ml strategy drives signals": set_value("signals", "strategy", "ml_select"),
             "hold band of 1": set_value("signals", "hold_band", 1.0),
             "unknown signals key": set_value("signals", "hold_bnad", 0.02),
+            "unknown log level": set_value("logging", "level", "LOUD"),
+            "zero log size": set_value("logging", "max_megabytes", 0),
+            "negative backups": set_value("logging", "backups", -1),
+            "missing logging section": lambda d: d.pop("logging"),
         }
         for name, mutate in bad.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:

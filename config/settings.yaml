@@ -146,3 +146,8 @@ positions:                         # section 6.8; your holdings, read by run-dai
 signals:                           # section 18.1; BUY / HOLD / REDUCE / EXIT at the close of T
   strategy: regime_switch          # a rule-based strategy from section 17.1 (baseline or a variant)
   hold_band: 0.02                  # HOLD while |target - current| is below this; = backtest.min_trade_weight
+
+logging:                           # section 26; written to <database directory>/logs/quant.log
+  level: INFO                      # DEBUG | INFO | WARNING | ERROR
+  max_megabytes: 5                 # rotate the file at this size ...
+  backups: 5                       # ... keeping this many old files
