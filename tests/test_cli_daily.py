@@ -49,6 +49,8 @@ class RunDailyStageOrderTests(unittest.TestCase):
             cli, "_run_features", stage("features", features)
         ), patch.object(cli, "_run_regime", stage("regime", regime)), patch.object(
             cli, "_run_signals", stage("signals", signals)
+        ), patch.object(  # these runs use the project settings: never log into the real database
+            cli, "_record_daily", lambda args, settings, status, message: calls.append(f"logged {status}")
         ), redirect_stdout(
             StringIO()
         ), redirect_stderr(StringIO()):
@@ -56,22 +58,22 @@ class RunDailyStageOrderTests(unittest.TestCase):
         return code, calls
 
     def test_runs_every_stage_in_order(self):
-        self.assertEqual(self.run_daily(), (0, ["update", "features", "regime", "signals"]))
+        self.assertEqual(self.run_daily(), (0, ["update", "features", "regime", "signals", "logged OK"]))
 
     def test_a_failed_market_data_update_stops_the_run(self):
-        self.assertEqual(self.run_daily(update="failed"), (1, ["update"]))
+        self.assertEqual(self.run_daily(update="failed"), (1, ["update", "logged FAILED"]))
 
     def test_a_failed_feature_stage_stops_before_the_regime(self):
-        self.assertEqual(self.run_daily(features=1), (1, ["update", "features"]))
+        self.assertEqual(self.run_daily(features=1), (1, ["update", "features", "logged FAILED"]))
 
     def test_failed_symbols_do_not_stop_the_run_but_are_reported(self):
-        self.assertEqual(self.run_daily(update="partial"), (1, ["update", "features", "regime", "signals"]))
+        self.assertEqual(self.run_daily(update="partial"), (1, ["update", "features", "regime", "signals", "logged FAILED"]))
 
     def test_a_failed_regime_stage_stops_before_the_signals(self):
-        self.assertEqual(self.run_daily(regime=1), (1, ["update", "features", "regime"]))
+        self.assertEqual(self.run_daily(regime=1), (1, ["update", "features", "regime", "logged FAILED"]))
 
     def test_a_failed_signal_stage_fails_the_run(self):
-        self.assertEqual(self.run_daily(signals=1), (1, ["update", "features", "regime", "signals"]))
+        self.assertEqual(self.run_daily(signals=1), (1, ["update", "features", "regime", "signals", "logged FAILED"]))
 
 
 class RunDailyEndToEndTests(unittest.TestCase):

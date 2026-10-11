@@ -436,3 +436,55 @@ def load_signals(engine: Engine, session: date, strategy: str | None = None) -> 
     with engine.connect() as conn:
         rows = conn.execute(stmt).mappings().all()
     return pd.DataFrame([dict(row) for row in rows], columns=[c.name for c in tables.signals.columns])
+
+
+def latest_price_dates(engine: Engine) -> dict[str, date]:
+    """Last stored session per symbol."""
+    prices = tables.daily_prices
+    stmt = select(prices.c.symbol, func.max(prices.c.date)).group_by(prices.c.symbol)
+    with engine.connect() as conn:
+        return {symbol: last for symbol, last in conn.execute(stmt).all()}
+
+
+def latest_pipeline_runs(engine: Engine) -> pd.DataFrame:
+    """The most recent pipeline_runs row of every (command, stage, status)."""
+    runs = tables.pipeline_runs
+    latest = (
+        select(func.max(runs.c.run_id).label("run_id"))
+        .group_by(runs.c.command, runs.c.stage, runs.c.status)
+        .subquery()
+    )
+    stmt = select(runs).where(runs.c.run_id.in_(select(latest.c.run_id))).order_by(runs.c.run_id)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return pd.DataFrame([dict(row) for row in rows], columns=[c.name for c in runs.columns])
+
+
+def count_quarantined(engine: Engine, since: datetime | None = None) -> int:
+    quarantine = tables.data_quarantine
+    stmt = select(func.count()).select_from(quarantine)
+    if since is not None:
+        stmt = stmt.where(quarantine.c.quarantined_at >= since)
+    with engine.connect() as conn:
+        return int(conn.execute(stmt).scalar_one())
+
+
+def latest_date(engine: Engine, column, *conditions) -> date | None:
+    """max(column) over the rows matching ``conditions``."""
+    stmt = select(func.max(column))
+    for condition in conditions:
+        stmt = stmt.where(condition)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
+
+
+def model_counts(engine: Engine) -> pd.DataFrame:
+    """Registered models per role and status, with how many passed their gates."""
+    models = tables.model_versions
+    stmt = select(
+        models.c.role, models.c.status, func.count().label("models"),
+        func.sum(models.c.gates_passed).label("gates_passed"),
+    ).group_by(models.c.role, models.c.status)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return pd.DataFrame([dict(row) for row in rows], columns=["role", "status", "models", "gates_passed"])

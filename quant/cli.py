@@ -13,6 +13,7 @@ from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
 from quant.models.ml_backtest import BASELINE
 from quant.models.retrain import run_retrain
+from quant.ops.status import collect_status, format_status
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
 from quant.regime.pipeline import calculate_and_store_regimes
@@ -102,6 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     signals_command.add_argument("--reasons", action="store_true", help="also print the reason of every signal")
     signals_command.add_argument("--db", help=db_help)
+
+    status_command = commands.add_parser(
+        "status",
+        help="last runs, data freshness, the active model per role and warnings (read-only)",
+    )
+    status_command.add_argument("--db", help=db_help)
 
     daily_command = commands.add_parser(
         "run-daily",
@@ -420,7 +427,34 @@ def _run_signals(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_status(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
+    try:
+        report = collect_status(engine, settings)
+    finally:
+        engine.dispose()
+    print(format_status(report))
+    return 0
+
+
+def _record_daily(args: argparse.Namespace, settings: Settings, status: str, message: str) -> None:
+    engine = _engine(settings, args.db)
+    try:
+        queries.record_pipeline_run(engine, command="run-daily", stage="run-daily", status=status, message=message)
+    finally:
+        engine.dispose()
+
+
 def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
+    code = _run_daily_stages(args, settings)
+    if code == 0:
+        _record_daily(args, settings, "OK", "every stage finished")
+    else:
+        _record_daily(args, settings, "FAILED", "a stage failed or some symbols did not update (see the output)")
+    return code
+
+
+def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     """Run the pipeline stages in order (proposal section 23, steps 1-13).
 
     Every stage persists its own results and pipeline_runs row, so a failure
@@ -461,6 +495,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_features(args, settings)
         if args.command == "calculate-regime":
             return _run_regime(args, settings)
+        if args.command == "status":
+            return _run_status(args, settings)
         if args.command == "generate-signals":
             return _run_signals(args, settings)
         if args.command == "run-daily":

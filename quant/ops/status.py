@@ -1,0 +1,215 @@
+"""`quant status`: last runs, data freshness, active model per role, warnings (section 24).
+
+Read-only. Every check reads what the commands stored; nothing is recalculated.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+import pandas as pd
+from sqlalchemy import Engine
+
+from quant.config.settings import Settings
+from quant.data.calendar import last_completed_session
+from quant.persistence import queries, tables
+from quant.regime.pipeline import RULE_METHOD
+from quant.signals.positions import MANUAL
+
+ROLES = ("REGIME", "PREDICTOR")
+FALLBACK = {"REGIME": "rule-based regime", "PREDICTOR": "rule-based signals only"}
+DAILY_STAGES = (  # (label, command, stage) in run-daily order
+    ("market data", "update-market-data", "ingest"),
+    ("features", "calculate-features", "features"),
+    ("regime", "calculate-regime", "regime"),
+    ("signals", "generate-signals", "signals"),
+)
+
+
+@dataclass(frozen=True)
+class StageStatus:
+    label: str
+    last_ok: datetime | None
+    data_as_of: date | None
+    failed_since: datetime | None  # a FAILED run after the last OK one
+    message: str | None
+
+
+@dataclass(frozen=True)
+class StatusReport:
+    checked_at: datetime
+    expected_session: date | None  # last completed NYSE session
+    prices_as_of: date | None  # SPY's last stored session
+    stale_symbols: dict[str, date]
+    missing_symbols: list[str]
+    quarantined_last_week: int
+    quarantined_total: int
+    features_as_of: date | None
+    regime_as_of: date | None
+    regime: str | None
+    regime_score: float | None
+    signals_as_of: date | None
+    signal_counts: dict[str, int]
+    signal_strategy: str | None
+    positions_as_of: date | None
+    positions_file: Path
+    positions_file_changed: bool  # edited after the last stored snapshot
+    stages: list[StageStatus]
+    last_run_daily: datetime | None
+    active: dict[str, dict | None]
+    candidates: dict[str, tuple[int, int]]  # role -> (candidates, of which gates passed)
+    holdout_evaluations: int
+    warnings: list[str] = field(default_factory=list)
+
+
+def _stage(runs: pd.DataFrame, label: str, command: str, stage: str) -> StageStatus:
+    mine = runs[(runs["command"] == command) & (runs["stage"] == stage)]
+    ok = mine[mine["status"] == "OK"]
+    failed = mine[mine["status"] == "FAILED"]
+    last_ok = ok.iloc[-1] if not ok.empty else None
+    last_failed = failed.iloc[-1] if not failed.empty else None
+    failed_since = None
+    if last_failed is not None and (last_ok is None or last_failed["run_id"] > last_ok["run_id"]):
+        failed_since = last_failed["finished_at"]
+    return StageStatus(
+        label=label,
+        last_ok=None if last_ok is None else last_ok["finished_at"],
+        data_as_of=None if last_ok is None else last_ok["data_as_of_date"],
+        failed_since=failed_since,
+        message=None if last_ok is None else last_ok["message"],
+    )
+
+
+def collect_status(engine: Engine, settings: Settings, now: datetime | None = None) -> StatusReport:
+    now = now or datetime.now(timezone.utc)
+    warnings: list[str] = []
+    try:
+        expected = last_completed_session(now, settings.market.calendar)
+    except ValueError:
+        expected = None
+
+    last_dates = queries.latest_price_dates(engine)
+    prices_as_of = last_dates.get("SPY") or (max(last_dates.values()) if last_dates else None)
+    universe = settings.market.universe
+    missing = [s for s in universe if s not in last_dates]
+    stale = {s: last_dates[s] for s in universe if s in last_dates and prices_as_of and last_dates[s] < prices_as_of}
+
+    features_as_of = queries.latest_date(engine, tables.features.c.date,
+                                         tables.features.c.feature_version == settings.features.feature_version)
+    regimes = queries.load_regimes(engine, RULE_METHOD, settings.regime.rule_version)
+    regime_as_of = regimes.index[-1].date() if not regimes.empty else None
+    score = queries.latest_date(engine, tables.market_regimes.c.regime_score,
+                                tables.market_regimes.c.date == regime_as_of,
+                                tables.market_regimes.c.regime_method == RULE_METHOD,
+                                tables.market_regimes.c.model_version == settings.regime.rule_version) if regime_as_of else None
+
+    signals_as_of = queries.latest_date(engine, tables.signals.c.date)
+    signal_counts, signal_strategy = {}, None
+    if signals_as_of is not None:
+        stored = queries.load_signals(engine, signals_as_of, settings.signals.strategy)
+        signal_counts = stored["signal"].value_counts().to_dict()
+        signal_strategy = settings.signals.strategy if not stored.empty else None
+
+    positions_as_of = queries.latest_date(engine, tables.positions.c.as_of_date, tables.positions.c.source == MANUAL)
+    snapshot_created = queries.latest_date(engine, tables.positions.c.created_at, tables.positions.c.source == MANUAL)
+    positions_file = Path(settings.positions.path)
+    file_changed = False
+    if positions_file.exists() and snapshot_created is not None:
+        modified = datetime.fromtimestamp(positions_file.stat().st_mtime, timezone.utc)
+        created = snapshot_created if snapshot_created.tzinfo else snapshot_created.replace(tzinfo=timezone.utc)
+        file_changed = modified > created
+
+    runs = queries.latest_pipeline_runs(engine)
+    stages = [_stage(runs, *spec) for spec in DAILY_STAGES]
+    daily = _stage(runs, "run-daily", "run-daily", "run-daily")
+
+    active = {role: (dict(row) if (row := queries.active_model(engine, role)) is not None else None) for role in ROLES}
+    counts = queries.model_counts(engine)
+    candidates = {}
+    for role in ROLES:
+        mine = counts[(counts["role"] == role) & (counts["status"] == "CANDIDATE")]
+        candidates[role] = (int(mine["models"].sum()), int(mine["gates_passed"].fillna(0).sum()))
+
+    # Warnings, most important first.
+    if expected is None:
+        warnings.append(f"could not determine the last completed {settings.market.calendar} session; freshness unchecked")
+    if prices_as_of is None:
+        warnings.append("no stored prices: run `quant run-daily`")
+    elif expected is not None and prices_as_of < expected:
+        warnings.append(f"prices end {prices_as_of}, the last completed session is {expected}: run `quant run-daily`")
+    for name, as_of in (("features", features_as_of), ("regime", regime_as_of), ("signals", signals_as_of)):
+        if prices_as_of is not None and (as_of is None or as_of < prices_as_of):
+            warnings.append(f"{name} end {as_of or 'nowhere'}, behind the prices ({prices_as_of})")
+    for stage in stages + [daily]:
+        if stage.failed_since is not None:
+            warnings.append(f"{stage.label}: the last run FAILED ({stage.failed_since:%Y-%m-%d %H:%M})")
+    if missing:
+        warnings.append(f"no prices stored for: {', '.join(missing)}")
+    if stale:
+        warnings.append("behind the others: " + ", ".join(f"{s} ({d})" for s, d in sorted(stale.items())))
+    week = queries.count_quarantined(engine, since=now - timedelta(days=7))
+    if week:
+        warnings.append(f"{week} rows quarantined in the last 7 days (see data_quarantine)")
+    if not positions_file.exists():
+        warnings.append(f"no positions file at {positions_file}: signals assume an all-cash portfolio")
+    elif file_changed:
+        warnings.append(f"{positions_file} changed after the last signals: run `quant generate-signals`")
+    predictor = active["PREDICTOR"]
+    if predictor is not None:
+        regime = active["REGIME"]
+        regime_version = regime["model_id"] if regime is not None else settings.regime.rule_version
+        if predictor.get("depends_on") and predictor["depends_on"] != regime_version:
+            warnings.append(
+                f"ACTIVE predictor {predictor['model_id']} was trained on regime {predictor['depends_on']}, "
+                f"but the regime in use is {regime_version}: retrain the predictor"
+            )
+
+    return StatusReport(
+        checked_at=now, expected_session=expected, prices_as_of=prices_as_of, stale_symbols=stale,
+        missing_symbols=missing, quarantined_last_week=week, quarantined_total=queries.count_quarantined(engine),
+        features_as_of=features_as_of, regime_as_of=regime_as_of,
+        regime=None if regimes.empty else regimes.iloc[-1], regime_score=score,
+        signals_as_of=signals_as_of, signal_counts=signal_counts, signal_strategy=signal_strategy,
+        positions_as_of=positions_as_of, positions_file=positions_file, positions_file_changed=file_changed,
+        stages=stages, last_run_daily=daily.last_ok, active=active, candidates=candidates,
+        holdout_evaluations=queries.count_holdout_evaluations(engine), warnings=warnings,
+    )
+
+
+def _when(value: datetime | None) -> str:
+    return "never" if value is None else f"{value:%Y-%m-%d %H:%M} UTC"
+
+
+def format_status(report: StatusReport) -> str:
+    lines = [f"Status at {report.checked_at:%Y-%m-%d %H:%M} UTC", "", "Data"]
+    lines.append(f"  last completed session  {report.expected_session or 'unknown'}")
+    lines.append(f"  prices                  {report.prices_as_of or 'none'}")
+    lines.append(f"  features                {report.features_as_of or 'none'}")
+    regime = f"{report.regime} (score {report.regime_score:+.0f})" if report.regime and report.regime_score is not None \
+        else (report.regime or "none")
+    lines.append(f"  regime                  {report.regime_as_of or 'none'}: {regime}")
+    counts = ", ".join(f"{k} {v}" for k, v in sorted(report.signal_counts.items())) or "none"
+    lines.append(f"  signals                 {report.signals_as_of or 'none'}: {counts}")
+    lines.append(f"  positions snapshot      {report.positions_as_of or 'none'}")
+    lines.append(f"  quarantined rows        {report.quarantined_total} in total, {report.quarantined_last_week} this week")
+    lines += ["", "Last successful runs"]
+    lines.append(f"  run-daily               {_when(report.last_run_daily)}")
+    for stage in report.stages:
+        data = f" (data to {stage.data_as_of})" if stage.data_as_of else ""
+        lines.append(f"  {stage.label:<23} {_when(stage.last_ok)}{data}")
+    lines += ["", "Models"]
+    for role in ROLES:
+        model = report.active[role]
+        candidates, passed = report.candidates[role]
+        in_use = f"ACTIVE {model['model_id']}" if model else f"none ACTIVE: {FALLBACK[role]}"
+        lines.append(f"  {role:<23} {in_use}; {candidates} candidates, {passed} passed their gates")
+    lines.append(f"  holdout evaluations     {report.holdout_evaluations}")
+    lines += [""]
+    if report.warnings:
+        lines.append(f"Warnings ({len(report.warnings)})")
+        lines += [f"  - {warning}" for warning in report.warnings]
+    else:
+        lines.append("No warnings.")
+    return "\n".join(lines)
