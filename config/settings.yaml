@@ -44,6 +44,12 @@ regime:
   min_dwell_days: 5                # sessions a regime is held before it may change
   vix_low: 20                      # VIX below this scores +1
   vix_high: 30                     # VIX above this scores -1
+  hmm:                             # REGIME candidate (section 13.1, pre-registered); fit only by `retrain --role regime`
+    observations: [spy_return_1d, log_market_volatility, log_vix]   # market_features columns, standardized per fit
+    states: 3                      # BULL / SIDEWAYS / BEAR, ordered by mean spy_return_1d
+    covariance: diag               # diag | full
+    starts: 5                      # random starts (seeds from retrain.search.seed); best log-likelihood kept
+    iterations: 200
 
 strategies:                        # rule-based baselines (section 17); weights at the close of T
   version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)

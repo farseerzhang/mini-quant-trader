@@ -123,6 +123,28 @@ class FeatureSettings:
 RULE_SCORE_MAX = 5
 
 
+HMM_COVARIANCES = ("diag", "full")
+
+
+@dataclass(frozen=True)
+class HMMSettings:
+    observations: tuple[str, ...]  # market_features columns
+    states: int
+    covariance: str
+    starts: int  # random starts; the best training log-likelihood is kept
+    iterations: int
+
+    def __post_init__(self) -> None:
+        if not self.observations:
+            raise ConfigError("regime.hmm.observations must list at least one market feature")
+        if self.states != 3:
+            raise ConfigError("regime.hmm.states must be 3 (BULL / SIDEWAYS / BEAR)")
+        if self.covariance not in HMM_COVARIANCES:
+            raise ConfigError(f"regime.hmm.covariance must be one of {', '.join(HMM_COVARIANCES)}")
+        if self.starts < 1 or self.iterations < 1:
+            raise ConfigError("regime.hmm.starts and regime.hmm.iterations must be >= 1")
+
+
 @dataclass(frozen=True)
 class RegimeSettings:
     version: int
@@ -132,6 +154,7 @@ class RegimeSettings:
     min_dwell_days: int
     vix_low: float
     vix_high: float
+    hmm: HMMSettings
 
     def __post_init__(self) -> None:
         if self.version < 1:
@@ -147,6 +170,11 @@ class RegimeSettings:
             raise ConfigError("regime.min_dwell_days must be >= 1")
         if not 0 < self.vix_low < self.vix_high:
             raise ConfigError("regime VIX levels must satisfy 0 < vix_low < vix_high")
+
+    @property
+    def hmm_version(self) -> str:
+        """Version label of the HMM regime definition (model ids are per fit)."""
+        return f"hmm-v{self.version}"
 
     @property
     def rule_version(self) -> str:
@@ -575,7 +603,12 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
             {"initial_history": _as_date, "symbols": _as_sector_pool, "market_symbols": _as_str_tuple},
         ),
         features=_build(FeatureSettings, "features", _section(raw, "features"), {"sma": _as_int_tuple}),
-        regime=_build(RegimeSettings, "regime", _section(raw, "regime")),
+        regime=_build(
+            RegimeSettings,
+            "regime",
+            _section(raw, "regime"),
+            {"hmm": _subsection(HMMSettings, "regime.hmm", {"observations": _as_name_tuple})},
+        ),
         strategies=_build(
             StrategySettings,
             "strategies",

@@ -626,6 +626,55 @@ Critical rules:
 
 ---
 
+## 13.1 Phase 7 pre-registration (2026-10-11, before any HMM result)
+
+Decisions fixed before fitting anything on the real data:
+
+- **Observations (per session T):** `spy_return_1d`, `log_market_volatility`, `log_vix` from `market_features`, standardized with the mean and standard deviation of each fit's own training window. The slow indicators (SPY vs SMA200, 3-month momentum; day-to-day autocorrelation about 0.99) are left out, so the HMM is not a copy of the rule-based regime.
+- **Model:** Gaussian HMM, 3 states, diagonal covariances, 5 random starts (seeds from `retrain.search.seed`), 200 EM iterations; the start with the highest training log-likelihood is kept.
+- **Point in time:** only **filtered** state probabilities (a forward pass over sessions up to T with the parameters of the latest fit made on data before T), computed by our own code from the fitted parameters; never `predict` / `predict_proba`, which are smoothed over the whole sequence.
+- **Walk-forward:** refit once a year on an expanding window, using the same fold rule as the predictors (`retrain.validation`: 8 training years, 12-month windows, purged, anchored to the development end); the holdout is not used.
+- **State labels:** per fit, the states are ordered by their mean `spy_return_1d`: highest = BULL, middle = SIDEWAYS, lowest = BEAR. The session's regime is the label of the most probable filtered state, then the same minimum dwell as the rule-based regime (`regime.min_dwell_days`, section 12.2).
+- **Gates (`retrain.gates.regime`):** `filtered_only_test_pass`: the regime at T is unchanged when later sessions are added; `state_mapping_stable_across_refits`: two consecutive fits give the same label to at least **80%** of the sessions they both cover; `min_avg_regime_dwell_days: 10`; `beats_rule_based_regime_after_costs`: `regime_switch` traded with the HMM regime has a higher Sharpe after costs than with the rule-based regime, over the same walk-forward window.
+
+Phase 0 finding for this phase: `hmmlearn` 0.3.3 installs and runs on Python 3.12.10 / numpy 2.5 / scipy 1.18 (5 fits of 5,000 sessions in 0.4 s; 99.9% recovery of known synthetic states; reproducible with fixed seeds), but its own code triggers a numpy 2.5 deprecation warning (`a_sum.shape = shape`). It is therefore used only for fitting; the forward filter uses only the fitted parameters.
+
+### First fit (2026-10-11; `quant/regime/hmm.py`)
+
+The settings above are `regime.hmm` in the configuration. One fit on the first fold's training window (2006-01-03 .. 2014-09-17, 2,192 sessions; all 5 starts reached the same log-likelihood, -2.3965 per session) gives three clearly different states:
+
+```text
+            daily return (annualized)   daily sd   market vol   VIX    stay probability   expected length
+BULL        +0.095% (+27%)              0.62%      10%          14.1   0.988              81 sessions
+SIDEWAYS    -0.003% (-1%)               1.14%      17%          21.8   0.978              46 sessions
+BEAR        -0.104% (-23%)              2.78%      38%          38.8   0.988              81 sessions
+```
+
+Within that (in-sample) window the filtered regime is BEAR for 89% of Sep-Dec 2008, 70% of the 2010 flash-crash period and 85% of the 2011 debt-ceiling sell-off, and BULL for 94% of 2013. Whether it helps out of sample is step 3 onwards.
+
+### Walk-forward HMM regime (2026-10-11; `quant/regime/hmm_walk_forward.py`)
+
+11 yearly fits on the predictors' folds (validation 2014-09-26 .. 2025-10-01, holdout untouched). Each fit's states stay recognizable (BULL +21% to +27% a year, BEAR -20% to -26%, BEAR VIX 34-39), and consecutive fits label their shared history the same way on **95.1%-99.9%** of sessions (pre-registered minimum 80%). In later fits only 1-2 of the 5 starts reach the best log-likelihood, so the best-of-5 rule matters.
+
+Out of sample, against the rule-based regime on the same 2,770 sessions (a session's SPY return is attributed to the regime known at the previous close):
+
+```text
+              BULL   SIDEWAYS   BEAR   avg length   changes   SPY a year in BULL / SIDEWAYS / BEAR
+HMM           50%    40%        10%    32           86        +9% / +13% / +43%
+rule-based    78%     8%        14%    49           55        +11% / -16% / +50%
+```
+
+First BEAR session in each sell-off (SPY's fall from its peak by then):
+
+```text
+2018 Q4        HMM 2018-12-24 (-19%)   rule 2018-12-18 (-13%)
+2020 COVID     HMM 2020-02-28 (-12%)   rule 2020-03-09 (-19%)
+2022           HMM 2022-02-25 (-8%)    rule 2022-01-27 (-10%)
+2025 tariffs   HMM 2025-04-03 (-12%)   rule 2025-04-08 (-19%)
+```
+
+The HMM reacts faster to sudden volatility shocks (2020, 2025) and slower to grinding declines (2018, 2022). Its BEAR is a high-volatility state, and volatility stays high through the rebounds, so SPY still rose 43% a year during its BEAR sessions: the late-exit problem of the rule-based regime remains. It also calls 40% of sessions SIDEWAYS, when SPY rose 13% a year.
+
 # 14. ML Models
 
 ## Candidates
@@ -1248,6 +1297,12 @@ regime:
   min_dwell_days: 5                # sessions a regime is held before it may change
   vix_low: 20                      # VIX below this scores +1
   vix_high: 30                     # VIX above this scores -1
+  hmm:                             # REGIME candidate (section 13.1, pre-registered); fit only by `retrain --role regime`
+    observations: [spy_return_1d, log_market_volatility, log_vix]   # market_features columns, standardized per fit
+    states: 3                      # BULL / SIDEWAYS / BEAR, ordered by mean spy_return_1d
+    covariance: diag               # diag | full
+    starts: 5                      # random starts (seeds from retrain.search.seed); best log-likelihood kept
+    iterations: 200
 
 strategies:                        # rule-based baselines (section 17); weights at the close of T
   version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)
