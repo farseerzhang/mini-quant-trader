@@ -65,6 +65,7 @@ def regime_report(
     spy: pd.Series,
     created_at: datetime,
     chart_files: dict[str, str] | None = None,
+    current: dict | None = None,
 ) -> str:
     hmm = walk_forward.regime
     rule = rule.reindex(hmm.index)
@@ -92,6 +93,20 @@ def regime_report(
         markdown_table(gates.table()),
         "",
     ]
+    if current:
+        probabilities = ", ".join(f"{label} {percent(current['probabilities'][label], 0)}" for label in LABELS_BY_MEAN_RETURN)
+        forward = current["final_fit_from"]
+        lines += [
+            "## Current regime",
+            "",
+            f"- **HMM (final fit), {current['date'].date()}:** {current['hmm']} (filtered probabilities: {probabilities})",
+            f"- **Rule-based, {current['rule_date'].date()}:** {current['rule']}",
+            "",
+            f"The final fit was trained on sessions up to {final.train_end.date()}"
+            + (f"; from {forward.date()} on it is applied forward, as it would run live" if forward is not None else "")
+            + ". Those sessions only get regime labels here; no gate or trading result uses them.",
+            "",
+        ]
     if chart_files:
         lines += [
             "## Regime timeline",
@@ -101,7 +116,8 @@ def regime_report(
             f"Interactive version with hover: [{chart_files['html']}]({chart_files['html']}). The HMM ribbon is "
             f"out of sample from {hmm.index[0].date()}; before that it is the final fit's filtered regime, "
             "which has seen those years (in sample, drawn faded). The rule-based regime has no fitted "
-            "parameters and is point in time throughout. The holdout is not shown.",
+            "parameters and is point in time throughout. After the walk-forward window (dashed line) the HMM "
+            "ribbon is the final fit applied forward, up to the latest session.",
             "",
         ]
     lines += [
@@ -144,7 +160,8 @@ def regime_report(
         "",
         "- The HMM's BEAR is a high-volatility state; volatility stays high through rebounds, so it can stay "
         "BEAR while prices recover.",
-        "- The stock pool is chosen today (survivorship bias); cash earns nothing; the holdout was not used.",
+        "- The stock pool is chosen today (survivorship bias); cash earns nothing; the holdout was not used "
+        "for any gate or trading result (the chart and the current regime only label its sessions).",
         "",
     ]
     return "\n".join(lines)

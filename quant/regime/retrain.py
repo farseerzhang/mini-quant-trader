@@ -73,27 +73,47 @@ CHART_EVENTS = [
 def timeline_regime(
     final: FittedHMM, walk_forward: HMMWalkForward, observations: pd.DataFrame, settings: Settings
 ) -> pd.Series:
-    """The HMM regime for the whole history: out of sample from the first walk-forward session,
-    and before it the final fit's filtered regime (in sample: that fit has seen those years)."""
-    start = walk_forward.regime.index[0]
-    earlier = observations.loc[observations.index < start]
-    in_sample = apply_min_dwell(final.filtered(earlier).idxmax(axis=1), settings.regime.min_dwell_days)
-    timeline = pd.concat([in_sample, walk_forward.regime])
+    """The HMM regime for the whole history, up to the latest session:
+
+    - before the first walk-forward session: the final fit's filtered regime (in sample:
+      that fit has seen those years);
+    - the walk-forward window: the out-of-sample regime the gates were judged on;
+    - after it (embargo, holdout and later): the final fit applied forward, which is what
+      the candidate would say live. Its training ended before these sessions.
+    """
+    start, end = walk_forward.regime.index[0], walk_forward.regime.index[-1]
+    final_regime = apply_min_dwell(final.filtered(observations).idxmax(axis=1), settings.regime.min_dwell_days)
+    later = final_regime.loc[final_regime.index > end]
+    timeline = pd.concat([final_regime.loc[final_regime.index < start], walk_forward.regime, later])
     timeline.attrs["out_of_sample_start"] = start
+    timeline.attrs["final_fit_from"] = later.index[0] if len(later) else None
     return timeline
+
+
+def current_regimes(final: FittedHMM, observations: pd.DataFrame, timeline: pd.Series, rule: pd.Series) -> dict:
+    """The latest session's regime from each method, and the final fit's filtered probabilities."""
+    rule = rule.dropna()
+    return {
+        "date": timeline.index[-1],
+        "hmm": timeline.iloc[-1],
+        "probabilities": final.filtered(observations).iloc[-1].to_dict(),
+        "rule_date": rule.index[-1],
+        "rule": rule.iloc[-1],
+        "final_fit_from": timeline.attrs.get("final_fit_from"),
+    }
 
 
 def write_regime_charts(
     directory: Path, model_id: str, spy: pd.Series, rule: pd.Series, hmm: pd.Series
 ) -> dict[str, str]:
     """``<model_id>_regimes.svg`` (embedded in the report) and ``.html`` (interactive), from the
-    first session with both regimes to the end of the walk-forward window (holdout excluded)."""
-    hmm_out_of_sample_start = hmm.attrs.get("out_of_sample_start")
+    first session with both regimes to the latest session."""
     start = max(rule.dropna().index[0], hmm.dropna().index[0])
-    end = hmm.index[-1]
+    end = min(rule.dropna().index[-1], hmm.dropna().index[-1])
     price = spy.loc[start:end]
     ribbons = [
-        Ribbon("HMM regime", hmm, in_sample_until=hmm_out_of_sample_start),
+        Ribbon("HMM regime", hmm, in_sample_until=hmm.attrs.get("out_of_sample_start"),
+               final_fit_from=hmm.attrs.get("final_fit_from")),
         Ribbon("Rule-based", rule),
     ]
     svg_path = directory / f"{model_id}_regimes.svg"
@@ -133,11 +153,11 @@ def run_regime_retrain(engine: Engine, settings: Settings) -> RegimeRetrainOutco
     report_path = Path(settings.retrain.reports_dir) / HMM_TYPE / f"{model_id}.md"  # mirrors models/hmm/
     report_path.parent.mkdir(parents=True, exist_ok=True)
     spy = prices.close["SPY"]
-    chart_files = write_regime_charts(
-        report_path.parent, model_id, spy, rule, timeline_regime(final, walk_forward, observations, settings)
-    )
+    timeline = timeline_regime(final, walk_forward, observations, settings)
+    chart_files = write_regime_charts(report_path.parent, model_id, spy, rule, timeline)
+    current = current_regimes(final, observations, timeline, rule)
     report_path.write_text(
-        regime_report(model_id, final, walk_forward, rule, comparison, evidence, gates, spy, now, chart_files),
+        regime_report(model_id, final, walk_forward, rule, comparison, evidence, gates, spy, now, chart_files, current),
         encoding="utf-8",
     )
 

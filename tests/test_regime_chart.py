@@ -40,6 +40,18 @@ class ChartTests(unittest.TestCase):
         self.assertIn("2011", texts)  # year axis
         self.assertIn("@media (prefers-color-scheme: dark)", svg)
 
+    def test_final_fit_divider_and_latest_regime_are_labelled(self):
+        price, regime, index = _data()
+        ribbons = [Ribbon("HMM regime", regime, in_sample_until=index[100], final_fit_from=index[500]),
+                   Ribbon("Rule-based", regime)]
+        root = ET.fromstring(regime_chart_svg(price, ribbons))
+        texts = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
+        self.assertIn(f"final fit from {index[500].date()}", texts)
+        self.assertIn(f"Latest {index[-1].date()}: HMM regime Bull · Rule-based Bull", texts)
+        dashed = [l for l in root.iter("{http://www.w3.org/2000/svg}line") if l.get("stroke-dasharray")]
+        self.assertEqual(len(dashed), 1)
+        self.assertIn('"finalFitFrom":"' + str(index[500].date()), regime_chart_html(price, ribbons))
+
     def test_html_embeds_the_svg_legend_and_tooltip_data(self):
         price, regime, index = _data()
         page = regime_chart_html(price, [Ribbon("HMM regime", regime)], title="Test")

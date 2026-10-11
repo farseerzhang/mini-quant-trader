@@ -5,7 +5,8 @@ follows the viewer's light/dark setting through a media query). ``regime_chart_h
 wraps the same SVG with a legend and a hover tooltip. Colors are the first three
 slots of the validated categorical palette (blue, orange, aqua; checked with the
 dataviz validator in both modes): BULL blue, BEAR orange, SIDEWAYS aqua. A ribbon's
-sessions before ``in_sample_until`` are drawn faded and marked as in sample.
+sessions before ``in_sample_until`` are drawn faded and marked as in sample;
+a dashed divider marks ``final_fit_from``, where the final fit is applied forward.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ class Ribbon:
     label: str
     regime: pd.Series  # regime per session (BULL / SIDEWAYS / BEAR)
     in_sample_until: pd.Timestamp | None = None  # sessions before this are in sample
+    final_fit_from: pd.Timestamp | None = None  # from this session on: the final fit applied forward
 
 
 def runs(regime: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp, str]]:
@@ -59,7 +61,7 @@ def _geometry(price: pd.Series, ribbons: list[Ribbon]):
     x = lambda stamp: LEFT + (pd.Timestamp(stamp) - start).total_seconds() / span * (RIGHT - LEFT)  # noqa: E731
     low, high = math.log(price.min() * 0.92), math.log(price.max() * 1.05)
     y = lambda value: PLOT_BOTTOM - (math.log(value) - low) / (high - low) * (PLOT_BOTTOM - TOP)  # noqa: E731
-    height = PLOT_BOTTOM + 22 + len(ribbons) * (RIBBON_HEIGHT + RIBBON_GAP) + 26
+    height = PLOT_BOTTOM + 22 + len(ribbons) * (RIBBON_HEIGHT + RIBBON_GAP) + 40
     return x, y, height
 
 
@@ -130,12 +132,20 @@ def regime_chart_svg(price: pd.Series, ribbons: list[Ribbon], events: list[tuple
             parts.append(f'<line class="line" x1="{xx:.1f}" x2="{xx:.1f}" y1="{top - 12}" y2="{top + RIBBON_HEIGHT + 2}" stroke-width="1.5"/>')
             parts.append(f'<text class="ink2" x="{xx - 6:.1f}" y="{top - 4}" text-anchor="end" font-size="11">in sample</text>')
             parts.append(f'<text class="ink2" x="{xx + 6:.1f}" y="{top - 4}" font-size="11">out of sample from {ribbon.in_sample_until.date()}</text>')
+        if ribbon.final_fit_from is not None and price.index[0] < ribbon.final_fit_from <= price.index[-1]:
+            xx = x(ribbon.final_fit_from)
+            parts.append(f'<line class="line" x1="{xx:.1f}" x2="{xx:.1f}" y1="{top - 12}" y2="{top + RIBBON_HEIGHT + 2}" stroke-width="1.5" stroke-dasharray="3 2"/>')
+            parts.append(f'<text class="ink2" x="{xx - 6:.1f}" y="{top - 4}" text-anchor="end" font-size="11">final fit from {ribbon.final_fit_from.date()}</text>')
 
     axis_y = ribbon_top + len(ribbons) * (RIBBON_HEIGHT + RIBBON_GAP)
     for year in range(price.index[0].year + 1, price.index[-1].year + 1):
         xx = x(pd.Timestamp(f"{year}-01-01"))
         parts.append(f'<line class="axis" x1="{xx:.1f}" x2="{xx:.1f}" y1="{axis_y - 6}" y2="{axis_y - 2}" stroke-width="1"/>')
         parts.append(f'<text class="muted" x="{xx:.1f}" y="{axis_y + 12}" text-anchor="middle" font-size="11">{year}</text>')
+    latest = price.index[-1]
+    now = " · ".join(f"{r.label} {NAMES.get(r.regime.get(latest), '-')}" for r in ribbons)
+    parts.append(f'<text class="ink2" x="{RIGHT}" y="{axis_y + 28}" text-anchor="end" font-size="11">'
+                 f'{html.escape(f"Latest {latest.date()}: {now}")}</text>')
     parts.append("</svg>")
     return "\n".join(parts)
 
@@ -150,7 +160,8 @@ def regime_chart_html(price: pd.Series, ribbons: list[Ribbon], events: list[tupl
         "points": [[s.strftime("%Y-%m-%d"), round(float(v), 2), round(x(s), 2), round(y(v), 2)] for s, v in weekly.items()],
         "ribbons": [{"label": r.label, "runs": [[a.strftime("%Y-%m-%d"), b.strftime("%Y-%m-%d"), k]
                                                  for a, b, k in runs(r.regime.loc[price.index[0]:price.index[-1]])],
-                     "inSampleUntil": r.in_sample_until.strftime("%Y-%m-%d") if r.in_sample_until is not None else None}
+                     "inSampleUntil": r.in_sample_until.strftime("%Y-%m-%d") if r.in_sample_until is not None else None,
+                     "finalFitFrom": r.final_fit_from.strftime("%Y-%m-%d") if r.final_fit_from is not None else None}
                     for r in ribbons],
         "left": LEFT, "right": RIGHT, "width": WIDTH, "top": TOP,
     }
@@ -175,7 +186,7 @@ h1{{font-size:18px;font-weight:500;margin:0 0 4px}} p{{color:#52514e;font-size:1
 @media (prefers-color-scheme: dark){{body{{background:#0d0d0d;color:#fff}} p,.legend{{color:#c3c2b7}} .tip{{background:#1a1a19;border-color:rgba(255,255,255,.2)}} {swatch_dark}}}
 </style></head><body>
 <h1>{html.escape(title or 'Market regimes')}</h1>
-<p>SPY total-return price (log scale) with one ribbon per regime. Hover for the week's values. Faded ribbon sections are in sample.</p>
+<p>SPY total-return price (log scale) with one ribbon per regime. Hover for the week's values. Faded ribbon sections are in sample; after the dashed line the final fit is applied forward.</p>
 <div class="legend">{legend}</div>
 <div class="wrap" id="wrap">{regime_chart_svg(price, ribbons, events)}<div class="tip" id="tip"></div></div>
 <script>
@@ -188,8 +199,8 @@ const N={{BULL:"Bull",SIDEWAYS:"Sideways",BEAR:"Bear"}};
 svg.addEventListener("mousemove",e=>{{const r=svg.getBoundingClientRect(),vb=svg.viewBox.baseVal,sx=(e.clientX-r.left)*vb.width/r.width;
 if(sx<D.left||sx>D.right){{tip.style.display="none";cross.style.display="none";return;}}
 let best=D.points[0];for(const p of D.points)if(Math.abs(p[2]-sx)<Math.abs(best[2]-sx))best=p;
-cross.setAttribute("x1",best[2]);cross.setAttribute("x2",best[2]);cross.setAttribute("y1",D.top);cross.setAttribute("y2",vb.height-26);cross.style.display="";
-const rows=D.ribbons.map(rb=>{{const k=at(rb.runs,day(best[0]));const ins=rb.inSampleUntil&&best[0]<rb.inSampleUntil?" (in sample)":"";return `<div>${{rb.label}}: ${{k?`<i class="sw f-${{k}}" style="display:inline-block;margin-right:4px"></i>${{N[k]}}`:"-"}}${{ins}}</div>`;}}).join("");
+cross.setAttribute("x1",best[2]);cross.setAttribute("x2",best[2]);cross.setAttribute("y1",D.top);cross.setAttribute("y2",vb.height-40);cross.style.display="";
+const rows=D.ribbons.map(rb=>{{const k=at(rb.runs,day(best[0]));const ins=rb.inSampleUntil&&best[0]<rb.inSampleUntil?" (in sample)":rb.finalFitFrom&&best[0]>=rb.finalFitFrom?" (final fit)":"";return `<div>${{rb.label}}: ${{k?`<i class="sw f-${{k}}" style="display:inline-block;margin-right:4px"></i>${{N[k]}}`:"-"}}${{ins}}</div>`;}}).join("");
 tip.innerHTML=`<div>${{best[0]}}</div><div>SPY ${{best[1].toFixed(0)}}</div>${{rows}}`;tip.style.display="block";
 const px=best[2]*r.width/vb.width;tip.style.left=(px>r.width*.6?px-tip.offsetWidth-12:px+12)+"px";tip.style.top="8px";}});
 svg.addEventListener("mouseleave",()=>{{tip.style.display="none";cross.style.display="none";}});
