@@ -1141,6 +1141,12 @@ Fixed before implementation; changing any rule below after signals have been gen
 
 A stock held but outside the configured universe gets a warning ("not managed") and no signal. Suggested quantity: `floor(|target - current| x portfolio value / close(T))` shares, an estimate only, because the order fills at the open of T+1 (section 4.5).
 
+Added during implementation (2026-10-11, step 4; before any signal was acted on):
+
+- A held stock **without data at T** gets HOLD with a warning, not EXIT. A missing input never counts as a signal (section 17), and a gap in today's data is more likely a data problem than a trend break. The backtest never meets this case (a held stock always has data).
+- EXIT sells the whole holding, including a fractional remainder; BUY and REDUCE round down to whole shares and REDUCE never sells more than is held. A BUY or REDUCE below one share is flagged and suggests 0 shares.
+- Rows are ordered EXIT, REDUCE, BUY, HOLD (sells fund the buys), then by target weight.
+
 **Reason.** Built from the factors that actually decided the weight, in this order: regime (and its source), the strategy rule that holds or exits the stock (with the indicator values), each risk limit that bound, the informational risk flags, then `target x% vs current y% -> SIGNAL`.
 
 ---
