@@ -128,10 +128,13 @@ def build_signals(targets: Targets, holdings: Holdings, valuation: Valuation, ho
 
 
 def load_signals(engine: Engine, settings: Settings) -> Signals:
-    """Targets at the latest session T against the positions file, valued at the close of T."""
+    """Targets at the latest session T against the positions file, valued at the close of T,
+    each signal with its reason."""
+    from quant.signals.reasons import with_reasons  # reasons builds on this module
+
     targets = load_targets(engine, settings)
     holdings = read_positions(settings.positions.path, settings.market.stocks, settings.backtest.initial_cash)
     since = (targets.session - pd.Timedelta(days=30)).date()
     closes = queries.load_raw_closes(engine, list(holdings.quantities), since=since) if holdings.quantities else pd.DataFrame()
     valuation = value_holdings(holdings, closes, targets.session)
-    return build_signals(targets, holdings, valuation, settings.signals.hold_band)
+    return with_reasons(build_signals(targets, holdings, valuation, settings.signals.hold_band), settings)
