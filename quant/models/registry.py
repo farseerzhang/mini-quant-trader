@@ -45,11 +45,13 @@ class Registration:
 
 
 def library_versions() -> dict[str, str]:
+    import hmmlearn
     import vectorbt
     import xgboost
 
     return {
         "python": platform.python_version(),
+        "hmmlearn": hmmlearn.__version__,
         "scikit-learn": sklearn.__version__,
         "xgboost": xgboost.__version__,
         "numpy": np.__version__,
@@ -67,7 +69,7 @@ def target_description(settings: Settings) -> str:
     )
 
 
-def _next_version(engine: Engine, model_type: str) -> int:
+def next_version(engine: Engine, model_type: str) -> int:
     stmt = select(func.max(tables.model_versions.c.version)).where(tables.model_versions.c.model_type == model_type)
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar_one() or 0) + 1
@@ -89,7 +91,7 @@ def register_candidate(
 ) -> Registration:
     now = now or datetime.now(timezone.utc)
     model_id = f"{final.model_type}-{now:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:6]}"
-    version = _next_version(engine, final.model_type)
+    version = next_version(engine, final.model_type)
     model_path = final.save(models_dir / final.model_type / f"{model_id}.joblib")
     report_path = reports_dir / f"{model_id}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)

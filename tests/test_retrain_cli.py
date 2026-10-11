@@ -106,10 +106,32 @@ class RetrainCommandTests(unittest.TestCase):
         self.assertEqual({row["model_id"]: row["status"] for row in rows}["logistic_regression-old"], "ACTIVE")
         self.assertEqual([row["version"] for row in rows], [1, 2])
 
+    def test_regime_retrain_registers_an_hmm_candidate(self):
+        from quant.regime.retrain import load_final_hmm
+
+        code, output, errors = self.run_cli("retrain", "--role", "regime")
+        self.assertEqual(code, 0, errors)
+        for text in ("yearly fits", "Trading with each regime", "Gates:", "as REGIME CANDIDATE", "No ACTIVE regime model"):
+            self.assertIn(text, output)
+        rows, views = self.models()
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual((row["role"], row["model_type"], row["status"], row["trial_count"]), ("REGIME", "hmm", "CANDIDATE", 1))
+        fit = load_final_hmm(Path(row["model_path"]))
+        self.assertEqual(sorted(fit.labels), ["BEAR", "BULL", "SIDEWAYS"])
+        report = Path(row["validation_report_path"])
+        text = report.read_text(encoding="utf-8")
+        self.assertIn("## Gates", text)
+        svg, page = report.with_name(f"{row['model_id']}_regimes.svg"), report.with_name(f"{row['model_id']}_regimes.html")
+        self.assertTrue(svg.exists() and page.exists())
+        self.assertIn(f"]({svg.name})", text)  # the chart is embedded in the report
+        self.assertIn("out of sample from", svg.read_text(encoding="utf-8"))
+        self.assertEqual(views, 0)  # the holdout is not used
+
     def test_unavailable_roles_and_models_are_clear_errors(self):
-        code, _, errors = self.run_cli("retrain", "--role", "regime")
+        code, _, errors = self.run_cli("retrain", "--role", "regime", "--evaluate-holdout")
         self.assertEqual(code, 1)
-        self.assertIn("Phase 7", errors)
+        self.assertIn("no regime gate uses the holdout", errors)
         code, _, errors = self.run_cli("retrain", "--role", "predictor", "--model", "svm")
         self.assertEqual(code, 1)
         self.assertIn("use one of: logistic_regression, random_forest, xgboost", errors)

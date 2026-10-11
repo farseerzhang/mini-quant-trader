@@ -705,6 +705,10 @@ verdict                               FAILED
 
 The HMM regime is sound (point in time, stable, persistent) but does not beat the rule-based regime by the pre-registered criterion, so the rule-based regime remains the one in use.
 
+### Registration (2026-10-11)
+
+`quant retrain --role regime` (`quant/regime/retrain.py`, `report.py`) runs the steps above, fits the final HMM on all purged development sessions (2006-01-03 .. 2025-10-01), saves it as `models/hmm/<model_id>.joblib`, writes `reports/<model_id>.md` and registers a REGIME CANDIDATE in `model_versions` (`trial_count` 1: one pre-registered configuration). First registration: `hmm-20261011T150715Z-ba9d41`, gates FAILED. Phase 7 outcome: the HMM regime is a sound, lower-risk alternative of equal risk-adjusted quality, but it does not beat the rule-based regime by the pre-registered criterion, so the rule-based regime remains in use.
+
 # 14. ML Models
 
 ## Candidates
@@ -1240,8 +1244,9 @@ python -m quant calculate-regime       # step 6 only (rule-based regime)
 python -m quant run-daily              # full daily pipeline (implemented so far: steps 1-6)
 python -m quant retrain --role predictor|regime [--model logistic_regression|random_forest|xgboost] [--evaluate-holdout]
                                        # MANUAL; validates, then registers a CANDIDATE
-                                       # (implemented: --role predictor with logistic_regression / random_forest;
-                                       #  regime in Phase 7, xgboost in Phase 6; holdout count shared with backtest)
+                                       # (implemented: --role predictor with logistic_regression / random_forest / xgboost,
+                                       #  --role regime fits the HMM; holdout count shared with backtest; the regime
+                                       #  role has no holdout gate, so --evaluate-holdout is rejected there)
 python -m quant promote <model_id> [--override "<reason>"]
                                        # activate a candidate for its role (refuses failed gates)
 python -m quant backtest [--strategy NAME ...] [--evaluate-holdout]

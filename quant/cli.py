@@ -14,6 +14,7 @@ from quant.models.retrain import run_retrain
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
 from quant.regime.pipeline import calculate_and_store_regimes
+from quant.regime.retrain import run_regime_retrain
 from quant.strategies import build_strategies
 
 
@@ -81,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     retrain_command.add_argument("--role", choices=["predictor", "regime"], required=True)
     retrain_command.add_argument(
-        "--model", help="model type to train (default: model.type in the settings file)"
+        "--model", help="predictor type to train (default: model.type in the settings file); the regime role trains the HMM"
     )
     retrain_command.add_argument(
         "--evaluate-holdout",
@@ -297,10 +298,51 @@ def _print_retrain(outcome) -> None:
         print(f"The candidate failed its gates; under section 32 the rule-based {BASELINE} remains what ships.")
 
 
+def _print_regime_retrain(outcome) -> None:
+    folds, regime = outcome.folds, outcome.walk_forward.regime
+    print(
+        f"hmm: {len(folds)} yearly fits; filtered regime {regime.index[0].date()} .. {regime.index[-1].date()} "
+        f"(out of sample; holdout untouched)"
+    )
+    shares = ", ".join(f"{label} {(regime == label).mean():.0%}" for label in ("BULL", "SIDEWAYS", "BEAR"))
+    print(f"  sessions: {shares}; average length {outcome.evidence.average_dwell:.0f} sessions; "
+          f"lowest agreement between consecutive fits {outcome.evidence.agreement.min():.1%}")
+    print(f"\nTrading with each regime {outcome.comparison.start.date()} .. {outcome.comparison.end.date()} (after costs):")
+    print(metrics_table(outcome.comparison.overall))
+    print(f"\nGates: {'PASSED' if outcome.gates.passed else 'FAILED'}")
+    print(outcome.gates.table().to_string())
+    registration = outcome.registration
+    print(
+        f"\nRegistered {registration.model_id} (version {registration.version}) as REGIME CANDIDATE."
+        f"\n  model:  {registration.model_path}\n  report: {registration.report_path}"
+    )
+    active = outcome.active
+    if active is None:
+        print("No ACTIVE regime model: run-daily uses the rule-based regime. Nothing was changed.")
+    else:
+        print(f"ACTIVE regime stays {active['model_id']}. Nothing was changed; promoting is `quant promote` (Phase 9).")
+    if not outcome.gates.passed:
+        print("The candidate failed its gates; the rule-based regime remains the one in use.")
+
+
 def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
     if args.role == "regime":
-        print("retrain --role regime is not available yet: the REGIME role (HMM) arrives in Phase 7", file=sys.stderr)
-        return 1
+        if args.evaluate_holdout:
+            print("--evaluate-holdout does not apply to --role regime: no regime gate uses the holdout", file=sys.stderr)
+            return 1
+        if args.model and args.model != "hmm":
+            print(f"--role regime trains the HMM; --model {args.model} is not a regime model", file=sys.stderr)
+            return 1
+        engine = _engine(settings, args.db)
+        try:
+            outcome = run_regime_retrain(engine, settings)
+        except ValueError as exc:
+            print(f"Retrain failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            engine.dispose()
+        _print_regime_retrain(outcome)
+        return 0
     model_type = args.model or settings.model.type
     evaluate_holdout = args.evaluate_holdout or not settings.holdout_requires_flag
     engine = _engine(settings, args.db)

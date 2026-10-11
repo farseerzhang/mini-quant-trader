@@ -13,7 +13,7 @@ from quant.models.ml_backtest import BASELINE, MLBacktest
 from quant.models.search import SearchResult
 
 
-def _table(frame: pd.DataFrame) -> str:
+def markdown_table(frame: pd.DataFrame) -> str:
     """A plain Markdown table (no extra dependency)."""
     columns = [str(column) for column in frame.columns]
     lines = ["| " + " | ".join([frame.index.name or ""] + columns) + " |", "|" + "---|" * (len(columns) + 1)]
@@ -22,7 +22,7 @@ def _table(frame: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def _pct(value: float, digits: int = 1) -> str:
+def percent(value: float, digits: int = 1) -> str:
     return "-" if pd.isna(value) else f"{value:.{digits}%}"
 
 
@@ -56,7 +56,7 @@ def validation_report(
         "",
         "## Gates",
         "",
-        _table(gates.table()),
+        markdown_table(gates.table()),
         "",
         "## Walk-forward ML backtest (after costs)",
         "",
@@ -66,10 +66,10 @@ def validation_report(
         "",
     ]
     overall = backtest.overall
-    lines.append(_table(pd.DataFrame({
-        "CAGR": overall["cagr"].map(_pct),
+    lines.append(markdown_table(pd.DataFrame({
+        "CAGR": overall["cagr"].map(percent),
         "Sharpe": overall["sharpe"].map(lambda v: f"{v:.2f}"),
-        "max drawdown": overall["max_drawdown"].map(_pct),
+        "max drawdown": overall["max_drawdown"].map(percent),
         "turnover/yr": overall["turnover"].map(lambda v: "-" if pd.isna(v) else f"{v:.1f}x"),
         "fees": overall["fees_paid"].map(lambda v: f"{v:,.0f}"),
     }).rename_axis("portfolio")))
@@ -79,7 +79,7 @@ def validation_report(
         "",
         "Sharpe by validation year:",
         "",
-        _table(sharpe[[portfolio, BASELINE, "SPY", "equal_weight"]].map(lambda v: f"{v:.2f}").rename_axis("fold")),
+        markdown_table(sharpe[[portfolio, BASELINE, "SPY", "equal_weight"]].map(lambda v: f"{v:.2f}").rename_axis("fold")),
         "",
     ]
     if portfolio in backtest.random.index:
@@ -94,7 +94,7 @@ def validation_report(
         "",
         "Skill compares with always predicting the fold's training base rate (0 = no better).",
         "",
-        _table(pd.DataFrame({
+        markdown_table(pd.DataFrame({
             "validation": walk["validation_start"].astype(str) + " .. " + walk["validation_end"].astype(str),
             "rows": walk["rows"],
             "AUC": walk["auc"].map(lambda v: f"{v:.3f}"),
@@ -114,11 +114,11 @@ def validation_report(
     view["score"] = trials["score"].map(lambda v: f"{v:+.3%}")
     view["log-loss skill"] = trials["log_loss_skill_mean"].map(lambda v: f"{v:+.2%}")
     view["AUC"] = trials["auc_mean"].map(lambda v: f"{v:.3f}")
-    lines += [_table(view), "", "## What the model leans on", ""]
+    lines += [markdown_table(view), "", "## What the model leans on", ""]
     explanation = explain(final).head(15)
     heading = "coefficient (per standard deviation of the input)" if explanation.name == "coefficient" else "importance"
     lines += [
-        _table(explanation.map(lambda v: f"{v:+.3f}" if heading.startswith("coefficient") else f"{v:.1%}")
+        markdown_table(explanation.map(lambda v: f"{v:+.3f}" if heading.startswith("coefficient") else f"{v:.1%}")
                .rename(heading).to_frame().rename_axis("input")),
         "",
         "Correlated inputs share their effect, so single coefficients should not be read alone.",
