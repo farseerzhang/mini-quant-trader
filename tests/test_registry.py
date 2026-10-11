@@ -142,6 +142,9 @@ class RegistryTests(unittest.TestCase):
 
     def test_report_is_written_with_every_section(self):
         registration = self.register()
+        # Reports mirror the model folders: <reports>/<model_type>/<model_id>.md
+        self.assertEqual(registration.report_path, self.root / "reports" / "logistic_regression" / f"{registration.model_id}.md")
+        self.assertEqual(registration.model_path.parent.name, registration.report_path.parent.name)
         text = registration.report_path.read_text(encoding="utf-8")
         for heading in ("# Validation report: " + registration.model_id, "## Gates", "## Walk-forward ML backtest",
                         "## Probability quality per fold", "## Hyperparameter search", "## What the model leans on",

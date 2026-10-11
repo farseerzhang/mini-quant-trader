@@ -93,7 +93,7 @@ def register_candidate(
     model_id = f"{final.model_type}-{now:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:6]}"
     version = next_version(engine, final.model_type)
     model_path = final.save(models_dir / final.model_type / f"{model_id}.joblib")
-    report_path = reports_dir / f"{model_id}.md"
+    report_path = reports_dir / final.model_type / f"{model_id}.md"  # mirrors models/<model_type>/
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         validation_report(

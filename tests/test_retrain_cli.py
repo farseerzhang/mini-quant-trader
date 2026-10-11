@@ -76,6 +76,7 @@ class RetrainCommandTests(unittest.TestCase):
         self.assertEqual((rows[0]["status"], rows[0]["holdout_evaluated"], rows[0]["trial_count"]), ("CANDIDATE", 0, 2))
         self.assertTrue(Path(rows[0]["model_path"]).exists())
         self.assertTrue(Path(rows[0]["validation_report_path"]).exists())
+        self.assertEqual(Path(rows[0]["validation_report_path"]).parent.name, "logistic_regression")
         self.assertEqual(views, 0)
 
     def test_evaluate_holdout_checks_its_gate_and_shares_the_count_with_backtest(self):
@@ -120,6 +121,7 @@ class RetrainCommandTests(unittest.TestCase):
         fit = load_final_hmm(Path(row["model_path"]))
         self.assertEqual(sorted(fit.labels), ["BEAR", "BULL", "SIDEWAYS"])
         report = Path(row["validation_report_path"])
+        self.assertEqual(report.parent.name, "hmm")  # reports/hmm/<model_id>.md, like models/hmm/
         text = report.read_text(encoding="utf-8")
         self.assertIn("## Gates", text)
         svg, page = report.with_name(f"{row['model_id']}_regimes.svg"), report.with_name(f"{row['model_id']}_regimes.html")

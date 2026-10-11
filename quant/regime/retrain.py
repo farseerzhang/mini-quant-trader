@@ -130,7 +130,7 @@ def run_regime_retrain(engine: Engine, settings: Settings) -> RegimeRetrainOutco
     model_path = Path(settings.retrain.models_dir) / HMM_TYPE / f"{model_id}.joblib"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(final, model_path)
-    report_path = Path(settings.retrain.reports_dir) / f"{model_id}.md"
+    report_path = Path(settings.retrain.reports_dir) / HMM_TYPE / f"{model_id}.md"  # mirrors models/hmm/
     report_path.parent.mkdir(parents=True, exist_ok=True)
     spy = prices.close["SPY"]
     chart_files = write_regime_charts(

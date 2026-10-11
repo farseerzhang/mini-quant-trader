@@ -331,7 +331,7 @@ models/
 
 Avoid raw `pickle` where a native or joblib format is available.
 
-As implemented (`quant/models/final.py`, `registry.py`, `report.py`): the chosen configuration is refit on every purged development session (sampled like the folds) and calibrated on the walk-forward out-of-sample predictions, since a refit on all data leaves nothing unseen to calibrate on. The model and its calibrator are saved together with joblib as `models/<model_type>/<model_id>.joblib`; the report is `reports/<model_id>.md` (gates, walk-forward backtest against `regime_switch`, per-fold probability quality, the search table, coefficients or importances, leak checks, caveats). Both folders are generated and git-ignored. `model_id` is `<model_type>-<UTC timestamp>-<random>`; `version` counts up per model type; `depends_on` holds the regime version whose indicator columns are inputs; `trial_count` is the number of search candidates of that run (earlier research trials are listed in section 15.4). Registration inserts one CANDIDATE row and never changes another row.
+As implemented (`quant/models/final.py`, `registry.py`, `report.py`): the chosen configuration is refit on every purged development session (sampled like the folds) and calibrated on the walk-forward out-of-sample predictions, since a refit on all data leaves nothing unseen to calibrate on. The model and its calibrator are saved together with joblib as `models/<model_type>/<model_id>.joblib`; the report is `reports/<model_type>/<model_id>.md`, mirroring `models/<model_type>/` (gates, walk-forward backtest against `regime_switch`, per-fold probability quality, the search table, coefficients or importances, leak checks, caveats). Both folders are generated and git-ignored. `model_id` is `<model_type>-<UTC timestamp>-<random>`; `version` counts up per model type; `depends_on` holds the regime version whose indicator columns are inputs; `trial_count` is the number of search candidates of that run (earlier research trials are listed in section 15.4). Registration inserts one CANDIDATE row and never changes another row.
 
 First registration (2026-10-11): `logistic_regression-20261011T090716Z-67f9c0`, version 1, C = 0.01, refit 2006-01-03 .. 2025-09-29 (47,712 rows), gates FAILED, holdout not evaluated.
 
@@ -707,7 +707,7 @@ The HMM regime is sound (point in time, stable, persistent) but does not beat th
 
 ### Registration (2026-10-11)
 
-`quant retrain --role regime` (`quant/regime/retrain.py`, `report.py`) runs the steps above, fits the final HMM on all purged development sessions (2006-01-03 .. 2025-10-01), saves it as `models/hmm/<model_id>.joblib`, writes `reports/<model_id>.md` and registers a REGIME CANDIDATE in `model_versions` (`trial_count` 1: one pre-registered configuration). First registration: `hmm-20261011T150715Z-ba9d41`, gates FAILED. Phase 7 outcome: the HMM regime is a sound, lower-risk alternative of equal risk-adjusted quality, but it does not beat the rule-based regime by the pre-registered criterion, so the rule-based regime remains in use.
+`quant retrain --role regime` (`quant/regime/retrain.py`, `report.py`) runs the steps above, fits the final HMM on all purged development sessions (2006-01-03 .. 2025-10-01), saves it as `models/hmm/<model_id>.joblib`, writes `reports/hmm/<model_id>.md` and registers a REGIME CANDIDATE in `model_versions` (`trial_count` 1: one pre-registered configuration). First registration: `hmm-20261011T150715Z-ba9d41`, gates FAILED. Since 2026-10-11 the report also embeds a regime timeline (`quant/regime/chart.py`; `<model_id>_regimes.svg` plus an interactive `.html`): SPY (log scale) above one ribbon per regime from the first session with both regimes (2005-10-17) to the end of the walk-forward window. Before the first out-of-sample session the HMM ribbon shows the final fit's filtered regime, which has seen those years; it is drawn faded and marked in sample. Colors: categorical slots 1-3 (bull blue, bear orange, sideways aqua), validated for both modes. Phase 7 outcome: the HMM regime is a sound, lower-risk alternative of equal risk-adjusted quality, but it does not beat the rule-based regime by the pre-registered criterion, so the rule-based regime remains in use.
 
 # 14. ML Models
 
@@ -1409,7 +1409,7 @@ retrain:                           # used only by the manual `quant retrain`
       beats_rule_based_regime_after_costs: true
   final_refit: true
   models_dir: models               # model files: <models_dir>/<model_type>/<model_id>.joblib (git-ignored)
-  reports_dir: reports             # validation reports: <reports_dir>/<model_id>.md (git-ignored)
+  reports_dir: reports             # validation reports: <reports_dir>/<model_type>/<model_id>.md (git-ignored)
 
 backtest:                          # signal at the close of T, fill at the open of T+1 (section 20)
   initial_cash: 100000
