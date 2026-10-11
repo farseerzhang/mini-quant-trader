@@ -10,7 +10,7 @@ from quant.models.ml_backtest import BASELINE, check_out_of_sample, probability_
 from quant.models.walk_forward import WalkForwardResult
 from quant.regime.rule_based import BEAR, BULL, SIDEWAYS
 from quant.strategies import PANEL_COLUMNS
-from quant.strategies.ml import ml_regime_weights, top_n_holdings
+from quant.strategies.ml import ml_select_weights, top_n_holdings
 from tests.settings_helper import SETTINGS
 
 POOL = {"information_technology": ("AAA", "BBB"), "energy": ("CCC",), "utilities": ("DDD",)}
@@ -18,7 +18,7 @@ SETTINGS_4 = dataclasses.replace(
     SETTINGS,
     market=dataclasses.replace(SETTINGS.market, symbols=POOL),
     strategies=dataclasses.replace(
-        SETTINGS.strategies, ml_regime=dataclasses.replace(SETTINGS.strategies.ml_regime, top_n=2)
+        SETTINGS.strategies, ml_select=dataclasses.replace(SETTINGS.strategies.ml_select, top_n=2)
     ),
     backtest=dataclasses.replace(SETTINGS.backtest, random_baseline_runs=2),
 )
@@ -45,11 +45,11 @@ class TopNTests(unittest.TestCase):
         self.assertEqual(list(top_n_holdings(probabilities, 3, 5).iloc[0]), [False, True, False, True])
 
 
-class MLRegimeWeightTests(unittest.TestCase):
+class MLSelectWeightTests(unittest.TestCase):
     def test_regime_sets_exposure_every_session_and_caps_apply(self):
         probabilities = pd.DataFrame([[0.6, 0.5, 0.4, 0.3]] * 4, index=_dates(4), columns=STOCKS)
         regimes = pd.Series([BULL, SIDEWAYS, BEAR, np.nan], index=_dates(4), dtype=object)
-        weights = ml_regime_weights(probabilities, regimes, SETTINGS_4)
+        weights = ml_select_weights(probabilities, regimes, SETTINGS_4)
         self.assertEqual(list(weights.iloc[0]), [0.10, 0.10, 0.0, 0.0])  # top 2, 10% cap each
         self.assertEqual(list(weights.iloc[1]), [0.10, 0.10, 0.0, 0.0])
         self.assertEqual(weights.iloc[2].sum(), 0.0)  # BEAR between rebalances: cash at once
@@ -59,9 +59,9 @@ class MLRegimeWeightTests(unittest.TestCase):
         rng = np.random.default_rng(4)
         probabilities = pd.DataFrame(rng.random((40, 4)), index=_dates(40), columns=STOCKS)
         regimes = pd.Series(np.array([BULL, SIDEWAYS, BEAR])[(np.arange(40) // 7) % 3], index=_dates(40))
-        full = ml_regime_weights(probabilities, regimes, SETTINGS_4)
+        full = ml_select_weights(probabilities, regimes, SETTINGS_4)
         cut = _dates(40)[23]
-        pd.testing.assert_frame_equal(full.loc[:cut], ml_regime_weights(probabilities.loc[:cut], regimes, SETTINGS_4))
+        pd.testing.assert_frame_equal(full.loc[:cut], ml_select_weights(probabilities.loc[:cut], regimes, SETTINGS_4))
 
 
 def _fold(number, train, validation):

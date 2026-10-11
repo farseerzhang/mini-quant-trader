@@ -4,7 +4,7 @@ Each session of the evaluation window is traded with a probability from the fold
 whose validation window contains it, i.e. from a model trained only on sessions
 ending at least ``embargo_days`` before that window. The predictions of all folds
 are stitched into one out-of-sample probability panel and traded as
-`ml_regime`. Every portfolio (ML strategies, `regime_switch`, SPY, equal weight)
+`ml_select`. Every portfolio (ML strategies, `regime_switch`, SPY, equal weight)
 is simulated from fresh cash over the same window: the first validation session
 to the last one. Nothing after the last validation session, and so nothing in
 the holdout, is used.
@@ -24,7 +24,7 @@ from quant.config.settings import Settings
 from quant.models.folds import Fold
 from quant.models.walk_forward import WalkForwardResult
 from quant.strategies import build_strategies
-from quant.strategies.ml import ml_regime_weights
+from quant.strategies.ml import ml_select_weights
 from quant.strategies.rules import Panel
 
 BASELINE = "regime_switch"
@@ -86,7 +86,7 @@ def run_ml_backtest(
     regimes: pd.Series,
     settings: Settings,
 ) -> MLBacktest:
-    """Backtest ``ml_regime`` for each walk-forward result against the baseline and benchmarks.
+    """Backtest ``ml_select`` for each walk-forward result against the baseline and benchmarks.
 
     ``walk_forward`` maps a portfolio name (e.g. ``ml_logistic_regression``) to its result.
     """
@@ -99,7 +99,7 @@ def run_ml_backtest(
     for name, result in walk_forward.items():
         check_out_of_sample(result.predictions, folds, prices.close.index, settings.model.embargo_days)
         probabilities = probability_panel(result.predictions).reindex(index=index, columns=stocks)
-        weights[name] = ml_regime_weights(probabilities, regimes, settings)
+        weights[name] = ml_select_weights(probabilities, regimes, settings)
     baseline = next(strategy for strategy in build_strategies(settings) if strategy.name == BASELINE)
     weights[BASELINE] = baseline.weights(panel, regimes)
 

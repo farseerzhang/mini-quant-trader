@@ -53,7 +53,7 @@ strategies:                        # rule-based baselines (section 17); weights 
     max_holding_days: 10           # ... or after this many sessions
   regime_switch:                   # BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x bear_exposure
     bear_exposures: [0.0, 0.5]     # first = baseline (all cash); others are variants fixed before any results
-  ml_regime:                       # regime timing as regime_switch (baseline bear exposure), stocks chosen by the PREDICTOR
+  ml_select:                       # regime timing as regime_switch (baseline bear exposure), stocks chosen by the PREDICTOR
     top_n: 10                      # hold the N stocks with the highest calibrated probability (BULL / SIDEWAYS)
     rebalance_every_sessions: 5    # refresh the selection every N sessions (= the target horizon); exposure is daily
 

@@ -1,4 +1,4 @@
-"""`ml_regime`: the regime times the market, the PREDICTOR picks the stocks (proposal sections 14, 17).
+"""`ml_select`: the regime times the market, the PREDICTOR picks the stocks (proposal sections 14, 17).
 
 Market exposure follows the rule-based regime exactly as in `regime_switch`
 (BULL / SIDEWAYS: invested; BEAR: the baseline bear exposure; no regime:
@@ -40,9 +40,9 @@ def top_n_holdings(probabilities: pd.DataFrame, top_n: int, every: int) -> pd.Da
     return pd.DataFrame(out, index=probabilities.index, columns=probabilities.columns)
 
 
-def ml_regime_weights(probabilities: pd.DataFrame, regimes: pd.Series, settings: Settings) -> pd.DataFrame:
+def ml_select_weights(probabilities: pd.DataFrame, regimes: pd.Series, settings: Settings) -> pd.DataFrame:
     """Target weights at the close of T from probabilities and the regime at T."""
-    config = settings.strategies.ml_regime
+    config = settings.strategies.ml_select
     holdings = top_n_holdings(probabilities, config.top_n, config.rebalance_every_sessions)
     regime = regimes.reindex(probabilities.index)
     exposure = pd.Series(0.0, index=probabilities.index)

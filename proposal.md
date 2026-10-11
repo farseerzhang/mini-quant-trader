@@ -743,7 +743,7 @@ The ML backtest is itself walk-forward: at each point in time the signal comes f
 
 ### 15.3.1 Implementation and first result (`quant/models/ml_backtest.py`, `quant/strategies/ml.py`)
 
-The fold predictions are stitched into one out-of-sample probability panel (a guard rejects any prediction not from the fold whose validation window contains it, or from a fold trained less than `embargo_days` before that window) and traded as **`ml_regime`**: the regime sets exposure every session exactly as in `regime_switch` (BEAR: the baseline bear exposure), and every `strategies.ml_regime.rebalance_every_sessions` (5) sessions the `top_n` (10) stocks with the highest calibrated probability are chosen, sized with the usual caps. All portfolios start from fresh cash on the first validation session and stop at the last one, so nothing in the holdout is used.
+The fold predictions are stitched into one out-of-sample probability panel (a guard rejects any prediction not from the fold whose validation window contains it, or from a fold trained less than `embargo_days` before that window) and traded as **`ml_select`**: the regime sets exposure every session exactly as in `regime_switch` (BEAR: the baseline bear exposure), and every `strategies.ml_select.rebalance_every_sessions` (5) sessions the `top_n` (10) stocks with the highest calibrated probability are chosen, sized with the usual caps. All portfolios start from fresh cash on the first validation session and stop at the last one, so nothing in the holdout is used.
 
 Measured on 2026-10-10 (2014-09-26 .. 2025-10-01, best search parameters, after costs):
 
@@ -1144,7 +1144,7 @@ strategies:                        # rule-based baselines (section 17); weights 
     max_holding_days: 10           # ... or after this many sessions
   regime_switch:                   # BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x bear_exposure
     bear_exposures: [0.0, 0.5]     # first = baseline (all cash); others are variants fixed before any results
-  ml_regime:                       # regime timing as regime_switch (baseline bear exposure), stocks chosen by the PREDICTOR
+  ml_select:                       # regime timing as regime_switch (baseline bear exposure), stocks chosen by the PREDICTOR
     top_n: 10                      # hold the N stocks with the highest calibrated probability (BULL / SIDEWAYS)
     rebalance_every_sessions: 5    # refresh the selection every N sessions (= the target horizon); exposure is daily
 
