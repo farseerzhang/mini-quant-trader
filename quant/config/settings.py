@@ -351,21 +351,33 @@ PREDICTOR_GATES = {
 }
 
 
-def _check_predictor_gates(gates: Any) -> None:
-    if not isinstance(gates, Mapping) or not isinstance(gates.get("predictor"), Mapping):
-        raise ConfigError("retrain.gates.predictor must be a mapping of gate -> value")
-    predictor = gates["predictor"]
-    unknown = sorted(set(predictor) - set(PREDICTOR_GATES))
+# Pass criteria for the REGIME role (sections 13.1 and 16.1); quant/regime/gates.py evaluates each.
+REGIME_GATES = {
+    "filtered_only_test_pass": bool,
+    "state_mapping_stable_across_refits": bool,
+    "min_avg_regime_dwell_days": float,
+    "beats_rule_based_regime_after_costs": bool,
+}
+
+
+def _check_gate_section(gates: Any, role: str, known: Mapping[str, type]) -> None:
+    section = gates.get(role) if isinstance(gates, Mapping) else None
+    if not isinstance(section, Mapping):
+        raise ConfigError(f"retrain.gates.{role} must be a mapping of gate -> value")
+    unknown = sorted(set(section) - set(known))
     if unknown:
-        raise ConfigError(
-            f"retrain.gates.predictor: unknown gate(s) {', '.join(unknown)}; known: {', '.join(PREDICTOR_GATES)}"
-        )
-    for name, value in predictor.items():
-        kind = PREDICTOR_GATES[name]
+        raise ConfigError(f"retrain.gates.{role}: unknown gate(s) {', '.join(unknown)}; known: {', '.join(known)}")
+    for name, value in section.items():
+        kind = known[name]
         if kind is bool and not isinstance(value, bool):
-            raise ConfigError(f"retrain.gates.predictor.{name} must be true or false")
+            raise ConfigError(f"retrain.gates.{role}.{name} must be true or false")
         if kind is float and (isinstance(value, bool) or not isinstance(value, (int, float))):
-            raise ConfigError(f"retrain.gates.predictor.{name} must be a number")
+            raise ConfigError(f"retrain.gates.{role}.{name} must be a number")
+
+
+def _check_gates(gates: Any) -> None:
+    _check_gate_section(gates, "predictor", PREDICTOR_GATES)
+    _check_gate_section(gates, "regime", REGIME_GATES)
 
 
 @dataclass(frozen=True)
@@ -388,7 +400,7 @@ class RetrainSettings:
             raise ConfigError("retrain.models_dir and retrain.reports_dir must not be empty")
         if self.sample_every_sessions < 1:
             raise ConfigError("retrain.sample_every_sessions must be >= 1")
-        _check_predictor_gates(self.gates)
+        _check_gates(self.gates)
 
 
 BENCHMARKS = ("SPY", "equal_weight")

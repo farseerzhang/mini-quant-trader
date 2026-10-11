@@ -691,6 +691,20 @@ equal_weight                  18.3%   1.07     1.52      -31.7%    17.2%   100% 
 
 With the HMM regime the strategies earn the same return per unit of risk (Sharpe lower by 0.0015 and 0.0012) at a lower level of risk: about 20 percentage points less invested, roughly a third less volatility and a much shallower drawdown (-13.5% against -21.3%), and therefore about 3 points less return a year. Year by year the HMM version has the higher Sharpe in 5 of 11 years (bear50: 7 of 11); it does best where the rule-based regime struggled (2021-22: Sharpe 1.18 vs 0.09; calendar 2022: +1% vs -10%) and worst in the 2020-21 recovery (Sharpe -0.62 vs 1.60), which it spent largely out of BULL. By the pre-registered criterion (a higher Sharpe after costs) the HMM regime does not beat the rule-based one; it is a lower-risk alternative of equal risk-adjusted quality, not an improvement.
 
+### Regime gates (2026-10-11; `quant/regime/gates.py`)
+
+Keys of `retrain.gates.regime` are validated when the settings load and evaluated in config order. `filtered_only_test_pass` re-runs the whole walk-forward on the real observations cut at two sessions (refitting only the folds that start before each cut) and requires identical filtered probabilities, raw regimes and dwelled regimes up to each cut.
+
+```text
+filtered_only_test_pass               PASS   2/2 cuts identical (2018-04-02: 884 sessions; 2025-04-03: 2,646 sessions)
+state_mapping_stable_across_refits    PASS   lowest agreement 95.1% over 10 consecutive pairs (need >= 80%)
+min_avg_regime_dwell_days             PASS   31.8 sessions (need >= 10)
+beats_rule_based_regime_after_costs   FAIL   regime_switch Sharpe 0.8630 vs 0.8644 with the rule-based regime
+verdict                               FAILED
+```
+
+The HMM regime is sound (point in time, stable, persistent) but does not beat the rule-based regime by the pre-registered criterion, so the rule-based regime remains the one in use.
+
 # 14. ML Models
 
 ## Candidates

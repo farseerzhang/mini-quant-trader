@@ -144,6 +144,8 @@ class SettingsTests(unittest.TestCase):
             "missing sampling stride": lambda d: d["retrain"].pop("sample_every_sessions"),
             "misspelled gate": lambda d: d["retrain"]["gates"]["predictor"].update(max_calibraton_error=0.05),
             "gate with the wrong type": lambda d: d["retrain"]["gates"]["predictor"].update(leak_tests_pass="yes"),
+            "misspelled regime gate": lambda d: d["retrain"]["gates"]["regime"].update(min_avg_regime_dwel_days=10),
+            "regime gate with the wrong type": lambda d: d["retrain"]["gates"]["regime"].update(min_avg_regime_dwell_days="ten"),
             "bad date": set_value("market", "initial_history", "not-a-date"),
         }
         for name, mutate in bad.items():
