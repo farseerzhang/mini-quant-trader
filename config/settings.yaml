@@ -17,13 +17,13 @@ market:
   # modelled as corporate actions). Chosen today, and sectors are today's classification,
   # so backtests carry survivorship bias (section 20).
   symbols:
-    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]
+    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD, MU, PLTR, RMBS, LITE, FIG]
     communication_services: [GOOGL, DIS, NFLX]
-    consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX]
+    consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX, TSLA, LULU, SE, CCL]
     consumer_staples: [PG, KO, PEP, WMT, COST]
-    health_care: [JNJ, UNH, AMGN, LLY, TMO]
-    financials: [JPM, BAC, WFC, GS, BLK]
-    industrials: [CAT, UNP, LMT, DE]
+    health_care: [JNJ, UNH, AMGN, LLY, TMO, TEM]
+    financials: [BRK-B, XYZ, JPM, BAC, WFC, GS, BLK]
+    industrials: [CAT, UNP, LMT, DE, SPCX]
     energy: [XOM, CVX, SLB]
     materials: [SHW, NEM]
     utilities: [NEE, SO, AEP]
@@ -133,6 +133,16 @@ backtest:                          # signal at the close of T, fill at the open 
   random_baseline_runs: 100        # the strategy's weights reassigned to randomly permuted stocks
   random_seed: 42
 
-risk:
-  max_position_size: 0.10
-  max_sector_weight: 0.30
+risk:                              # section 19.1; applied in this order to the strategy's weights at T
+  max_position_size: 0.10          # binds: per-stock cap (sizing, section 17.2)
+  max_sector_weight: 0.30          # binds: per-sector cap; the excess stays in cash
+  max_portfolio_exposure: 1.0      # binds: scales all weights down if invested weight is above it; 1.0 never binds
+  atr_stop_multiple: 2.0           # flag only: stop price close(T) - k x ATR14 in the signal reason
+  high_volatility: 0.60            # flag only: realized_volatility_20d above this is noted; never resizes
+
+positions:                         # section 6.8; your holdings, read by run-daily (data/ is git-ignored)
+  path: data/positions.csv         # columns symbol,quantity,cost_basis; one CASH row holds the cash amount
+
+signals:                           # section 18.1; BUY / HOLD / REDUCE / EXIT at the close of T
+  strategy: regime_switch          # a rule-based strategy from section 17.1 (baseline or a variant)
+  hold_band: 0.02                  # HOLD while |target - current| is below this; = backtest.min_trade_weight

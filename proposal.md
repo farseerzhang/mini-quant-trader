@@ -282,10 +282,11 @@ Also snapshot (or hash) the feature vector used, so the prediction can be reprod
 ## 6.8 positions
 
 ```text
-symbol, as_of_date, quantity (or weight), cost_basis (optional), source (MANUAL | PAPER)
+symbol, as_of_date, quantity, cost_basis (optional), managed, source (MANUAL | PAPER), created_at
+PRIMARY KEY (symbol, as_of_date, source)
 ```
 
-Required to turn target weights into BUY / HOLD / REDUCE. Initially populated by manual entry.
+Required to turn target weights into BUY / HOLD / REDUCE. Initially populated by manual entry: `run-daily` reads `positions.path` (a CSV of `symbol,quantity,cost_basis` with one `CASH` row; `quant/signals/positions.py`) and stores it as the snapshot for session T, replacing any earlier snapshot of T. Holdings are valued at the as-traded close of T. A stock outside the pool is stored with `managed = 0` and gets no signal; without a file the portfolio is all cash at the notional `backtest.initial_cash` and nothing is stored.
 
 ## 6.9 signals
 
@@ -1114,6 +1115,33 @@ Calibrated model probability 0.64. Volatility within risk limits.
 Target weight 6% vs current 4% -> BUY (increase).
 ```
 
+## 18.1 Phase 8 pre-registration (2026-10-11, before any signal code)
+
+Fixed before implementation; changing any rule below after signals have been generated is a design change that is logged here, not a silent edit.
+
+**Which strategy.** `signals.strategy: regime_switch` (baseline, all cash in BEAR). Under section 32 no predictor and no HMM regime passed their gates, so the rule-based strategy with the rule-based regime is what ships. `regime_switch_bear50` stays a backtest variant.
+
+**Inputs at the close of T.** The regime comes from the ACTIVE REGIME model, else the rule-based regime (today: rule-based). Predictions come from the ACTIVE PREDICTOR; with none (today) the prediction stages are skipped and logged, and signals are rule-based only (`score`, `confidence` empty; `model_version = rule_based-v<strategies.version>`).
+
+**Live = backtest.** The target weight for T is the strategy's weight at T, computed over the full stored history (trend holdings persist from their entry; mean reversion counts holding days) and then passed through the risk layer (19.1). With the default risk settings it must equal the backtest's weight at T exactly; a test enforces this. Any risk rule that would change target weights is off by default; switching it on is a new trial and needs a backtest first (section 15.4).
+
+**Current weight.** `quantity x close(T) / (sum of quantity x close(T) over held stocks + cash)`, from the positions snapshot (section 6.8).
+
+**Signal mapping, with hold band `h = signals.hold_band = 0.02`** (equal to `backtest.min_trade_weight`, so live trades only what the backtest would):
+
+| Current weight | Target weight | Signal |
+|---|---|---|
+| 0 | > 0 | BUY (new position; always trades) |
+| > 0 | 0 | EXIT (always trades) |
+| > 0 | > 0, target - current >= h | BUY (increase) |
+| > 0 | > 0, current - target >= h | REDUCE (to target) |
+| > 0 | > 0, \|target - current\| < h | HOLD |
+| 0 | 0 | no signal row |
+
+A stock held but outside the configured universe gets a warning ("not managed") and no signal. Suggested quantity: `floor(|target - current| x portfolio value / close(T))` shares, an estimate only, because the order fills at the open of T+1 (section 4.5).
+
+**Reason.** Built from the factors that actually decided the weight, in this order: regime (and its source), the strategy rule that holds or exits the stock (with the indicator values), each risk limit that bound, the informational risk flags, then `target x% vs current y% -> SIGNAL`.
+
 ---
 
 # 19. Risk Management
@@ -1130,6 +1158,25 @@ Risk management is independent of the prediction model and can override it.
 - Regime exposure limits
 
 A high ML probability must never bypass risk controls.
+
+## 19.1 Phase 8 risk layer (pre-registered 2026-10-11)
+
+Applied in this order to the strategy's weights at T. "Binds" means it changes a weight; "flag" means it is reported in the reason only.
+
+| Limit | Setting | Default | Effect |
+|---|---|---|---|
+| Maximum position size | `risk.max_position_size` | 0.10 | binds (already part of sizing, section 17.2) |
+| Sector concentration | `risk.max_sector_weight` | 0.30 | binds (already part of sizing) |
+| Regime exposure | `strategies.regime_switch` | BULL/SIDEWAYS 1, BEAR 0 | binds (already part of the strategy) |
+| Maximum portfolio exposure | `risk.max_portfolio_exposure` | 1.0 | binds: if invested weight exceeds it, all weights scale down proportionally; 1.0 never binds |
+| Cash allocation | (derived) | 1 - invested | whatever is not invested is cash |
+| ATR stop distance | `risk.atr_stop_multiple` | 2.0 | flag: stop price `close(T) - k x ATR14` in the reason; never trades |
+| High volatility | `risk.high_volatility` | 0.60 | flag when `realized_volatility_20d` is above it; never resizes |
+
+Not in Phase 8:
+
+- **Volatility-based position sizing** changes the strategy's weights, so it is a new trial with its own backtest, not a default.
+- **Maximum drawdown protection** needs the live portfolio's value history, which only exists once forward testing starts (Phase 10).
 
 ---
 
@@ -1305,13 +1352,13 @@ market:
   # modelled as corporate actions). Chosen today, and sectors are today's classification,
   # so backtests carry survivorship bias (section 20).
   symbols:
-    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD]
+    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD, MU, PLTR, RMBS, LITE, FIG]
     communication_services: [GOOGL, DIS, NFLX]
-    consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX]
+    consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX, TSLA, LULU, SE, CCL]
     consumer_staples: [PG, KO, PEP, WMT, COST]
-    health_care: [JNJ, UNH, AMGN, LLY, TMO]
+    health_care: [JNJ, UNH, AMGN, LLY, TMO, TEM]
     financials: [JPM, BAC, WFC, GS, BLK]
-    industrials: [CAT, UNP, LMT, DE]
+    industrials: [CAT, UNP, LMT, DE, SPCX]
     energy: [XOM, CVX, SLB]
     materials: [SHW, NEM]
     utilities: [NEE, SO, AEP]
@@ -1421,9 +1468,19 @@ backtest:                          # signal at the close of T, fill at the open 
   random_baseline_runs: 100        # the strategy's weights reassigned to randomly permuted stocks
   random_seed: 42
 
-risk:
-  max_position_size: 0.10
-  max_sector_weight: 0.30
+risk:                              # section 19.1; applied in this order to the strategy's weights at T
+  max_position_size: 0.10          # binds: per-stock cap (sizing, section 17.2)
+  max_sector_weight: 0.30          # binds: per-sector cap; the excess stays in cash
+  max_portfolio_exposure: 1.0      # binds: scales all weights down if invested weight is above it; 1.0 never binds
+  atr_stop_multiple: 2.0           # flag only: stop price close(T) - k x ATR14 in the signal reason
+  high_volatility: 0.60            # flag only: realized_volatility_20d above this is noted; never resizes
+
+positions:                         # section 6.8; your holdings, read by run-daily (data/ is git-ignored)
+  path: data/positions.csv         # columns symbol,quantity,cost_basis; one CASH row holds the cash amount
+
+signals:                           # section 18.1; BUY / HOLD / REDUCE / EXIT at the close of T
+  strategy: regime_switch          # a rule-based strategy from section 17.1 (baseline or a variant)
+  hold_band: 0.02                  # HOLD while |target - current| is below this; = backtest.min_trade_weight
 ```
 
 `config/settings.yaml` holds exactly this block. Every section and key is required and unknown keys are rejected at startup, so the two must be changed together.
@@ -1519,7 +1576,7 @@ Filtered, walk-forward HMM; state mapping; compare to the rule-based regime. Ado
 
 ## Phase 8 — Integrated signal engine + risk
 
-Combine regime, indicators, ML probability and risk into target weights; add `positions`; derive BUY/HOLD/REDUCE/EXIT with reasons.
+Combine regime, indicators, ML probability and risk into target weights; add `positions`; derive BUY/HOLD/REDUCE/EXIT with reasons. Rules pre-registered in sections 18.1 and 19.1.
 
 ## Phase 9 — CLI operations and dashboard
 

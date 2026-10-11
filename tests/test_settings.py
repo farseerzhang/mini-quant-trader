@@ -49,6 +49,25 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.backtest.slippage, 0.0005)
         self.assertEqual(settings.holdout_months, 12)
         self.assertEqual(settings.risk.max_position_size, 0.10)
+        self.assertEqual(settings.risk.max_portfolio_exposure, 1.0)
+        self.assertEqual((settings.risk.atr_stop_multiple, settings.risk.high_volatility), (2.0, 0.60))
+        self.assertEqual(settings.positions.path, "data/positions.csv")
+        self.assertEqual(settings.signals.strategy, "regime_switch")
+        self.assertEqual(settings.signals.hold_band, settings.backtest.min_trade_weight)
+        self.assertEqual(
+            settings.strategies.rule_names, ("trend", "mean_reversion", "regime_switch", "regime_switch_bear50")
+        )
+
+    def test_signal_strategy_can_be_any_rule_based_strategy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _variant(directory, lambda d: d["signals"].update(strategy="regime_switch_bear50"))
+            self.assertEqual(load_settings(path).signals.strategy, "regime_switch_bear50")
+
+    def test_hold_band_that_differs_from_the_backtest_warns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _variant(directory, lambda d: d["signals"].update(hold_band=0.05))
+            with self.assertWarnsRegex(UserWarning, "will not trade like the backtest"):
+                self.assertEqual(load_settings(path).signals.hold_band, 0.05)
 
     def test_values_come_from_the_file_not_from_code(self):
         def change(document):
@@ -147,6 +166,17 @@ class SettingsTests(unittest.TestCase):
             "misspelled regime gate": lambda d: d["retrain"]["gates"]["regime"].update(min_avg_regime_dwel_days=10),
             "regime gate with the wrong type": lambda d: d["retrain"]["gates"]["regime"].update(min_avg_regime_dwell_days="ten"),
             "bad date": set_value("market", "initial_history", "not-a-date"),
+            "exposure cap above 1": set_value("risk", "max_portfolio_exposure", 1.2),
+            "exposure cap of zero": set_value("risk", "max_portfolio_exposure", 0),
+            "non-positive stop multiple": set_value("risk", "atr_stop_multiple", 0),
+            "non-positive volatility flag": set_value("risk", "high_volatility", -0.1),
+            "missing risk key": lambda d: d["risk"].pop("high_volatility"),
+            "missing positions section": lambda d: d.pop("positions"),
+            "empty positions path": set_value("positions", "path", " "),
+            "unknown signal strategy": set_value("signals", "strategy", "momentum"),
+            "ml strategy drives signals": set_value("signals", "strategy", "ml_select"),
+            "hold band of 1": set_value("signals", "hold_band", 1.0),
+            "unknown signals key": set_value("signals", "hold_bnad", 0.02),
         }
         for name, mutate in bad.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:

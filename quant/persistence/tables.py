@@ -182,6 +182,24 @@ market_regimes = Table(
 )
 
 
+# 6.8 positions — snapshots of the holdings the signals were computed against.
+# One snapshot per as-of session and source; re-running a session replaces it.
+positions = Table(
+    "positions",
+    metadata,
+    Column("symbol", String, nullable=False),  # a stock, or CASH (quantity = cash amount)
+    Column("as_of_date", Date, nullable=False),  # session T the holdings are valued at
+    Column("quantity", Float, nullable=False),
+    Column("cost_basis", Float),  # per share, optional
+    Column("managed", Integer, nullable=False),  # 0: outside the stock pool, no signal
+    Column("source", String, nullable=False),  # MANUAL | PAPER
+    Column("created_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("symbol", "as_of_date", "source", name="pk_positions"),
+    CheckConstraint("source IN ('MANUAL', 'PAPER')", name="ck_positions_source"),
+    CheckConstraint("quantity >= 0", name="ck_positions_quantity_non_negative"),
+)
+
+
 # 6.11 backtest_runs — one row per portfolio and period of one `quant backtest` invocation (a batch).
 # HOLDOUT rows exist only when the holdout was explicitly evaluated (section 15.2).
 backtest_runs = Table(

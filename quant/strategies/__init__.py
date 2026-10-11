@@ -12,7 +12,7 @@ from typing import Callable
 
 import pandas as pd
 
-from quant.config.settings import Settings
+from quant.config.settings import Settings, bear_variant_name
 from quant.regime.rule_based import BEAR, BULL, SIDEWAYS
 from quant.strategies.rules import PANEL_COLUMNS, Panel, mean_reversion_holdings, trend_holdings
 from quant.strategies.sizing import target_weights
@@ -49,10 +49,6 @@ def regime_switch_weights(panel: Panel, regimes: pd.Series, settings: Settings, 
     return target_weights(holdings, settings.market.sectors, settings.risk, exposure)
 
 
-def _bear_variant_name(bear_exposure: float) -> str:
-    return f"regime_switch_bear{round(bear_exposure * 100):d}"
-
-
 def build_strategies(settings: Settings) -> list[Strategy]:
     """The configured baselines, in report order. The first bear exposure is the
     `regime_switch` baseline; the others are the pre-registered variants."""
@@ -73,7 +69,7 @@ def build_strategies(settings: Settings) -> list[Strategy]:
         ),
     ]
     for position, bear_exposure in enumerate(settings.strategies.regime_switch.bear_exposures):
-        name = "regime_switch" if position == 0 else _bear_variant_name(bear_exposure)
+        name = "regime_switch" if position == 0 else bear_variant_name(bear_exposure)
         strategies.append(
             Strategy(
                 name,

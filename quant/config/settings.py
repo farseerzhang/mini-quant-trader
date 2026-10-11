@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
@@ -184,14 +185,46 @@ class RegimeSettings:
 
 @dataclass(frozen=True)
 class RiskSettings:
+    """Risk layer (section 19.1). The first three bind (change weights); the last two only
+    flag in the signal reason."""
+
     max_position_size: float
     max_sector_weight: float
+    max_portfolio_exposure: float
+    atr_stop_multiple: float
+    high_volatility: float
 
     def __post_init__(self) -> None:
         if not 0 < self.max_position_size <= 1:
             raise ConfigError("risk.max_position_size must be in (0, 1]")
         if not self.max_position_size <= self.max_sector_weight <= 1:
             raise ConfigError("risk.max_sector_weight must be in [max_position_size, 1]")
+        if not 0 < self.max_portfolio_exposure <= 1:
+            raise ConfigError("risk.max_portfolio_exposure must be in (0, 1]; 1.0 never binds")
+        if self.atr_stop_multiple <= 0:
+            raise ConfigError("risk.atr_stop_multiple must be positive")
+        if self.high_volatility <= 0:
+            raise ConfigError("risk.high_volatility must be positive (annualised, e.g. 0.60)")
+
+
+@dataclass(frozen=True)
+class PositionSettings:
+    # CSV of current holdings (section 6.8): symbol,quantity,cost_basis plus one CASH row.
+    path: str
+
+    def __post_init__(self) -> None:
+        if not str(self.path).strip():
+            raise ConfigError("positions.path must not be empty")
+
+
+@dataclass(frozen=True)
+class SignalSettings:
+    strategy: str  # which rule-based strategy drives the signals (section 18.1)
+    hold_band: float  # HOLD while |target - current| is below this
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.hold_band < 1:
+            raise ConfigError("signals.hold_band must be in [0, 1)")
 
 
 @dataclass(frozen=True)
@@ -248,6 +281,17 @@ class StrategySettings:
     def __post_init__(self) -> None:
         if self.version < 1:
             raise ConfigError("strategies.version must be >= 1")
+
+    @property
+    def rule_names(self) -> tuple[str, ...]:
+        """Names of the rule-based strategies, in report order (section 17.1)."""
+        variants = [bear_variant_name(value) for value in self.regime_switch.bear_exposures[1:]]
+        return ("trend", "mean_reversion", "regime_switch", *variants)
+
+
+def bear_variant_name(bear_exposure: float) -> str:
+    """Name of a regime_switch variant with a non-baseline BEAR exposure, e.g. regime_switch_bear50."""
+    return f"regime_switch_bear{round(bear_exposure * 100):d}"
 
 
 MODEL_TYPES = ("logistic_regression", "random_forest", "xgboost")
@@ -449,8 +493,21 @@ class Settings:
     backtest: BacktestSettings
     model: ModelSettings
     retrain: RetrainSettings
+    positions: PositionSettings
+    signals: SignalSettings
 
     def __post_init__(self) -> None:
+        if self.signals.strategy not in self.strategies.rule_names:
+            raise ConfigError(
+                f"signals.strategy {self.signals.strategy!r} is not a rule-based strategy; "
+                f"use one of {', '.join(self.strategies.rule_names)}"
+            )
+        if self.signals.hold_band != self.backtest.min_trade_weight:
+            warnings.warn(
+                f"signals.hold_band ({self.signals.hold_band:g}) differs from backtest.min_trade_weight "
+                f"({self.backtest.min_trade_weight:g}): live signals will not trade like the backtest",
+                stacklevel=2,
+            )
         round_trip = 2 * (self.backtest.fees + self.backtest.slippage)
         if self.model.target.min_threshold <= round_trip:
             raise ConfigError(
@@ -651,4 +708,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                 "gates": _as_mapping("retrain.gates"),
             },
         ),
+        positions=_build(PositionSettings, "positions", _section(raw, "positions")),
+        signals=_build(SignalSettings, "signals", _section(raw, "signals")),
     )

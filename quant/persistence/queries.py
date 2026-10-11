@@ -369,3 +369,41 @@ def active_model(engine: Engine, role: str):
     )
     with engine.connect() as conn:
         return conn.execute(stmt).mappings().first()
+
+
+def replace_positions(engine: Engine, as_of: date, source: str, rows: Sequence[Mapping[str, Any]]) -> int:
+    """Store the holdings snapshot for one session and source, replacing any earlier one
+    (a holding removed from the file must not survive a re-run)."""
+    now = _now()
+    payload = [{**row, "as_of_date": as_of, "source": source, "created_at": now} for row in rows]
+    positions = tables.positions
+    with engine.begin() as conn:
+        conn.execute(positions.delete().where(positions.c.as_of_date == as_of, positions.c.source == source))
+        if payload:
+            conn.execute(positions.insert(), payload)
+    return len(payload)
+
+
+def load_positions(engine: Engine, as_of: date, source: str) -> pd.DataFrame:
+    stmt = (
+        select(tables.positions)
+        .where(tables.positions.c.as_of_date == as_of, tables.positions.c.source == source)
+        .order_by(tables.positions.c.symbol)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return pd.DataFrame([dict(row) for row in rows], columns=[c.name for c in tables.positions.columns])
+
+
+def load_raw_closes(engine: Engine, symbols: Sequence[str], since: date | None = None) -> pd.DataFrame:
+    """Stored (as-traded, unadjusted) closes: dates x symbols."""
+    prices = tables.daily_prices
+    stmt = select(prices.c.date, prices.c.symbol, prices.c.close).where(prices.c.symbol.in_(list(symbols)))
+    if since is not None:
+        stmt = stmt.where(prices.c.date >= since)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).all()
+    frame = pd.DataFrame(rows, columns=["date", "symbol", "close"])
+    wide = frame.pivot(index="date", columns="symbol", values="close")
+    wide.index = pd.DatetimeIndex(wide.index)
+    return wide.sort_index().astype(float)
