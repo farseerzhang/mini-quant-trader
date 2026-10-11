@@ -50,5 +50,12 @@ def create_db_engine(db_path: str | os.PathLike[str], busy_timeout_ms: int) -> E
 
 
 def init_db(engine: Engine) -> None:
-    """Create all tables if they do not already exist."""
+    """Create all tables and indexes that do not exist yet.
+
+    create_all creates an index only together with its table, so an index added to an
+    existing table (e.g. the one-ACTIVE-per-role index) is created here explicitly.
+    """
     metadata.create_all(engine)
+    for table in metadata.tables.values():
+        for index in table.indexes:
+            index.create(engine, checkfirst=True)

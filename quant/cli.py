@@ -13,6 +13,7 @@ from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
 from quant.models.ml_backtest import BASELINE
 from quant.models.retrain import run_retrain
+from quant.ops.promote import PromotionError, promote_model
 from quant.ops.status import collect_status, format_status
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
@@ -103,6 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     signals_command.add_argument("--reasons", action="store_true", help="also print the reason of every signal")
     signals_command.add_argument("--db", help=db_help)
+
+    promote_command = commands.add_parser(
+        "promote",
+        help="MANUAL: make a candidate the ACTIVE model of its role (the previous one is RETIRED); "
+        "refuses a candidate whose gates failed unless --override is given",
+    )
+    promote_command.add_argument("model_id", help="model_id from model_versions (also the report's file name)")
+    promote_command.add_argument(
+        "--override", metavar="REASON", help="promote although the gates failed; the reason is logged"
+    )
+    promote_command.add_argument("--db", help=db_help)
 
     status_command = commands.add_parser(
         "status",
@@ -427,6 +439,28 @@ def _run_signals(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_promote(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
+    try:
+        promotion = promote_model(engine, settings, args.model_id, args.override)
+    except PromotionError as exc:
+        print(f"Promotion refused: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(f"{promotion.model_id} is now the ACTIVE {promotion.role} model.")
+    if promotion.retired:
+        print(f"  {promotion.retired} is RETIRED.")
+    if promotion.override_reason:
+        print(f"  OVERRIDE logged: the gates failed ({', '.join(promotion.failed_gates) or 'not passed'}); "
+              f"reason: {promotion.override_reason}")
+    if promotion.stale_predictor:
+        print(f"warning: the ACTIVE predictor {promotion.stale_predictor} was trained on another regime; "
+              "retrain it (`quant status` warns until then)")
+    print("The other role is unchanged. Undo by promoting the previous model again.")
+    return 0
+
+
 def _run_status(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
@@ -495,6 +529,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_features(args, settings)
         if args.command == "calculate-regime":
             return _run_regime(args, settings)
+        if args.command == "promote":
+            return _run_promote(args, settings)
         if args.command == "status":
             return _run_status(args, settings)
         if args.command == "generate-signals":

@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     PrimaryKeyConstraint,
@@ -317,4 +318,12 @@ model_versions = Table(
     UniqueConstraint("model_type", "version", name="uq_model_versions_type_version"),
     CheckConstraint("role IN ('PREDICTOR', 'REGIME')", name="ck_model_versions_role"),
     CheckConstraint("status IN ('CANDIDATE', 'ACTIVE', 'RETIRED')", name="ck_model_versions_status"),
+)
+
+# At most one ACTIVE model per role, enforced by the database (section 16.1).
+one_active_per_role = Index(
+    "uq_model_versions_one_active_per_role",
+    model_versions.c.role,
+    unique=True,
+    sqlite_where=model_versions.c.status == "ACTIVE",
 )
