@@ -11,7 +11,7 @@ validation rows of all folds together are the out-of-sample predictions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -61,9 +61,13 @@ def split_calibration(train: pd.DatetimeIndex, months: int, embargo: int) -> Fol
     return FoldSplit(fit=fit, calibration=calibration)
 
 
-def _xy(dataset: Dataset) -> tuple[np.ndarray, np.ndarray]:
+# Chooses the inputs of one fold from the rows its model is fit on (research: feature selection).
+InputSelector = Callable[[Dataset], Sequence[str]]
+
+
+def _xy(dataset: Dataset, columns: Sequence[str] = INPUT_COLUMNS) -> tuple[np.ndarray, np.ndarray]:
     frame = dataset.frame
-    return frame.loc[:, list(INPUT_COLUMNS)].to_numpy(dtype=float), frame["label"].to_numpy(dtype=float)
+    return frame.loc[:, list(columns)].to_numpy(dtype=float), frame["label"].to_numpy(dtype=float)
 
 
 def run_walk_forward(
@@ -72,8 +76,16 @@ def run_walk_forward(
     model_type: str,
     parameters: Mapping[str, Any],
     settings: Settings,
+    input_columns: Sequence[str] = INPUT_COLUMNS,
+    select_inputs: InputSelector | None = None,
 ) -> WalkForwardResult:
-    """Fit, calibrate and score ``model_type`` with ``parameters`` on every fold."""
+    """Fit, calibrate and score ``model_type`` with ``parameters`` on every fold.
+
+    ``input_columns`` are the model's inputs; ``select_inputs`` (optional) instead
+    chooses them per fold from that fold's fit rows only (every session of the fit
+    part, not just the sampled ones), so the choice never sees calibration or
+    validation data. The chosen inputs are recorded per fold.
+    """
     labelled = dataset.labelled()
     anchor = dataset.sessions
     seed = settings.retrain.search.seed
@@ -83,13 +95,16 @@ def run_walk_forward(
         fit_rows = labelled.rows_on(sample_sessions(split.fit, settings.retrain.sample_every_sessions, anchor))
         calibration_rows = labelled.rows_on(split.calibration)
         validation_rows = labelled.rows_on(fold.validation)
+        columns = list(select_inputs(labelled.rows_on(split.fit))) if select_inputs else list(input_columns)
+        if not columns:
+            raise ValueError(f"fold {fold.number}: no inputs selected")
 
-        x_fit, y_fit = _xy(fit_rows)
+        x_fit, y_fit = _xy(fit_rows, columns)
         model = build_model(model_type, parameters, seed).fit(x_fit, y_fit)
-        x_cal, y_cal = _xy(calibration_rows)
+        x_cal, y_cal = _xy(calibration_rows, columns)
         calibrator = Calibrator(settings.model.calibration).fit(model.predict_proba(x_cal)[:, 1], y_cal)
 
-        x_val, y_val = _xy(validation_rows)
+        x_val, y_val = _xy(validation_rows, columns)
         raw = model.predict_proba(x_val)[:, 1]
         probability = calibrator.transform(raw)
         base_rate = float(y_fit.mean())
@@ -109,6 +124,7 @@ def run_walk_forward(
                 **metrics,
                 "raw_auc": raw_metrics["auc"],
                 "raw_calibration_error": raw_metrics["calibration_error"],
+                "inputs": ",".join(columns),
             }
         )
         predictions.append(

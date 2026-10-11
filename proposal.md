@@ -521,6 +521,28 @@ The daily log returns and log levels are the HMM observations (section 13). The 
 
 Raw SMA/ATR values may be stored for charting but are not model inputs.
 
+### Feature research (2026-10-11, development period only; `quant/models/feature_research.py`)
+
+Rank IC = the daily cross-sectional Spearman correlation between a feature at T and the 5-day excess return (the label's), over 2006-01-03 .. 2025-10-01; the t-statistic uses every 5th session (non-overlapping labels). |t| < ~2 is indistinguishable from noise.
+
+```text
+feature (current / candidate)         mean IC    t      years with the same sign
+illiquidity_20d (candidate)           +0.027    +5.3    17/20   survivorship bias, see below
+log_dollar_volume_20d (candidate)     -0.026    -4.9    15/20   survivorship bias, see below
+overnight_gap (candidate)             -0.008    -2.9    16/20   short-term reversal
+return_5d (current)                   -0.017    -2.7    16/20   short-term reversal
+sector_relative_return_5d (candidate) -0.014    -2.5    14/20   short-term reversal
+return_1d (candidate)                 -0.015    -2.2    16/20   short-term reversal
+max_return_20d, return_12m, momentum_12_1, idiosyncratic_volatility_60d    |t| 1.6 - 1.8
+the other 19 current stock features   |t| <= 1.5 (rsi14, drawdown_252d, volatility_ratio_20_60, price_vs_sma50, corr_spy_60d: |t| <= 0.5)
+all 9 market features and the 3 regime columns: no IC (identical for every stock on a day)
+```
+
+- **Market features and the regime columns cannot rank stocks:** they are the same for all 48 stocks on a session, so for the selection target they add only noise (a model can at most use them to change how other inputs are weighted).
+- **Most current features are noise for this target;** pairs such as `return_1m` and `relative_return_1m_spy` have identical rank IC (subtracting SPY's return does not change a ranking within a day).
+- **The one robust effect is short-term reversal:** stocks that rose over the last 1-5 sessions (or gapped up overnight) tend to lag over the next 5, consistently in 14-16 of 20 years.
+- **Size and liquidity look strongest but are survivorship bias:** the pool is today's large caps, so the stocks that were small in 2006 are exactly the ones that grew most (2006 dollar volume vs 2006-2025 return: rank correlation -0.32; NFLX x322). These features must not be traded on with a pool chosen today.
+
 **Removed from V1:**
 
 - **Fear & Greed**: no reliable point-in-time history; revisions and look-ahead risk. It may be logged going forward only (see section 30).
@@ -846,6 +868,29 @@ regime_switch (rule)  -       -                10.3%   0.86     -21.3%     3.9x 
 ```
 
 The more flexible the model, the worse it does: each step from linear to bagged trees to boosted trees adds a little noise-fitting and turnover and loses a little skill, and within XGBoost the simplest settings win. XGBoost is not better than the linear baseline (section 14 says it is not assumed to win), Random Forest remains only a benchmark, and no predictor beats the rule-based baseline. Under section 32 the rule-based `regime_switch` is what ships.
+
+### 15.4.5 Pre-registered trials: feature sets (registered 2026-10-11, before running)
+
+Motivation: the feature research in section 11 found that the market and regime columns cannot rank stocks and that most stock features are noise for the 5-day target. Two trials, Logistic Regression `C = 0.01`, everything else as in the Phase 5 baseline (5-day label, sigmoid calibration, `ml_select` top 10 every 5 sessions, same folds and gates):
+
+- **A. Stock features only:** the 23 stock features; the 9 market features and 3 regime columns are removed.
+- **B. Selection inside each fold:** for each fold, the rank IC of every feature in a pool is computed on that fold's fit sessions only (never its calibration or validation sessions), and the features with |t| >= 2 are kept (at least the strongest one). Pool: the 23 stock features plus the candidates of section 11 except the survivorship-biased size/liquidity features (`log_dollar_volume_20d`, `illiquidity_20d`). The chosen inputs are recorded per fold.
+
+This adds 2 trials (trial log: 55). The holdout is not used.
+
+Result (2026-10-11, development folds, after costs):
+
+```text
+trial                          AUC     log-loss skill   folds > reference   CAGR    Sharpe (base)   max DD (base)     turnover   years > base   random baseline   verdict
+baseline (35 inputs)           0.535   +0.25%            9/11               12.5%   0.92 (0.86)     -24.5% (-21.3%)   16.5x      6/11           97%               FAILED
+A: stock features only (23)    0.537   +0.29%           10/11               11.7%   0.86 (0.86)     -24.7% (-21.3%)   16.5x      6/11           91%               FAILED
+B: selected in each fold       0.497   -0.03%            2/11                9.0%   0.66 (0.86)     -27.9% (-21.3%)   29.6x      5/11           81%               FAILED
+```
+
+- **A** confirms that the market and regime columns were noise for the probabilities: without them the model is slightly more accurate and beats the reference in 10 of 11 years, the best probability quality so far. The trading result is no better (Sharpe 0.86, equal to the baseline), so it still fails three gates.
+- **B** chose 1-4 short-term reversal inputs in every fold (`return_1d`, `overnight_gap`, `return_5d`, `sector_relative_return_5d`; `macd_hist_over_price` in 2018-2020), but its predictions are no better than chance in the following years (AUC below 0.5 in 9 of 11 folds; rank IC of its probabilities about 0) and a one-day signal churns the holdings (29.6x a year). A reversal effect visible over 20 years (t about 2-3) is too weak and too unstable to be learned from the preceding years and traded after costs: in the labels, the day's biggest fallers meet the target 37.3% of the time against 35.9% for the biggest risers.
+
+Cleaner inputs improve the probabilities a little, but not enough to beat `regime_switch` after costs; the binding constraints remain the weak signal and the cost of trading it.
 
 ## 15.5 Final refit
 
