@@ -3,8 +3,8 @@
 Market exposure follows the rule-based regime exactly as in `regime_switch`
 (BULL / SIDEWAYS: invested; BEAR: the baseline bear exposure; no regime:
 nothing), applied every session. Which stocks are held is refreshed every
-``rebalance_every_sessions`` sessions: the ``top_n`` stocks with the highest
-calibrated probability at that session's close. Sizing uses the usual position
+``rebalance_every_sessions`` sessions: ``top_n`` stocks by calibrated probability
+at that session's close, keeping a held stock while it ranks within ``keep_rank``. Sizing uses the usual position
 and sector caps. The probability is never a reason to buy on its own; the regime
 and the risk limits decide exposure.
 """
@@ -19,13 +19,17 @@ from quant.regime.rule_based import BEAR, BULL, SIDEWAYS
 from quant.strategies.sizing import target_weights
 
 
-def top_n_holdings(probabilities: pd.DataFrame, top_n: int, every: int) -> pd.DataFrame:
-    """Hold the ``top_n`` highest probabilities, re-chosen every ``every`` sessions.
+def top_n_holdings(probabilities: pd.DataFrame, top_n: int, every: int, keep_rank: int | None = None) -> pd.DataFrame:
+    """Hold ``top_n`` stocks by probability, re-chosen every ``every`` sessions.
 
-    Selections are made on sessions 0, every, 2*every, ... of ``probabilities``
-    and held until the next one. Missing probabilities are never selected; ties
-    go to the earlier column.
+    On sessions 0, every, 2*every, ...: a held stock that still ranks within
+    ``keep_rank`` stays; the free places are filled with the highest-ranked
+    stocks not held. With ``keep_rank = top_n`` (the default) this is simply the
+    current top ``top_n``. A keep band above ``top_n`` stops a stock being sold
+    and bought back as its rank wobbles around the cut-off. Missing
+    probabilities are never held; ties go to the earlier column.
     """
+    keep_rank = top_n if keep_rank is None else keep_rank
     values = probabilities.to_numpy(dtype=float)
     out = np.zeros(values.shape, dtype=bool)
     current = np.zeros(values.shape[1], dtype=bool)
@@ -34,8 +38,10 @@ def top_n_holdings(probabilities: pd.DataFrame, top_n: int, every: int) -> pd.Da
             row = values[t]
             available = np.flatnonzero(~np.isnan(row))
             ranked = available[np.argsort(-row[available], kind="stable")]
+            kept = [column for column in ranked[:keep_rank] if current[column]]
+            chosen = kept + [column for column in ranked if not current[column]][: top_n - len(kept)]
             current = np.zeros(values.shape[1], dtype=bool)
-            current[ranked[:top_n]] = True
+            current[chosen] = True
         out[t] = current
     return pd.DataFrame(out, index=probabilities.index, columns=probabilities.columns)
 
@@ -43,7 +49,7 @@ def top_n_holdings(probabilities: pd.DataFrame, top_n: int, every: int) -> pd.Da
 def ml_select_weights(probabilities: pd.DataFrame, regimes: pd.Series, settings: Settings) -> pd.DataFrame:
     """Target weights at the close of T from probabilities and the regime at T."""
     config = settings.strategies.ml_select
-    holdings = top_n_holdings(probabilities, config.top_n, config.rebalance_every_sessions)
+    holdings = top_n_holdings(probabilities, config.top_n, config.rebalance_every_sessions, config.keep_rank)
     regime = regimes.reindex(probabilities.index)
     exposure = pd.Series(0.0, index=probabilities.index)
     exposure[(regime == BULL) | (regime == SIDEWAYS)] = 1.0

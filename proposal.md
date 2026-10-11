@@ -802,6 +802,29 @@ verdict                                  FAILED                          FAILED
 
 Under the research-validity gate (section 32), the rule-based `regime_switch` remains what ships.
 
+### 15.4.3 Pre-registered trials: horizon and keep band (registered 2026-10-11, before running)
+
+Motivation (from the first evaluation, section 15.4.2): the edge in `ml_select` is real but small, and trading it every 5 sessions costs about 2% a year. Two changes target the noise and the turnover:
+
+- **Longer label horizon** (section 14 asks for 10 and 20 to be tested): the label spans h sessions, the embargo is h + 1, and the selection is refreshed every h sessions.
+- **Keep band:** a held stock is kept while it ranks within `keep_rank`; only free places are refilled from the top `top_n` (10).
+
+Grid, fixed now: Logistic Regression only (the better model so far), `C = 0.01` (the search showed C barely matters), horizons **5 / 10 / 20** x `keep_rank` **10 / 20**. Everything else is unchanged, including `sample_every_sessions: 5`, `top_n: 10`, sigmoid calibration, the folds rule and **the gates**. Horizon 5 / keep 10 is the existing result, so the grid adds **5 trials** (trial log: 12 search + 6 calibration + 5 = 23). Each trial is judged by the gates as configured; picking the best of six afterwards is itself a selection and is reported as such. The holdout is not used.
+
+Result (2026-10-11, development folds, after costs; implemented in `quant/models/experiments.py`, keep band in `quant/strategies/ml.py`):
+
+```text
+trial        AUC     log-loss skill   CAGR    Sharpe (base)   max DD (base)     turnover   years > base   random baseline   verdict
+h5  keep10   0.535   +0.25%           12.5%   0.92 (0.86)     -24.5% (-21.3%)   16.5x      6/11           97%               FAILED
+h5  keep20   0.535   +0.25%           12.1%   0.90 (0.86)     -24.0% (-21.3%)    8.8x      6/11           88%               FAILED
+h10 keep10   0.534   +0.20%           10.6%   0.82 (0.85)     -20.0% (-21.3%)   11.1x      6/11           73%               FAILED
+h10 keep20   0.534   +0.20%           10.4%   0.81 (0.85)     -23.0% (-21.3%)    7.1x      5/11           57%               FAILED
+h20 keep10   0.520   +0.03%            9.1%   0.73 (0.83)     -19.1% (-21.3%)    8.2x      6/11           45%               FAILED
+h20 keep20   0.520   +0.03%            8.1%   0.65 (0.83)     -20.2% (-21.3%)    6.0x      6/11           26%               FAILED
+```
+
+No trial passes; every one fails `min_fraction_of_folds_beating_baseline` (at most 6 of 11 years). The keep band works mechanically (median holding 10 -> 20 sessions, changes per rebalance 3.7 -> 1.9) and halves the costs, but the stocks it keeps are lower-ranked, so the selection edge shrinks by about as much as the costs fall (random-baseline percentile 97% -> 88%). Longer horizons lose the signal itself: the skill falls from +0.25% (5 days) to +0.20% (10) and +0.03% (20), so whatever the model knows is short-term. Holding longer, by either route, removes edge as fast as it removes cost. (The baseline Sharpe differs slightly per horizon because the purge, h + 1 sessions, shifts the evaluation window.)
+
 ## 15.5 Final refit
 
 After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).
@@ -1167,6 +1190,7 @@ strategies:                        # rule-based baselines (section 17); weights 
     bear_exposures: [0.0, 0.5]     # first = baseline (all cash); others are variants fixed before any results
   ml_select:                       # regime timing as regime_switch (baseline bear exposure), stocks chosen by the PREDICTOR
     top_n: 10                      # hold the N stocks with the highest calibrated probability (BULL / SIDEWAYS)
+    keep_rank: 10                  # keep a held stock while it ranks within this (= top_n: no keep band)
     rebalance_every_sessions: 5    # refresh the selection every N sessions (= the target horizon); exposure is daily
 
 model:
