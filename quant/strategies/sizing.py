@@ -23,6 +23,8 @@ def target_weights(
        other sectors, so a cap never forces extra buying.
     3. The result is multiplied by ``exposure`` (per date, or one number), e.g. the
        regime's exposure in regime_switch.
+    4. If the invested total is above risk.max_portfolio_exposure, every weight is
+       scaled down proportionally to it (section 19.1; 1.0 never binds).
 
     Weights are fractions of portfolio value; whatever does not add up to 1 is cash.
     """
@@ -44,4 +46,7 @@ def target_weights(
         weights = weights.mul(exposure.reindex(weights.index).fillna(0.0), axis=0)
     else:
         weights = weights * float(exposure)
-    return weights
+
+    invested = weights.sum(axis=1)
+    exposure_scale = (risk.max_portfolio_exposure / invested.where(invested > 0)).clip(upper=1.0).fillna(1.0)
+    return weights.mul(exposure_scale, axis=0)

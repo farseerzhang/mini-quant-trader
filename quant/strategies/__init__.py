@@ -17,7 +17,10 @@ from quant.regime.rule_based import BEAR, BULL, SIDEWAYS
 from quant.strategies.rules import PANEL_COLUMNS, Panel, mean_reversion_holdings, trend_holdings
 from quant.strategies.sizing import target_weights
 
-__all__ = ["PANEL_COLUMNS", "Strategy", "build_strategies", "regime_switch_weights"]
+__all__ = [
+    "PANEL_COLUMNS", "Strategy", "StrategyParts", "build_strategies", "parts_weights",
+    "regime_switch_parts", "regime_switch_weights", "strategy_parts",
+]
 
 
 @dataclass(frozen=True)
@@ -27,7 +30,27 @@ class Strategy:
     weights: Callable[[Panel, pd.Series], pd.DataFrame]
 
 
-def regime_switch_weights(panel: Panel, regimes: pd.Series, settings: Settings, bear_exposure: float) -> pd.DataFrame:
+@dataclass(frozen=True)
+class StrategyParts:
+    """What a rule-based strategy holds at each close, which rule holds it, and the exposure.
+
+    ``rules`` maps a rule name (trend, mean_reversion) to the stocks that rule holds
+    (boolean, dates x stocks); a stock is held by at most one rule on a date.
+    """
+
+    rules: dict[str, pd.DataFrame]
+    exposure: pd.Series  # regime exposure per date (1.0 for strategies that ignore the regime)
+
+    @property
+    def holdings(self) -> pd.DataFrame:
+        frames = list(self.rules.values())
+        held = frames[0].copy()
+        for frame in frames[1:]:
+            held |= frame
+        return held
+
+
+def regime_switch_parts(panel: Panel, regimes: pd.Series, settings: Settings, bear_exposure: float) -> StrategyParts:
     """BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend scaled by bear_exposure.
 
     Sessions without a regime (warm-up) hold nothing. Mean-reversion trades can
@@ -41,40 +64,52 @@ def regime_switch_weights(panel: Panel, regimes: pd.Series, settings: Settings, 
     trend = trend_holdings(panel)
     reversion = mean_reversion_holdings(panel, settings.strategies.mean_reversion, allow_entry=sideways)
     trend_days = (bull | bear).to_numpy()[:, None]
-    holdings = (trend & trend_days) | (reversion & sideways.to_numpy()[:, None])
 
     exposure = pd.Series(0.0, index=reference.index)
     exposure[bull | sideways] = 1.0
     exposure[bear] = bear_exposure
-    return target_weights(holdings, settings.market.sectors, settings.risk, exposure)
+    return StrategyParts({"trend": trend & trend_days, "mean_reversion": reversion & sideways.to_numpy()[:, None]},
+                         exposure)
+
+
+def regime_switch_weights(panel: Panel, regimes: pd.Series, settings: Settings, bear_exposure: float) -> pd.DataFrame:
+    return parts_weights(regime_switch_parts(panel, regimes, settings, bear_exposure), settings)
+
+
+def parts_weights(parts: StrategyParts, settings: Settings) -> pd.DataFrame:
+    """Target weights from the parts: equal weight, position and sector caps, exposure (section 17.2)."""
+    return target_weights(parts.holdings, settings.market.sectors, settings.risk, parts.exposure)
+
+
+def strategy_parts(name: str, panel: Panel, regimes: pd.Series, settings: Settings) -> StrategyParts:
+    """The parts of the rule-based strategy ``name`` (one of settings.strategies.rule_names)."""
+    reference = panel["price_vs_sma200"]
+    full = pd.Series(1.0, index=reference.index)
+    if name == "trend":
+        return StrategyParts({"trend": trend_holdings(panel)}, full)
+    if name == "mean_reversion":
+        return StrategyParts({"mean_reversion": mean_reversion_holdings(panel, settings.strategies.mean_reversion)}, full)
+    for position, bear_exposure in enumerate(settings.strategies.regime_switch.bear_exposures):
+        if name == ("regime_switch" if position == 0 else bear_variant_name(bear_exposure)):
+            return regime_switch_parts(panel, regimes, settings, bear_exposure)
+    raise ValueError(f"unknown rule-based strategy {name!r}; use one of {', '.join(settings.strategies.rule_names)}")
 
 
 def build_strategies(settings: Settings) -> list[Strategy]:
     """The configured baselines, in report order. The first bear exposure is the
     `regime_switch` baseline; the others are the pre-registered variants."""
-    sectors, risk = settings.market.sectors, settings.risk
     reversion = settings.strategies.mean_reversion
-    strategies = [
-        Strategy(
-            "trend",
-            "enter: price > SMA200, SMA50 > SMA200, MACD > signal; exit when either SMA condition fails; "
-            "ignores the regime",
-            lambda panel, regimes: target_weights(trend_holdings(panel), sectors, risk),
-        ),
-        Strategy(
-            "mean_reversion",
-            f"price > SMA200, RSI < {reversion.rsi_entry:g}, MACD histogram rising; "
-            f"exit RSI > {reversion.rsi_exit:g} or after {reversion.max_holding_days} sessions",
-            lambda panel, regimes: target_weights(mean_reversion_holdings(panel, reversion), sectors, risk),
-        ),
-    ]
+    descriptions = {
+        "trend": "enter: price > SMA200, SMA50 > SMA200, MACD > signal; exit when either SMA condition fails; "
+                 "ignores the regime",
+        "mean_reversion": f"price > SMA200, RSI < {reversion.rsi_entry:g}, MACD histogram rising; "
+                          f"exit RSI > {reversion.rsi_exit:g} or after {reversion.max_holding_days} sessions",
+    }
     for position, bear_exposure in enumerate(settings.strategies.regime_switch.bear_exposures):
         name = "regime_switch" if position == 0 else bear_variant_name(bear_exposure)
-        strategies.append(
-            Strategy(
-                name,
-                f"BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x {bear_exposure:g}",
-                lambda panel, regimes, b=bear_exposure: regime_switch_weights(panel, regimes, settings, b),
-            )
-        )
-    return strategies
+        descriptions[name] = f"BULL -> trend, SIDEWAYS -> mean reversion, BEAR -> trend x {bear_exposure:g}"
+    return [
+        Strategy(name, description,
+                 lambda panel, regimes, n=name: parts_weights(strategy_parts(n, panel, regimes, settings), settings))
+        for name, description in descriptions.items()
+    ]

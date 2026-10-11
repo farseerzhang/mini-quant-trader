@@ -1064,6 +1064,7 @@ Phase 4 implements the rule-based baselines below (`quant/strategies/`). Each is
 1. Each held stock gets `1 / (number held)`, capped at `risk.max_position_size`.
 2. A sector whose total exceeds `risk.max_sector_weight` is scaled down proportionally to the cap. The excess stays in cash; it is not moved to other sectors.
 3. The result is multiplied by the regime exposure (regime_switch only).
+4. If the invested total is above `risk.max_portfolio_exposure`, every weight is scaled down proportionally (section 19.1; the default 1.0 never binds). The backtest and the signal engine share this code, so they stay identical.
 
 Whatever does not add up to 1 is cash. Sectors come from `market.symbols`, which maps GICS sectors to stocks (today's classification, not point-in-time).
 
