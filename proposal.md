@@ -781,6 +781,27 @@ The differences between candidates are far smaller than the year-to-year spread,
 
 Trial log so far: 12 search trials, plus 6 earlier calibration comparisons (none / isotonic / sigmoid for each model type).
 
+### 15.4.2 Gate evaluation (`quant/models/gates.py`)
+
+Each key of `retrain.gates.predictor` is evaluated in config order and reported as PASS, FAIL, DISABLED (`false` in the config) or NOT EVALUATED (the holdout gate without `--evaluate-holdout`). A key without an evaluator, a misspelled key or a value of the wrong type is rejected when the settings load. A candidate passes when no gate FAILs. The leak gate re-checks the actual run: the training -> validation purge in every fold, the development -> holdout purge, the fit -> calibration purge, and that every prediction comes from the fold whose validation window contains it.
+
+How each gate is measured (walk-forward ML backtest, after costs, against `regime_switch`): `beats_baseline_after_costs` = higher overall Sharpe; `min_fraction_of_folds_beating_baseline` = share of validation years with a higher Sharpe; `max_drawdown_not_worse_than_baseline` = drawdown no deeper; `max_calibration_error` = mean over folds of the equal-count calibration error; `holdout_not_worse_than_baseline` = holdout Sharpe no lower.
+
+First evaluation (2026-10-11, gates as configured before any result):
+
+```text
+                                         ml_logistic_regression          ml_random_forest
+leak_tests_pass                          PASS (4/4)                      PASS (4/4)
+beats_baseline_after_costs               PASS (0.92 vs 0.86)             FAIL (0.77 vs 0.86)
+min_fraction_of_folds_beating_baseline   FAIL (6/11 = 55% < 60%)         FAIL (3/11 = 27%)
+max_drawdown_not_worse_than_baseline     FAIL (-24.5% vs -21.3%)         FAIL (-26.7% vs -21.3%)
+max_calibration_error                    PASS (0.022)                    PASS (0.022)
+holdout_not_worse_than_baseline          NOT EVALUATED                   NOT EVALUATED
+verdict                                  FAILED                          FAILED
+```
+
+Under the research-validity gate (section 32), the rule-based `regime_switch` remains what ships.
+
 ## 15.5 Final refit
 
 After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).

@@ -142,6 +142,8 @@ class SettingsTests(unittest.TestCase):
             "search space for an unknown model": lambda d: d["retrain"]["search"]["space"].update(svm={"C": [1]}),
             "empty candidate list": lambda d: d["retrain"]["search"]["space"]["random_forest"].update(max_depth=[]),
             "missing sampling stride": lambda d: d["retrain"].pop("sample_every_sessions"),
+            "misspelled gate": lambda d: d["retrain"]["gates"]["predictor"].update(max_calibraton_error=0.05),
+            "gate with the wrong type": lambda d: d["retrain"]["gates"]["predictor"].update(leak_tests_pass="yes"),
             "bad date": set_value("market", "initial_history", "not-a-date"),
         }
         for name, mutate in bad.items():

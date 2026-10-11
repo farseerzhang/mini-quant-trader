@@ -196,11 +196,16 @@ class RegimeSwitchSettings:
 @dataclass(frozen=True)
 class MLSelectSettings:
     top_n: int
+    # A held stock is kept while it ranks within keep_rank; keep_rank = top_n means
+    # the selection is simply the current top_n.
+    keep_rank: int
     rebalance_every_sessions: int
 
     def __post_init__(self) -> None:
         if self.top_n < 1:
             raise ConfigError("strategies.ml_select.top_n must be >= 1")
+        if self.keep_rank < self.top_n:
+            raise ConfigError("strategies.ml_select.keep_rank must be >= top_n")
         if self.rebalance_every_sessions < 1:
             raise ConfigError("strategies.ml_select.rebalance_every_sessions must be >= 1")
 
@@ -306,6 +311,35 @@ class SearchSettings:
             raise ConfigError(f"retrain.search.space: unknown model type(s) {', '.join(unknown)}")
 
 
+# Pass criteria for the PREDICTOR role (section 15.4); quant/models/gates.py evaluates each.
+# true / a number = checked; false = disabled.
+PREDICTOR_GATES = {
+    "leak_tests_pass": bool,
+    "beats_baseline_after_costs": bool,
+    "min_fraction_of_folds_beating_baseline": float,
+    "max_drawdown_not_worse_than_baseline": bool,
+    "max_calibration_error": float,
+    "holdout_not_worse_than_baseline": bool,
+}
+
+
+def _check_predictor_gates(gates: Any) -> None:
+    if not isinstance(gates, Mapping) or not isinstance(gates.get("predictor"), Mapping):
+        raise ConfigError("retrain.gates.predictor must be a mapping of gate -> value")
+    predictor = gates["predictor"]
+    unknown = sorted(set(predictor) - set(PREDICTOR_GATES))
+    if unknown:
+        raise ConfigError(
+            f"retrain.gates.predictor: unknown gate(s) {', '.join(unknown)}; known: {', '.join(PREDICTOR_GATES)}"
+        )
+    for name, value in predictor.items():
+        kind = PREDICTOR_GATES[name]
+        if kind is bool and not isinstance(value, bool):
+            raise ConfigError(f"retrain.gates.predictor.{name} must be true or false")
+        if kind is float and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ConfigError(f"retrain.gates.predictor.{name} must be a number")
+
+
 @dataclass(frozen=True)
 class RetrainSettings:
     validation: ValidationSettings
@@ -319,6 +353,7 @@ class RetrainSettings:
     def __post_init__(self) -> None:
         if self.sample_every_sessions < 1:
             raise ConfigError("retrain.sample_every_sessions must be >= 1")
+        _check_predictor_gates(self.gates)
 
 
 BENCHMARKS = ("SPY", "equal_weight")
