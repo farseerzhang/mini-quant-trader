@@ -200,6 +200,30 @@ positions = Table(
 )
 
 
+# 6.9 signals — BUY / HOLD / REDUCE / EXIT at the close of T, with the reason (section 18.1).
+# A re-run of the same session, strategy and version replaces that day's rows.
+signals = Table(
+    "signals",
+    metadata,
+    Column("symbol", String, nullable=False),
+    Column("date", Date, nullable=False),  # session T the signal is computed at; fills at the open of T+1
+    Column("regime", String),
+    Column("strategy", String, nullable=False),
+    Column("target_weight", Float, nullable=False),
+    Column("current_weight", Float, nullable=False),
+    Column("signal", String, nullable=False),  # BUY | HOLD | REDUCE | EXIT
+    Column("score", Float),  # empty while there is no ACTIVE predictor
+    Column("confidence", Float),
+    Column("model_version", String, nullable=False),  # rule_based-v<strategies.version>
+    Column("suggested_shares", Float, nullable=False),  # estimate at the close of T; negative = sell
+    Column("close", Float),  # as-traded close of T used for the estimate
+    Column("reason", Text, nullable=False),
+    Column("created_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("symbol", "date", "strategy", "model_version", name="pk_signals"),
+    CheckConstraint("signal IN ('BUY', 'HOLD', 'REDUCE', 'EXIT')", name="ck_signals_signal"),
+)
+
+
 # 6.11 backtest_runs — one row per portfolio and period of one `quant backtest` invocation (a batch).
 # HOLDOUT rows exist only when the holdout was explicitly evaluated (section 15.2).
 backtest_runs = Table(

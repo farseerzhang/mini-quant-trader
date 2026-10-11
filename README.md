@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 7 - HMM regime** (Done: no ML predictor and no HMM regime passes its gates, so the rule-based system ships; next: Phase 8 - signal engine and risk)
+**Phase 8 - Signal engine and risk** (Done: `run-daily` ends with BUY / HOLD / REDUCE / EXIT signals for your holdings, each with a written reason; next: Phase 9 - CLI operations and dashboard). No ML predictor and no HMM regime passed its gates (Phases 5-7), so the signals come from the rule-based `regime_switch` strategy with the rule-based regime.
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -34,6 +34,7 @@ The project is currently in early development. Implemented features include:
 - VectorBT backtests against SPY, equal weight and a random baseline, saved per run
 - A filtered, walk-forward HMM market regime as a REGIME candidate (`quant retrain --role regime`)
 - Logistic Regression, Random Forest and XGBoost predictors with purged walk-forward validation, calibration, pre-defined gates and a model registry (`quant retrain`)
+- A signal engine: your positions file, the strategy's target weights at the latest close (identical to the backtest's), a risk layer, BUY / HOLD / REDUCE / EXIT with a hold band, suggested shares and a written reason per signal, stored in `signals` (`quant generate-signals`)
 
 ## Installation
 
@@ -77,7 +78,60 @@ Run every stage in one step:
 python -m quant run-daily
 ```
 
-This runs `update-market-data`, `calculate-features` and `calculate-regime` in that order (they are described below). A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features and the regime are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`.
+This runs `update-market-data`, `calculate-features`, `calculate-regime` and `generate-signals` in that order (they are described below). A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features, the regime and the signals are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`, and `--reasons` like `generate-signals`.
+
+A typical day, after the US close:
+
+1. Update `data/positions.csv` if you traded since the last run (see below).
+2. Run `python -m quant run-daily --reasons`.
+3. Read the signals. They are computed at the last close and meant for the next open; the suggested shares are estimates at that close.
+
+#### Your Positions
+
+The signals compare the strategy's target weights with what you hold. List your holdings in `data/positions.csv` (the path is `positions.path`; `data/` is git-ignored, so the file stays private):
+
+```text
+symbol,quantity,cost_basis
+AAPL,10,175.20
+MSFT,5,
+CASH,25000,
+```
+
+- One row per stock you hold: the ticker as Yahoo writes it (e.g. `BRK-B`), the number of shares (fractions allowed) and, optionally, the cost per share (stored only).
+- Exactly one `CASH` row; its quantity is your cash amount (`CASH,0,` if you hold none).
+- Blank lines and lines starting with `#` are ignored; a quantity of 0 means not held.
+- Errors stop the run with the file and line (a duplicate symbol, a negative quantity, a value that is not a number, no `CASH` row).
+- A stock outside `market.symbols` is reported as not managed: no signal, and it is left out of the portfolio value the weights refer to.
+- Without the file the portfolio is treated as all cash at `backtest.initial_cash`, so you still see what the strategy would buy.
+
+Holdings are valued at the as-traded close of the signal session. Each run stores the file as that session's snapshot in the `positions` table.
+
+#### Generate Signals
+
+After `calculate-regime` (or as the last stage of `run-daily`):
+
+```bash
+python -m quant generate-signals
+python -m quant generate-signals --reasons
+```
+
+For the latest session T this runs `signals.strategy` (`regime_switch`) over the stored history, takes its target weights at T (the same weights the backtest uses), applies the risk layer (`risk`) and compares them with your positions:
+
+| Current | Target | Signal |
+|---|---|---|
+| 0 | above 0 | BUY (new position) |
+| above 0 | 0 | EXIT (sell all) |
+| above 0 | at least `signals.hold_band` (2 points) higher | BUY (increase) |
+| above 0 | at least 2 points lower | REDUCE |
+| above 0 | within 2 points | HOLD |
+
+Suggested shares round down to whole shares; a change below one share is flagged. A held stock without data at T is kept (HOLD) with a warning. The printout shows the regime, the portfolio value, the target invested share, a table (signal, target, current, shares, close, value), the counts and any warnings; `--reasons` adds one line per stock, e.g.:
+
+```text
+AAPL: Bull regime (rule_based-v1): trend rule. Trend: price +16% vs SMA200, SMA50 +11% vs SMA200; in the strategy for 124 sessions. Equal weight 1/29. Sector cap 30% binds (information technology). Volatility 16% within limit. ATR stop 323.15 (2 x ATR below 336.64). Target 2.7% vs current 19.8% -> REDUCE (sell 8 shares).
+```
+
+Reasons are stored either way. Signals go to the `signals` table (one row per stock with a signal; re-running a session replaces that session's rows), and each stage is logged in `pipeline_runs`. Without an ACTIVE predictor the prediction stages are skipped and logged. The rules are in sections 18.1 and 19.1 of `proposal.md`. This is research output, not advice.
 
 #### Update the Configured Symbol Pool
 
@@ -146,7 +200,7 @@ Every command accepts `--db PATH` to use another SQLite file instead of `databas
 
 ### Configuration
 
-All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, calendar, initial history), features, regime, model, retrain, backtest and risk. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Every section and key is required, and unknown or invalid settings are rejected at startup; there are no defaults in code, so the file is the only place a value is defined. `market.symbols` maps each GICS sector to its stocks (e.g. `energy: [XOM, CVX, SLB]`); sectors feed the sector cap `risk.max_sector_weight`, and `update-market-data` writes them into the `symbols` table. The `strategies` and `risk` sections drive the rule-based strategies (section 17 of `proposal.md`); `model`, `retrain` and `backtest` are loaded but not used until those phases are built.
+All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, calendar, initial history), features, regime, strategies, model, retrain, backtest, risk, positions and signals. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Every section and key is required, and unknown or invalid settings are rejected at startup; there are no defaults in code, so the file is the only place a value is defined. `market.symbols` maps each GICS sector to its stocks (e.g. `energy: [XOM, CVX, SLB]`); sectors feed the sector cap `risk.max_sector_weight`, and `update-market-data` writes them into the `symbols` table. The `strategies` and `risk` sections drive the rule-based strategies (section 17 of `proposal.md`) and the signal engine: `risk.max_position_size`, `risk.max_sector_weight` and `risk.max_portfolio_exposure` change weights (in the backtest too), while `risk.atr_stop_multiple` and `risk.high_volatility` only add an ATR stop price and a volatility flag to the reasons. `signals.strategy` picks the rule-based strategy that drives the signals and `signals.hold_band` the HOLD band; a band different from `backtest.min_trade_weight` gives a warning, because live signals would then not trade like the backtest.
 
 `features.sma` must match the `price_vs_sma<N>` columns of the `features` table (checked when features are calculated), because those columns are named after the windows. Other indicator parameters (MACD 12/26/9, return and volatility windows) are part of the feature definition, so changing them means bumping `features.version`.
 
@@ -160,7 +214,20 @@ The application uses SQLite with WAL mode for local data storage. The database f
 
 ```
 mini-quant-trader/
-
+  config/settings.yaml   all settings (proposal section 27)
+  data/                  quant.db and positions.csv (git-ignored)
+  quant/
+    cli.py               the commands
+    data/                provider, calendar, ingestion, quality checks
+    features/            technical and market features
+    regime/              rule-based regime, HMM candidate, regime report and chart
+    strategies/          rule-based strategies and sizing
+    backtest/            VectorBT backtests, metrics, reports
+    models/              ML predictors, walk-forward validation, gates, registry
+    signals/             positions, target weights, BUY/HOLD/REDUCE/EXIT, reasons, signal stages
+    persistence/         tables and queries (SQLAlchemy Core)
+  models/, reports/      written by `retrain` (git-ignored)
+  tests/                 unittest suite
 ```
 
 ## Architecture Principles
@@ -176,21 +243,17 @@ mini-quant-trader/
 See [quant_app_developer_proposal_final.md](proposal.md) for the complete design specification.
 
 Future phases will include:
-- Feature engineering (SMA, RSI, MACD, ATR, momentum, volatility)
-- Market regime detection (rule-based and HMM)
-- ML models (Logistic Regression, Random Forest, XGBoost)
-- Strategy engine and risk management
-- Signal generation (BUY/HOLD/REDUCE/EXIT)
-- Backtesting with VectorBT
-- Streamlit dashboard
-- Manual retriggering and model promotion
+- `quant promote` and `quant status` (Phase 9)
+- Streamlit dashboard (Phase 9)
+- Forward testing: logging live signals and scoring them against what happened (Phase 10)
+- Drawdown protection, which needs the live portfolio's value history (Phase 10)
 
 ## Development
 
 ### Running Tests
 
 ```bash
-pytest tests/
+python -m unittest discover -s tests
 ```
 
 ### Code Style

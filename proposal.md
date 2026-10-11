@@ -293,7 +293,7 @@ Required to turn target weights into BUY / HOLD / REDUCE. Initially populated by
 ```text
 symbol, date, regime, strategy, target_weight, current_weight,
 signal (BUY | HOLD | REDUCE | EXIT), score, confidence,
-model_version, reason, created_at
+model_version, suggested_shares, close, reason, created_at
 PRIMARY KEY (symbol, date, strategy, model_version)
 ```
 
@@ -306,7 +306,7 @@ target_weight ~= current_weight -> HOLD
 target_weight = 0 and held      -> EXIT
 ```
 
-`reason` is human-readable and lists the main contributing factors.
+`reason` is human-readable and lists the main contributing factors. The exact mapping (with the hold band) is in section 18.1. `suggested_shares` (negative = sell) is an estimate at the as-traded `close` of T. `quant generate-signals` (and `run-daily`) store one session's signals per strategy and version, replacing any earlier run of that session (`quant/signals/pipeline.py`); `score` and `confidence` stay empty until a predictor is ACTIVE.
 
 ## 6.10 model_versions
 
@@ -1295,7 +1295,9 @@ There is no APScheduler and no background process.
 python -m quant update-market-data     # steps 1-3 only
 python -m quant calculate-features     # step 5 only
 python -m quant calculate-regime       # step 6 only (rule-based regime)
-python -m quant run-daily              # full daily pipeline (implemented so far: steps 1-6)
+python -m quant generate-signals [--reasons]
+                                       # steps 7-12: BUY/HOLD/REDUCE/EXIT for the latest session vs positions.csv
+python -m quant run-daily [--reasons]  # full daily pipeline (steps 1-13)
 python -m quant retrain --role predictor|regime [--model logistic_regression|random_forest|xgboost] [--evaluate-holdout]
                                        # MANUAL; validates, then registers a CANDIDATE
                                        # (implemented: --role predictor with logistic_regression / random_forest / xgboost,
@@ -1584,6 +1586,8 @@ Filtered, walk-forward HMM; state mapping; compare to the rule-based regime. Ado
 ## Phase 8 — Integrated signal engine + risk
 
 Combine regime, indicators, ML probability and risk into target weights; add `positions`; derive BUY/HOLD/REDUCE/EXIT with reasons. Rules pre-registered in sections 18.1 and 19.1.
+
+Done (2026-10-11): `quant/signals/` (positions, targets, engine, reasons, pipeline), the `positions` and `signals` tables, `quant generate-signals` and `run-daily` stages 7-12. The live target at T equals the backtest's weight at T for every rule-based strategy, and a database that ends at T gives exactly the signals of the full history cut at T (`tests/test_signal_leaks.py`). The ML probability input waits for an ACTIVE predictor; none passed its gates.
 
 ## Phase 9 — CLI operations and dashboard
 

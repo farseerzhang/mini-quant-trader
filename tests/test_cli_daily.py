@@ -36,7 +36,7 @@ class RisingMarketProvider:
 
 
 class RunDailyStageOrderTests(unittest.TestCase):
-    def run_daily(self, update="ok", features=0, regime=0):
+    def run_daily(self, update="ok", features=0, regime=0, signals=0):
         calls = []
 
         def stage(name, result):
@@ -47,14 +47,16 @@ class RunDailyStageOrderTests(unittest.TestCase):
 
         with patch.object(cli, "_update_market_data", stage("update", update)), patch.object(
             cli, "_run_features", stage("features", features)
-        ), patch.object(cli, "_run_regime", stage("regime", regime)), redirect_stdout(
+        ), patch.object(cli, "_run_regime", stage("regime", regime)), patch.object(
+            cli, "_run_signals", stage("signals", signals)
+        ), redirect_stdout(
             StringIO()
         ), redirect_stderr(StringIO()):
             code = cli.main(["--config", str(PROJECT_SETTINGS), "run-daily"])
         return code, calls
 
     def test_runs_every_stage_in_order(self):
-        self.assertEqual(self.run_daily(), (0, ["update", "features", "regime"]))
+        self.assertEqual(self.run_daily(), (0, ["update", "features", "regime", "signals"]))
 
     def test_a_failed_market_data_update_stops_the_run(self):
         self.assertEqual(self.run_daily(update="failed"), (1, ["update"]))
@@ -63,15 +65,23 @@ class RunDailyStageOrderTests(unittest.TestCase):
         self.assertEqual(self.run_daily(features=1), (1, ["update", "features"]))
 
     def test_failed_symbols_do_not_stop_the_run_but_are_reported(self):
-        self.assertEqual(self.run_daily(update="partial"), (1, ["update", "features", "regime"]))
+        self.assertEqual(self.run_daily(update="partial"), (1, ["update", "features", "regime", "signals"]))
+
+    def test_a_failed_regime_stage_stops_before_the_signals(self):
+        self.assertEqual(self.run_daily(regime=1), (1, ["update", "features", "regime"]))
+
+    def test_a_failed_signal_stage_fails_the_run(self):
+        self.assertEqual(self.run_daily(signals=1), (1, ["update", "features", "regime", "signals"]))
 
 
 class RunDailyEndToEndTests(unittest.TestCase):
-    def test_one_command_goes_from_prices_to_a_stored_regime(self):
+    def test_one_command_goes_from_prices_to_stored_signals(self):
         with tempfile.TemporaryDirectory() as directory:
             document = yaml.safe_load(PROJECT_SETTINGS.read_text(encoding="utf-8"))
             document["database"]["url"] = f"sqlite:///{Path(directory).as_posix()}/daily.db"
             document["market"]["symbols"] = {"information_technology": ["AAPL"]}
+            document["positions"]["path"] = f"{Path(directory).as_posix()}/positions.csv"
+            (Path(directory) / "positions.csv").write_text("symbol,quantity\nCASH,1000\n", encoding="utf-8")
             config = Path(directory) / "settings.yaml"
             config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
@@ -85,9 +95,12 @@ class RunDailyEndToEndTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         text = output.getvalue()
-        for stage in ("[1/3] update-market-data", "[2/3] calculate-features", "[3/3] calculate-regime"):
+        for stage in ("[1/4] update-market-data", "[2/4] calculate-features", "[3/4] calculate-regime",
+                      "[4/4] generate-signals"):
             self.assertIn(stage, text)
         self.assertIn("Latest: BULL (score +5)", text)
+        self.assertIn("BULL regime (rule_based-v1)", text)
+        self.assertIn("BUY 1", text)  # all cash, AAPL in an uptrend
         self.assertIn("run-daily finished", text)
 
 

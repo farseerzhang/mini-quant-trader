@@ -407,3 +407,32 @@ def load_raw_closes(engine: Engine, symbols: Sequence[str], since: date | None =
     wide = frame.pivot(index="date", columns="symbol", values="close")
     wide.index = pd.DatetimeIndex(wide.index)
     return wide.sort_index().astype(float)
+
+
+def replace_signals(
+    engine: Engine, session: date, strategy: str, model_version: str, rows: Sequence[Mapping[str, Any]]
+) -> int:
+    """Store one session's signals for a strategy and version, replacing any earlier run of it
+    (a stock that no longer has a signal must not keep yesterday's row)."""
+    now = _now()
+    payload = [
+        {**row, "date": session, "strategy": strategy, "model_version": model_version, "created_at": now}
+        for row in rows
+    ]
+    signals = tables.signals
+    with engine.begin() as conn:
+        conn.execute(signals.delete().where(
+            signals.c.date == session, signals.c.strategy == strategy, signals.c.model_version == model_version
+        ))
+        if payload:
+            conn.execute(signals.insert(), payload)
+    return len(payload)
+
+
+def load_signals(engine: Engine, session: date, strategy: str | None = None) -> pd.DataFrame:
+    stmt = select(tables.signals).where(tables.signals.c.date == session).order_by(tables.signals.c.symbol)
+    if strategy is not None:
+        stmt = stmt.where(tables.signals.c.strategy == strategy)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return pd.DataFrame([dict(row) for row in rows], columns=[c.name for c in tables.signals.columns])

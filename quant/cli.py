@@ -2,6 +2,8 @@ import argparse
 import sys
 from datetime import date
 
+import pandas as pd
+
 from quant.backtest.engine import run_backtests
 from quant.backtest.persist import save_backtest
 from quant.backtest.report import development_report, holdout_report, metrics_table
@@ -15,6 +17,8 @@ from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
 from quant.regime.pipeline import calculate_and_store_regimes
 from quant.regime.retrain import run_regime_retrain
+from quant.signals.pipeline import generate_and_store_signals
+from quant.signals.positions import PositionsError
 from quant.strategies import build_strategies
 
 
@@ -91,15 +95,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     retrain_command.add_argument("--db", help=db_help)
 
+    signals_command = commands.add_parser(
+        "generate-signals",
+        help="BUY / HOLD / REDUCE / EXIT for the latest session from the stored regime and features and "
+        "the positions file, with reasons; saved in the signals table",
+    )
+    signals_command.add_argument("--reasons", action="store_true", help="also print the reason of every signal")
+    signals_command.add_argument("--db", help=db_help)
+
     daily_command = commands.add_parser(
         "run-daily",
-        help="update market data, then calculate features and the regime (stops at the first failed stage)",
+        help="update market data, calculate features and the regime, then generate signals "
+        "(stops at the first failed stage)",
     )
     daily_command.add_argument(
         "--initial-date",
         type=_iso_date,
         help="start date for symbols not yet stored (overrides market.initial_history)",
     )
+    daily_command.add_argument("--reasons", action="store_true", help="also print the reason of every signal")
     daily_command.add_argument("--db", help=db_help)
     return parser
 
@@ -357,8 +371,57 @@ def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _print_signals(run, show_reasons: bool) -> None:
+    signals = run.signals
+    targets = signals.targets
+    print(
+        f"Signals for {signals.session.date()} (fill at the next open): {targets.strategy} ({run.model_version}), "
+        f"{targets.regime} regime ({targets.regime_source}), exposure {targets.regime_exposure:.0%}"
+    )
+    print(
+        f"Portfolio {signals.portfolio_value:,.2f}: target {targets.invested:.1%} invested, {targets.cash:.1%} cash; "
+        f"cash after the suggested trades about {signals.estimated_cash_after:,.2f} (before costs)"
+    )
+    rows = signals.rows
+    if rows.empty:
+        print("No signals: nothing held and nothing wanted.")
+    else:
+        table = pd.DataFrame({
+            "signal": rows["signal"],
+            "target": rows["target_weight"].map(lambda v: f"{v:.1%}"),
+            "current": rows["current_weight"].map(lambda v: f"{v:.1%}"),
+            "shares": rows["suggested_shares"].map(lambda v: f"{v:+g}" if v else "0"),
+            "close": rows["close"].map(lambda v: f"{v:,.2f}"),
+            "value": rows["trade_value"].map(lambda v: f"{v:+,.0f}" if v else "0"),
+        })
+        print(table.to_string())
+    print("  " + ", ".join(f"{name} {count}" for name, count in signals.counts.items()))
+    if show_reasons:
+        print()
+        for symbol, row in rows.iterrows():
+            print(f"{symbol}: {row['reason']}")
+    for warning in signals.warnings:
+        print(f"warning: {warning}")
+    stored = f"{run.positions_stored} position rows" if run.positions_stored else "no positions snapshot"
+    print(f"Saved {run.signals_stored} signals and {stored} for {signals.session.date()}. "
+          "Research output, not advice.")
+
+
+def _run_signals(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
+    try:
+        run = generate_and_store_signals(engine, settings)
+    except (PositionsError, ValueError, NotImplementedError) as exc:
+        print(f"Signal generation failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    _print_signals(run, args.reasons)
+    return 0
+
+
 def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
-    """Run the pipeline stages in order (proposal section 23, steps 1-6 so far).
+    """Run the pipeline stages in order (proposal section 23, steps 1-13).
 
     Every stage persists its own results and pipeline_runs row, so a failure
     leaves earlier stages intact and a rerun resumes safely. A stage that fails
@@ -366,7 +429,7 @@ def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
     fail to download do not stop it: features and the regime are calculated
     from the data that is stored, and the exit code still reports the failure.
     """
-    print("[1/3] update-market-data")
+    print("[1/4] update-market-data")
     market_data = _update_market_data(args, settings)
     if market_data == _FAILED:
         print("run-daily stopped: market data update failed", file=sys.stderr)
@@ -374,8 +437,9 @@ def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
     for step, name, run in (
         (2, "calculate-features", _run_features),
         (3, "calculate-regime", _run_regime),
+        (4, "generate-signals", _run_signals),
     ):
-        print(f"[{step}/3] {name}")
+        print(f"[{step}/4] {name}")
         if run(args, settings) != 0:
             print(f"run-daily stopped: {name} failed", file=sys.stderr)
             return 1
@@ -397,6 +461,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_features(args, settings)
         if args.command == "calculate-regime":
             return _run_regime(args, settings)
+        if args.command == "generate-signals":
+            return _run_signals(args, settings)
         if args.command == "run-daily":
             return _run_daily(args, settings)
         if args.command == "backtest":
