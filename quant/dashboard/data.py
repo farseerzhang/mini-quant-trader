@@ -216,3 +216,43 @@ def backtest_equity(engine: Engine, batch_id: str, period: str = "DEVELOPMENT") 
     frame["drawdown"] = frame["value"] / peak - 1
     frame["value"] = frame["value"] / first
     return frame[["date", "strategy", "value", "drawdown"]].reset_index(drop=True)
+
+
+def forward_runs(engine: Engine) -> pd.DataFrame:
+    """Every forward-test run, newest first (Phase 10)."""
+    return queries.list_forward_runs(engine).sort_values("run_id", ascending=False).reset_index(drop=True)
+
+
+def forward_report(engine: Engine, settings: Settings, run_id: int | None = None):
+    """The forward report of a run (default: the running one): see quant/forward/report.py."""
+    from quant.forward.report import build_report
+
+    return build_report(engine, settings, run_id)
+
+
+def growth_and_drawdown(values: pd.DataFrame) -> pd.DataFrame:
+    """Long frame: date, portfolio, growth (value / first value), drawdown."""
+    if values.empty:
+        return pd.DataFrame(columns=["date", "portfolio", "growth", "drawdown"])
+    growth = values / values.iloc[0]
+    drawdown = values / values.cummax() - 1
+    frame = growth.rename_axis("date").reset_index().melt(id_vars="date", var_name="portfolio", value_name="growth")
+    dd = drawdown.rename_axis("date").reset_index().melt(id_vars="date", var_name="portfolio", value_name="drawdown")
+    return frame.merge(dd, on=["date", "portfolio"]).dropna(subset=["growth"])
+
+
+def latest_frozen(engine: Engine, run_id: int | None = None) -> tuple[pd.Timestamp | None, pd.DataFrame, pd.DataFrame]:
+    """The latest frozen session of a run: one row per portfolio, and the held targets."""
+    sessions = queries.frozen_sessions(engine, run_id=run_id)
+    if sessions.empty:
+        return None, sessions, pd.DataFrame(columns=["portfolio", "symbol", "target_weight", "close", "score"])
+    last = sessions["session"].max()
+    headers = sessions[sessions["session"] == last].reset_index(drop=True)
+    ft = tables.forward_targets
+    run = queries.forward_run(engine, run_id)["run_id"]
+    with engine.connect() as conn:
+        rows = conn.execute(select(ft.c.portfolio, ft.c.symbol, ft.c.target_weight, ft.c.close, ft.c.score)
+                            .where(ft.c.run_id == run, ft.c.session == last)
+                            .order_by(ft.c.portfolio, ft.c.target_weight.desc(), ft.c.symbol)).mappings().all()
+    return pd.Timestamp(last), headers, pd.DataFrame([dict(r) for r in rows],
+                                                     columns=["portfolio", "symbol", "target_weight", "close", "score"])

@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 9 - CLI operations and dashboard** (Done: `quant status`, `quant promote`, logging, ACTIVE models in daily use, and a read-only Streamlit dashboard; next: Phase 10 - forward testing). No ML predictor and no HMM regime passed its gates (Phases 5-7), so the signals come from the rule-based `regime_switch` strategy with the rule-based regime.
+**Phase 10 - Forward testing** (Built: every evening the live strategy and two shadow strategies are frozen, paper portfolios trade them, your real account is replayed from a trade log, and `quant forward-report` and the dashboard score them all; the first look at the results is after 6 months). No ML predictor and no HMM regime passed its gates (Phases 5-7), so the signals come from the rule-based `regime_switch` strategy with the rule-based regime.
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -78,11 +78,11 @@ Run every stage in one step:
 python -m quant run-daily
 ```
 
-This runs `update-market-data`, `calculate-features`, `calculate-regime` and `generate-signals` in that order (they are described below). A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features, the regime and the signals are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`, and `--reasons` like `generate-signals`.
+This runs `update-market-data`, `calculate-features`, `calculate-regime`, `generate-signals` and `forward-test` in that order (they are described below). A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features, the regime and the signals are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`, and `--reasons` like `generate-signals`.
 
-A typical day, after the US close:
+A typical day, after the US close (and before the next open, so the forward test can freeze the day):
 
-1. Update `data/positions.csv` if you traded since the last run (see below).
+1. Add any fills since the last run to `data/trades.csv` (see Forward Testing; before the forward test starts, update `data/positions.csv` instead).
 2. Run `python -m quant run-daily --reasons`.
 3. Read the signals. They are computed at the last close and meant for the next open; the suggested shares are estimates at that close.
 
@@ -105,6 +105,8 @@ CASH,25000,
 - Without the file the portfolio is treated as all cash at `backtest.initial_cash`, so you still see what the strategy would buy.
 
 Holdings are valued at the as-traded close of the signal session. Each run stores the file as that session's snapshot in the `positions` table.
+
+Once the forward test has started, this file is **read only once, as its start**: your holdings then come from the start plus `data/trades.csv`, and the signals use those. Do not edit the file again (`status` warns if you do).
 
 #### Generate Signals
 
@@ -215,7 +217,59 @@ With an ACTIVE HMM, `calculate-regime` also stores its filtered regime and the s
 streamlit run dashboard/app.py
 ```
 
-A read-only view of the database in the browser (it never writes or triggers anything; the CLI does). Pages: **Status** (what `quant status` shows), **Market** (regime, SPY / QQQ / VIX, SPY with the regime ribbon), **Signals** (today's signals with reasons, and the positions snapshot), **Stock detail** (price with SMA50 / SMA200, RSI, MACD, volume), **Models** (candidates, gates, validation reports) and **Backtest** (metrics, equity and drawdown per saved batch). Refresh the page after `run-daily`. Another settings file or database: `streamlit run dashboard/app.py -- --config path/to/settings.yaml --db path/to/quant.db`.
+A read-only view of the database in the browser (it never writes or triggers anything; the CLI does). Pages: **Status** (what `quant status` shows), **Market** (regime, SPY / QQQ / VIX, SPY with the regime ribbon), **Signals** (today's signals with reasons, and the positions snapshot), **Forward test** (each run: scores, growth and drawdown curves, followed share, execution costs, the latest frozen targets), **Stock detail** (price with SMA50 / SMA200, RSI, MACD, volume), **Models** (candidates, gates, validation reports) and **Backtest** (metrics, equity and drawdown per saved batch). Refresh the page after `run-daily`. Another settings file or database: `streamlit run dashboard/app.py -- --config path/to/settings.yaml --db path/to/quant.db`.
+
+#### Forward Testing
+
+The only clean evidence left is what happens from now on. Every evening the system freezes what each strategy wanted at that close, and later scores it against what actually happened. The rules were fixed before any forward data (Phase 10 in section 29 of `proposal.md`).
+
+| Portfolio | What it is |
+|---|---|
+| `live` | `regime_switch` with the regime in use: the signals you see |
+| `shadow_hmm` | `regime_switch` with the retired HMM regime (never traded) |
+| `shadow_lr` | `ml_select` with the logistic regression candidate (never traded) |
+| `real` | your account: `positions.csv` at the start plus `trades.csv` |
+| `SPY` | buy-and-hold from the start |
+
+Shadows are set in `forward_test.shadows`. Paper portfolios start with your account's value in cash and trade their frozen targets at the next open with the backtest's costs.
+
+**Start, once,** on an evening after the close and before the next open, with your real account in `data/positions.csv`:
+
+```bash
+python -m quant forward-test --start
+```
+
+It prints the start date and value (check it against your account). From then on `run-daily` freezes every evening. A session is frozen only before the next market open (a whole evening and night, or a weekend); a session you miss is counted as missed and never added later. Paper portfolios keep their last targets over a missed day.
+
+**Record every fill** in `data/trades.csv` (`positions.trades_path`), one line per fill:
+
+```text
+date,symbol,side,quantity,price,fees,amount
+2026-10-13,BRK-B,SELL,9,514.80,0.50,
+2026-10-13,AMZN,BUY,2,263.10,,
+2026-11-02,AAPL,DIVIDEND,,,,2.60
+```
+
+- `BUY` / `SELL`: shares and the fill price per share; `fees` (total) optional.
+- `DIVIDEND`: `amount` of cash received; it counts as return. Deposits and withdrawals are not tracked: avoid them during a run, or they show up as return.
+- Cash follows from the trades. A forgotten trade can be added later with its real date; frozen targets never change.
+- Refused with the line number: a trade on or before the start, after the latest stored session, or selling more than you hold. Negative cash is a warning.
+
+**Read the results:**
+
+```bash
+python -m quant forward-report
+```
+
+Return, volatility, Sharpe, max drawdown and missed sessions per portfolio; the **followed share** (how much of the live targets you held, compared with the previous evening's target) and your **execution cost** against the open (next to the backtest's 6 bp). It is read-only. Before about 126 forward sessions (6 months) the numbers are mostly noise, and the pre-registration rules out any decision on them before then; a verdict comes at 12 months.
+
+**Restart** only for a wrong start, a changed setup or a long gap, never because results look bad:
+
+```bash
+python -m quant forward-test --end --reason "started with the wrong positions"
+```
+
+The run is kept, with its end date and reason, and the report lists it (`quant forward-report --run 1`). Then put the account in `positions.csv` and `--start` again after a close; only trades after the new start count. `quant status` shows the run, frozen and missed sessions, and warns when tonight's session is not frozen yet or the trade log has an error. The dashboard's Forward test page shows the same, with the curves.
 
 #### Logs
 
@@ -240,7 +294,7 @@ The application uses SQLite with WAL mode for local data storage. The database f
 ```
 mini-quant-trader/
   config/settings.yaml   all settings (proposal section 27)
-  data/                  quant.db and positions.csv (git-ignored)
+  data/                  quant.db, positions.csv, trades.csv, logs/ (git-ignored)
   quant/
     cli.py               the commands
     data/                provider, calendar, ingestion, quality checks
@@ -250,6 +304,10 @@ mini-quant-trader/
     backtest/            VectorBT backtests, metrics, reports
     models/              ML predictors, walk-forward validation, gates, registry
     signals/             positions, target weights, BUY/HOLD/REDUCE/EXIT, reasons, signal stages
+    forward/             forward test: freeze, paper portfolios, real account, report
+    ops/                 status, promote, retire
+    dashboard/           data for the Streamlit app
+  dashboard/app.py       the Streamlit app
     persistence/         tables and queries (SQLAlchemy Core)
   models/, reports/      written by `retrain` (git-ignored)
   tests/                 unittest suite
@@ -267,9 +325,11 @@ mini-quant-trader/
 
 See [quant_app_developer_proposal_final.md](proposal.md) for the complete design specification.
 
-Future phases will include:
-- Forward testing: logging live signals and scoring them against what happened (Phase 10)
-- Drawdown protection, which needs the live portfolio's value history (Phase 10)
+Later work:
+- The 6-month first look and the 12-month verdict of the forward test
+- Drawdown protection on the real account (its value history now exists in the forward test)
+- Automatic daily runs (e.g. a scheduled task), if wanted
+- Paper trading through a broker API only after the forward test; no live trading in V1
 
 ## Development
 

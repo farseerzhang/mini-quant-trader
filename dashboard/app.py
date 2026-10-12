@@ -27,7 +27,10 @@ SIGNAL_ICONS = {"BUY": "▲ BUY", "REDUCE": "▼ REDUCE", "EXIT": "✕ EXIT", "H
 PORTFOLIO_COLORS = {"regime_switch": "#2a78d6", "SPY": "#52514e", "equal_weight": "#eb6834", "trend": "#1baf7a",
                     "mean_reversion": "#9a55d4", "regime_switch_bear50": "#d4a20b"}
 OTHER_COLORS = ["#c94f8a", "#4a9fb5", "#7d7a6f"]
-PAGES = ("Status", "Market", "Signals", "Stock detail", "Models", "Backtest")
+PAGES = ("Status", "Market", "Signals", "Forward test", "Stock detail", "Models", "Backtest")
+# Fixed colors per forward-test portfolio (a color always means the same portfolio).
+FORWARD_COLORS = {"live": "#2a78d6", "real": "#eb6834", "SPY": "#52514e", "shadow_hmm": "#1baf7a",
+                  "shadow_lr": "#9a55d4"}
 
 
 def _arguments():
@@ -250,6 +253,108 @@ def page_backtest(engine, settings):
                "cash earns nothing.")
 
 
+def _forward_scale(names):
+    others = iter(["#c94f8a", "#4a9fb5", "#d4a20b", "#7d7a6f"] * 3)
+    return alt.Scale(domain=list(names), range=[FORWARD_COLORS.get(n) or next(others) for n in names])
+
+
+def page_forward(engine, settings):
+    runs = data.forward_runs(engine)
+    if runs.empty:
+        st.info("The forward test has not started. Put your real account in `data/positions.csv`, then run "
+                "`python -m quant forward-test --start` after a close (before the next open). From then on "
+                "`run-daily` freezes every evening and you record fills in `data/trades.csv`.")
+        return
+    labels = {int(r.run_id): f"Run {int(r.run_id)}: since {r.started_on}"
+              + (f" (ended {r.ended_at:%Y-%m-%d})" if pd.notna(r.ended_at) else " (running)")
+              for r in runs.itertuples()}
+    run_id = st.selectbox("Run", list(labels), format_func=labels.get)
+    report = data.forward_report(engine, settings, run_id)
+    if report.ended:
+        st.warning(f"Run {run_id} ended {report.ended[0]:%Y-%m-%d}: {report.ended[1]}")
+    st.caption(f"Since {report.started_on.date()} with {report.start_value:,.2f}; through "
+               f"{report.last_session.date()}.")
+    st.info(report.checkpoint)
+
+    with st.container(horizontal=True):
+        for name, row in report.scores.iterrows():
+            st.metric(name, f"{row['total_return']:+.2%}", border=True,
+                      help=f"max drawdown {row['max_drawdown']:.1%}"
+                           + ("" if pd.isna(row["missed"]) else f"; {int(row['missed'])} missed session(s)"))
+    table = report.scores.rename(columns={"total_return": "return", "max_drawdown": "max drawdown"})
+    table["missed"] = table["missed"].map(lambda v: "-" if pd.isna(v) else str(int(v)))  # paper portfolios only
+    st.dataframe(table, width="stretch", column_config={
+        "return": st.column_config.NumberColumn(format="percent"),
+        "volatility": st.column_config.NumberColumn(format="percent"),
+        "Sharpe": st.column_config.NumberColumn(format="%.2f"),
+        "sharpe": st.column_config.NumberColumn("Sharpe", format="%.2f"),
+        "max drawdown": st.column_config.NumberColumn(format="percent"),
+    })
+
+    curves = data.growth_and_drawdown(report.values)
+    if len(report.values) > 1:
+        colors = _forward_scale(report.values.columns)
+        growth = alt.Chart(curves).mark_line(strokeWidth=2).encode(
+            x=alt.X("date:T", title=None, axis=alt.Axis(labels=False, ticks=False)),
+            y=alt.Y("growth:Q", scale=alt.Scale(zero=False), title="growth of 1"),
+            color=alt.Color("portfolio:N", scale=colors, title=None, legend=alt.Legend(orient="top")),
+            tooltip=["date:T", "portfolio:N", alt.Tooltip("growth:Q", format=".4f")]).properties(height=280)
+        drawdown = alt.Chart(curves).mark_line(strokeWidth=1.5).encode(
+            x=alt.X("date:T", title=None), y=alt.Y("drawdown:Q", axis=alt.Axis(format="%"), title="drawdown"),
+            color=alt.Color("portfolio:N", scale=colors, legend=None),
+            tooltip=["date:T", "portfolio:N", alt.Tooltip("drawdown:Q", format=".1%")]).properties(height=140)
+        st.altair_chart(growth, width="stretch")
+        st.altair_chart(drawdown, width="stretch")
+    else:
+        st.caption("The curves appear after the first forward session.")
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Followed share of the live targets**")
+        if report.followed.empty:
+            st.caption("Not yet: it compares each close with the previous evening's live target.")
+        else:
+            st.metric("average", f"{report.followed.mean():.0%}", border=True,
+                      chart_data=report.followed.tolist(), chart_type="line",
+                      help="sum over stocks of min(your weight, the live target weight)")
+    with right:
+        st.markdown("**Execution against the open**")
+        if report.costs.empty:
+            st.caption("No trades recorded in `data/trades.csv` for this run.")
+        else:
+            costs = report.costs.assign(date=report.costs["date"].dt.date)
+            weighted = (costs["cost_bps"] * costs["notional"]).sum() / costs["notional"].sum()
+            st.metric("average cost", f"{weighted:+.1f} bp", border=True,
+                      help=f"fees included; the backtest assumes {report.assumed_cost_bps:g} bp")
+            st.dataframe(costs, hide_index=True, width="stretch", column_config={
+                "notional": st.column_config.NumberColumn(format="%.2f"),
+                "cost_bps": st.column_config.NumberColumn("cost (bp)", format="%+.1f")})
+
+    session, headers, targets = data.latest_frozen(engine, run_id)
+    if session is not None:
+        st.subheader(f"Frozen on {session.date()}")
+        names = list(headers["portfolio"])
+        for tab, name in zip(st.tabs(names), names):
+            with tab:
+                head = headers.set_index("portfolio").loc[name]
+                st.caption(f"{head['strategy']} · {head['regime']} regime ({head['regime_source']}) · "
+                           f"model {head['model_version']} · {head['positions']} positions, "
+                           f"{head['invested']:.0%} invested")
+                held = targets[targets["portfolio"] == name].drop(columns="portfolio")
+                if held.empty:
+                    st.caption("All cash.")
+                else:
+                    held = held.drop(columns=[c for c in ("score", "close") if held[c].isna().all()])
+                    st.dataframe(held, hide_index=True, width="stretch", column_config={
+                        "target_weight": st.column_config.NumberColumn("target", format="percent"),
+                        "close": st.column_config.NumberColumn(format="%.2f"),
+                        "score": st.column_config.NumberColumn("probability", format="%.2f")})
+    for warning in report.warnings:
+        st.warning(warning)
+    st.caption("Paper portfolios trade their frozen targets at the next open with the backtest's costs; `real` is "
+               "your trade log at as-traded closes. A short forward record is mostly noise.")
+
+
 def main():
     st.set_page_config(page_title="Mini Quant Trader", layout="wide")
     args = _arguments()
@@ -262,7 +367,7 @@ def main():
     st.title(page)
     st.caption(data.NOTICE)
     {"Status": page_status, "Market": page_market, "Signals": page_signals, "Stock detail": page_stock,
-     "Models": page_models, "Backtest": page_backtest}[page](engine, settings)
+     "Models": page_models, "Backtest": page_backtest, "Forward test": page_forward}[page](engine, settings)
 
 
 main()

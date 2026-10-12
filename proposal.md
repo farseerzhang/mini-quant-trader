@@ -1744,6 +1744,8 @@ Signal Engine -> Paper Trading -> Broker API
 
 Do not implement live trading in V1.
 
+Built (2026-10-12): `quant/forward/` (freeze, paper, real, report), `quant forward-test [--start | --end --reason]`, `quant forward-report [--run N]`, `run-daily` stage 5, the `status` checks and the dashboard's Forward test page (steps 1-8). The forward test itself begins when the owner runs `--start`; the first look is after about 126 forward sessions.
+
 ### Phase 10 pre-registration (2026-10-12, before any forward data)
 
 Fixed before the first forward session; a change after forward data exists is logged here as a design change, never a silent edit.

@@ -1,4 +1,5 @@
 import dataclasses
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +13,9 @@ from quant.config.settings import DEFAULT_CONFIG_PATH
 from quant.dashboard import data
 from quant.persistence.database import create_db_engine
 from quant.signals.pipeline import generate_and_store_signals
+from quant.forward.report import build_report
 from tests.backtest_fixture import DATES, POOL, build_market_db, small_settings
+from tests.test_forward_paper import WINDOW, PaperFixture
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_SETTINGS = ROOT / DEFAULT_CONFIG_PATH
@@ -81,6 +84,47 @@ class DashboardDataTests(unittest.TestCase):
         self.assertTrue(data.models(self.engine, self.root / "reports").empty)
 
 
+class ForwardPageTests(PaperFixture):
+    def test_forward_data_and_page(self):
+        from streamlit.testing.v1 import AppTest
+
+        self.freeze(WINDOW)
+        runs = data.forward_runs(self.engine)
+        self.assertEqual(list(runs["run_id"]), [1])
+        curves = data.growth_and_drawdown(build_report(self.engine, self.settings).values)
+        first = curves.sort_values("date").groupby("portfolio")["growth"].first()
+        self.assertTrue((first == 1).all())
+        self.assertTrue((curves["drawdown"] <= 0).all())
+        session, headers, targets = data.latest_frozen(self.engine)
+        self.assertEqual((session, list(headers["portfolio"])), (WINDOW[-1], ["live"]))
+        self.assertAlmostEqual(targets["target_weight"].sum(), headers["invested"].iloc[0])
+
+        document = yaml.safe_load(PROJECT_SETTINGS.read_text(encoding="utf-8"))
+        document["database"]["url"] = f"sqlite:///{Path(str(self.engine.url.database)).as_posix()}"
+        document["market"]["symbols"] = {sector: list(stocks) for sector, stocks in POOL.items()}
+        document["forward_test"]["shadows"] = {}
+        config = Path(self.temp.name) / "settings.yaml"
+        config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        argv, sys.argv = sys.argv, ["app.py", "--config", str(config)]
+        try:
+            at = AppTest.from_file(str(ROOT / "dashboard" / "app.py"), default_timeout=60)
+            at.run()
+            at.sidebar.radio[0].set_value("Forward test").run()
+            self.assertEqual(len(at.exception), 0, [e.value for e in at.exception])
+            self.assertIn("before the 6-month first look", " ".join(i.value for i in at.info))
+            self.assertIn("live", [m.label for m in at.metric])
+        finally:
+            sys.argv = argv
+            import gc
+
+            import streamlit as st
+            from sqlalchemy.engine import Engine
+
+            st.cache_resource.clear()
+            for engine in [o for o in gc.get_objects() if isinstance(o, Engine) and o is not self.engine]:
+                engine.dispose()
+
+
 class DashboardAppTests(unittest.TestCase):
     def test_every_page_renders_without_errors(self):
         from streamlit.testing.v1 import AppTest
@@ -100,7 +144,7 @@ class DashboardAppTests(unittest.TestCase):
             argv = sys.argv
             sys.argv = ["app.py", "--config", str(config)]
             try:
-                for page in ("Status", "Market", "Signals", "Stock detail", "Models", "Backtest"):
+                for page in ("Status", "Market", "Signals", "Forward test", "Stock detail", "Models", "Backtest"):
                     with self.subTest(page):
                         at = AppTest.from_file(app, default_timeout=60)
                         at.run()
