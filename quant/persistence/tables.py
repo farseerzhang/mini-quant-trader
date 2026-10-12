@@ -259,6 +259,29 @@ forward_sessions = Table(
     PrimaryKeyConstraint("session", "portfolio", name="pk_forward_sessions"),
 )
 
+# The forward test's start, written once at the first freeze: the session and the value every
+# paper portfolio starts with (the real account's managed holdings plus cash at that close).
+forward_start = Table(
+    "forward_start",
+    metadata,
+    Column("started_on", Date, primary_key=True),
+    Column("start_value", Float, nullable=False),
+    Column("value_source", String, nullable=False),  # the positions file, or the notional cash without one
+    Column("created_at", DateTime, nullable=False),
+)
+
+# Daily value of each paper portfolio (live, shadows, SPY); derived from the frozen targets and
+# prices, so it is recomputed (replaced) on every run.
+forward_equity = Table(
+    "forward_equity",
+    metadata,
+    Column("date", Date, nullable=False),
+    Column("portfolio", String, nullable=False),
+    Column("value", Float, nullable=False),
+    Column("invested", Float),
+    PrimaryKeyConstraint("date", "portfolio", name="pk_forward_equity"),
+)
+
 forward_targets = Table(
     "forward_targets",
     metadata,

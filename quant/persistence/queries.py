@@ -560,3 +560,36 @@ def load_forward_targets(engine: Engine, portfolio: str) -> pd.DataFrame:
     wide.index = pd.DatetimeIndex(wide.index)
     sessions = frozen_sessions(engine, portfolio)["session"]
     return wide.reindex(pd.DatetimeIndex(sessions)).fillna(0.0).sort_index()
+
+
+def forward_start(engine: Engine):
+    """The forward test's start row, or None before the first freeze."""
+    with engine.connect() as conn:
+        return conn.execute(select(tables.forward_start)).mappings().first()
+
+
+def record_forward_start(engine: Engine, started_on: date, start_value: float, value_source: str) -> bool:
+    """Write the start once; False if it already exists (the start never moves)."""
+    with engine.begin() as conn:
+        if conn.execute(select(tables.forward_start.c.started_on)).first() is not None:
+            return False
+        conn.execute(tables.forward_start.insert().values(
+            started_on=started_on, start_value=start_value, value_source=value_source, created_at=_now()))
+    return True
+
+
+def replace_forward_equity(engine: Engine, rows: Sequence[Mapping[str, Any]]) -> int:
+    with engine.begin() as conn:
+        conn.execute(tables.forward_equity.delete())
+        if rows:
+            conn.execute(tables.forward_equity.insert(), list(rows))
+    return len(rows)
+
+
+def load_forward_equity(engine: Engine) -> pd.DataFrame:
+    fe = tables.forward_equity
+    with engine.connect() as conn:
+        rows = conn.execute(select(fe).order_by(fe.c.portfolio, fe.c.date)).mappings().all()
+    frame = pd.DataFrame([dict(r) for r in rows], columns=[c.name for c in fe.columns])
+    frame["date"] = pd.DatetimeIndex(frame["date"])
+    return frame

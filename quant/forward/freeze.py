@@ -85,6 +85,18 @@ def _rows(name: str, targets: Targets) -> tuple[dict, list[dict]]:
     return header, rows
 
 
+def start_value(engine: Engine, settings: Settings, session: pd.Timestamp) -> tuple[float, str]:
+    """The real account's value at the close of ``session``: managed holdings plus cash, as the
+    signals value it (the positions file; without one, the notional ``backtest.initial_cash``)."""
+    from quant.signals.positions import read_positions, value_holdings
+
+    holdings = read_positions(settings.positions.path, settings.market.stocks, settings.backtest.initial_cash)
+    closes = queries.load_raw_closes(engine, list(holdings.quantities)) if holdings.quantities else pd.DataFrame()
+    valuation = value_holdings(holdings, closes, session)
+    source = str(holdings.path) if holdings.path is not None else "notional backtest.initial_cash (no positions file)"
+    return float(valuation.total), source
+
+
 def freeze_session(engine: Engine, settings: Settings, now: datetime | None = None) -> FreezeResult:
     """Freeze live and every shadow for the latest stored session, if still before the next open."""
     now = now or datetime.now(timezone.utc)
@@ -105,6 +117,11 @@ def freeze_session(engine: Engine, settings: Settings, now: datetime | None = No
                         f"({deadline:%Y-%m-%d %H:%M} UTC) has passed (no backfill)",
             )
         return FreezeResult(session, [], sorted(done), deadline, missed=bool(missing))
+
+    if queries.forward_start(engine) is None:
+        value, source = start_value(engine, settings, session)
+        queries.record_forward_start(engine, session.date(), value, source)
+        log.info("forward test starts %s with %.2f from %s", session.date(), value, source)
 
     frozen, already = [], []
     for name, compute in portfolios.items():
