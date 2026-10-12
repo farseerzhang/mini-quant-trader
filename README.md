@@ -18,7 +18,7 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 8 - Signal engine and risk** (Done: `run-daily` ends with BUY / HOLD / REDUCE / EXIT signals for your holdings, each with a written reason; next: Phase 9 - CLI operations and dashboard). No ML predictor and no HMM regime passed its gates (Phases 5-7), so the signals come from the rule-based `regime_switch` strategy with the rule-based regime.
+**Phase 9 - CLI operations and dashboard** (Done: `quant status`, `quant promote`, logging, ACTIVE models in daily use, and a read-only Streamlit dashboard; next: Phase 10 - forward testing). No ML predictor and no HMM regime passed its gates (Phases 5-7), so the signals come from the rule-based `regime_switch` strategy with the rule-based regime.
 
 The project is currently in early development. Implemented features include:
 - SQLite database with WAL mode for concurrent access
@@ -208,6 +208,14 @@ python -m quant promote <model_id> --override "reason"
 
 With an ACTIVE HMM, `calculate-regime` also stores its filtered regime and the signals use it. With an ACTIVE predictor, `generate-signals` first stores its predictions (table `predictions`, with a hash of the inputs) and `ml_select` drives the signals: the top `strategies.ml_select.top_n` stocks by probability, the regime setting the exposure, the same risk caps and hold band. Today no model has passed its gates, so the rule-based path is what runs.
 
+#### Dashboard
+
+```bash
+streamlit run dashboard/app.py
+```
+
+A read-only view of the database in the browser (it never writes or triggers anything; the CLI does). Pages: **Status** (what `quant status` shows), **Market** (regime, SPY / QQQ / VIX, SPY with the regime ribbon), **Signals** (today's signals with reasons, and the positions snapshot), **Stock detail** (price with SMA50 / SMA200, RSI, MACD, volume), **Models** (candidates, gates, validation reports) and **Backtest** (metrics, equity and drawdown per saved batch). Refresh the page after `run-daily`. Another settings file or database: `streamlit run dashboard/app.py -- --config path/to/settings.yaml --db path/to/quant.db`.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.
@@ -259,8 +267,6 @@ mini-quant-trader/
 See [quant_app_developer_proposal_final.md](proposal.md) for the complete design specification.
 
 Future phases will include:
-- `quant promote` and `quant status` (Phase 9)
-- Streamlit dashboard (Phase 9)
 - Forward testing: logging live signals and scoring them against what happened (Phase 10)
 - Drawdown protection, which needs the live portfolio's value history (Phase 10)
 

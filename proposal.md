@@ -1322,7 +1322,7 @@ If the user later wants automation, a scheduler can be added in a later phase wi
 
 # 25. Streamlit Dashboard
 
-Read-only view of the database.
+Read-only view of the database. Implemented (Phase 9) as `dashboard/app.py` with pages Status, Market, Signals, Stock detail, Models and Backtest; the calibration plot and feature importance are in the validation reports, which the Models page shows.
 
 **Status:** last successful `run-daily`, data as-of date, active model version per role, warnings (stale data, quarantined rows).
 
@@ -1603,6 +1603,8 @@ Done (2026-10-11): `quant/signals/` (positions, targets, engine, reasons, pipeli
 ## Phase 9 — CLI operations and dashboard
 
 `run-daily`, `retrain` (manual), `promote`, `backtest`, `status`; Streamlit monitoring.
+
+Done (2026-10-12): `quant status` and `quant promote` (`quant/ops/`; one ACTIVE model per role enforced by a unique index), logging (section 26), ACTIVE models in daily use (an HMM regime stored and used by the signals; an ACTIVE predictor's predictions stored with input hashes and `ml_select` driving the signals; section 16.3), and the dashboard (`dashboard/app.py`, its data in `quant/dashboard/data.py`; every page smoke-tested with Streamlit's test runner). No model has passed its gates, so the rule-based path is what runs.
 
 ## Phase 10 — Forward testing, then paper trading
 
