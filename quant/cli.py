@@ -20,6 +20,7 @@ from quant.ops.promote import PromotionError, promote_model
 from quant.ops.status import collect_status, format_status
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
+from quant.regime.active import calculate_and_store_active_regime
 from quant.regime.pipeline import calculate_and_store_regimes
 from quant.regime.retrain import run_regime_retrain
 from quant.signals.pipeline import generate_and_store_signals
@@ -222,6 +223,7 @@ def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
         summary = calculate_and_store_regimes(engine, settings.regime, settings.features)
+        active = calculate_and_store_active_regime(engine, settings)
     except ValueError as exc:
         _error(f"Regime calculation failed: {exc}")
         return 1
@@ -234,6 +236,9 @@ def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
     )
     print(f"Latest: {summary.latest_regime} (score {summary.latest_score:+d})")
     print(f"Sessions: {counts}; average dwell {summary.average_dwell_days:.1f} sessions")
+    if active is not None:
+        print(f"ACTIVE regime model {active.model_id}: {active.rows} regimes through {active.last_date.date()}, "
+              f"latest {active.latest_regime} (probability {active.latest_probability:.0%}); the signals use it")
     return 0
 
 
@@ -402,6 +407,10 @@ def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
 def _print_signals(run, show_reasons: bool) -> None:
     signals = run.signals
     targets = signals.targets
+    if run.predictions is not None:
+        p = run.predictions
+        print(f"ACTIVE predictor {p.model_id} ({p.model_type}): {p.rows} predictions for "
+              f"{p.first_date.date()}..{p.last_date.date()}; ml_select drives the signals")
     print(
         f"Signals for {signals.session.date()} (fill at the next open): {targets.strategy} ({run.model_version}), "
         f"{targets.regime} regime ({targets.regime_source}), exposure {targets.regime_exposure:.0%}"
@@ -416,6 +425,8 @@ def _print_signals(run, show_reasons: bool) -> None:
     else:
         table = pd.DataFrame({
             "signal": rows["signal"],
+            **({"prob": targets.stocks.loc[rows.index, "probability"].map(lambda v: f"{v:.2f}" if v == v else "-")}
+               if "probability" in targets.stocks.columns else {}),
             "target": rows["target_weight"].map(lambda v: f"{v:.1%}"),
             "current": rows["current_weight"].map(lambda v: f"{v:.1%}"),
             "shares": rows["suggested_shares"].map(lambda v: f"{v:+g}" if v else "0"),

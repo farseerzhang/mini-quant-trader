@@ -140,24 +140,6 @@ class LiveEqualsBacktestTests(unittest.TestCase):
         self.assertTrue(targets.stocks["close"].notna().all())
         self.assertLessEqual(targets.invested, 1.0)
 
-    def test_an_active_regime_model_is_refused_until_supported(self):
-        db = Path(self.temp.name) / "active.db"
-        build_market_db(db, self.settings)
-        engine = create_db_engine(db, 5000)
-        try:
-            with engine.begin() as conn:
-                conn.execute(tables.model_versions.insert().values(
-                    model_id="hmm-x", role="REGIME", model_type="hmm", version=1, status="ACTIVE",
-                    training_start=date(2010, 1, 1), training_end=date(2020, 1, 1), feature_version="market-v1",
-                    target_definition="{}", hyperparameters="{}", metrics="{}", gates_passed=1, gate_results="{}",
-                    trial_count=1, holdout_evaluated=0, model_path="x", library_versions="{}", config_hash="h",
-                    created_at=datetime.now(timezone.utc),
-                ))
-            with self.assertRaisesRegex(NotImplementedError, "hmm-x"):
-                load_targets(engine, self.settings)
-        finally:
-            engine.dispose()
-
 
 if __name__ == "__main__":
     unittest.main()

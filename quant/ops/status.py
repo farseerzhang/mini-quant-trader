@@ -62,6 +62,8 @@ class StatusReport:
     candidates: dict[str, tuple[int, int]]  # role -> (candidates, of which gates passed)
     holdout_evaluations: int
     warnings: list[str] = field(default_factory=list)
+    strategy_in_use: str = ""  # ml_select with an ACTIVE predictor, else signals.strategy
+    regime_in_use: str = ""  # the ACTIVE regime model id, else rule_based-v<N>
 
 
 def _stage(runs: pd.DataFrame, label: str, command: str, stage: str) -> StageStatus:
@@ -105,12 +107,15 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
                                 tables.market_regimes.c.regime_method == RULE_METHOD,
                                 tables.market_regimes.c.model_version == settings.regime.rule_version) if regime_as_of else None
 
+    active = {role: (dict(row) if (row := queries.active_model(engine, role)) is not None else None) for role in ROLES}
+    strategy_in_use = "ml_select" if active["PREDICTOR"] is not None else settings.signals.strategy
+    regime_in_use = active["REGIME"]["model_id"] if active["REGIME"] is not None else settings.regime.rule_version
     signals_as_of = queries.latest_date(engine, tables.signals.c.date)
     signal_counts, signal_strategy = {}, None
     if signals_as_of is not None:
-        stored = queries.load_signals(engine, signals_as_of, settings.signals.strategy)
+        stored = queries.load_signals(engine, signals_as_of, strategy_in_use)
         signal_counts = stored["signal"].value_counts().to_dict()
-        signal_strategy = settings.signals.strategy if not stored.empty else None
+        signal_strategy = strategy_in_use if not stored.empty else None
 
     positions_as_of = queries.latest_date(engine, tables.positions.c.as_of_date, tables.positions.c.source == MANUAL)
     snapshot_created = queries.latest_date(engine, tables.positions.c.created_at, tables.positions.c.source == MANUAL)
@@ -125,7 +130,6 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
     stages = [_stage(runs, *spec) for spec in DAILY_STAGES]
     daily = _stage(runs, "run-daily", "run-daily", "run-daily")
 
-    active = {role: (dict(row) if (row := queries.active_model(engine, role)) is not None else None) for role in ROLES}
     counts = queries.model_counts(engine)
     candidates = {}
     for role in ROLES:
@@ -145,6 +149,21 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
     for stage in stages + [daily]:
         if stage.failed_since is not None:
             warnings.append(f"{stage.label}: the last run FAILED ({stage.failed_since:%Y-%m-%d %H:%M})")
+    if active["REGIME"] is not None and regime_as_of is not None:
+        hmm_as_of = queries.latest_date(engine, tables.market_regimes.c.date,
+                                        tables.market_regimes.c.regime_method == "HMM",
+                                        tables.market_regimes.c.model_version == regime_in_use)
+        if hmm_as_of is None or hmm_as_of < regime_as_of:
+            warnings.append(f"the ACTIVE regime {regime_in_use} ends {hmm_as_of or 'nowhere'}, before {regime_as_of}: "
+                            "run `quant calculate-regime`")
+    if active["PREDICTOR"] is not None and regime_as_of is not None:
+        model_id = active["PREDICTOR"]["model_id"]
+        predicted = queries.latest_date(engine, tables.predictions.c.date, tables.predictions.c.model_version == model_id)
+        if predicted is None or predicted < regime_as_of:
+            warnings.append(f"predictions of {model_id} end {predicted or 'nowhere'}, before {regime_as_of}: "
+                            "run `quant generate-signals`")
+    if signals_as_of is not None and not signal_counts:
+        warnings.append(f"no {strategy_in_use} signals for {signals_as_of}: run `quant generate-signals`")
     if missing:
         warnings.append(f"no prices stored for: {', '.join(missing)}")
     if stale:
@@ -175,6 +194,7 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
         positions_as_of=positions_as_of, positions_file=positions_file, positions_file_changed=file_changed,
         stages=stages, last_run_daily=daily.last_ok, active=active, candidates=candidates,
         holdout_evaluations=queries.count_holdout_evaluations(engine), warnings=warnings,
+        strategy_in_use=strategy_in_use, regime_in_use=regime_in_use,
     )
 
 
@@ -205,6 +225,7 @@ def format_status(report: StatusReport) -> str:
         candidates, passed = report.candidates[role]
         in_use = f"ACTIVE {model['model_id']}" if model else f"none ACTIVE: {FALLBACK[role]}"
         lines.append(f"  {role:<23} {in_use}; {candidates} candidates, {passed} passed their gates")
+    lines.append(f"  signals use             {report.strategy_in_use} with the {report.regime_in_use} regime")
     lines.append(f"  holdout evaluations     {report.holdout_evaluations}")
     lines += [""]
     if report.warnings:

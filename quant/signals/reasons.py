@@ -19,7 +19,7 @@ from quant.signals.engine import BUY, EXIT, HOLD, REDUCE, Signals
 from quant.signals.targets import Targets
 
 REGIME_NAMES = {BULL: "Bull", SIDEWAYS: "Sideways", BEAR: "Bear"}
-TREND, MEAN_REVERSION = "trend", "mean_reversion"
+TREND, MEAN_REVERSION, ML_SELECT = "trend", "mean_reversion", "ml_select"
 
 
 def _pct(value: float, digits: int = 1) -> str:
@@ -33,6 +33,8 @@ def _signed(value: float) -> str:
 def active_rule(targets: Targets) -> str | None:
     """Which rule decides membership at T: trend, mean_reversion, or None (no regime)."""
     strategy, regime = targets.strategy, targets.regime
+    if strategy == ML_SELECT:
+        return ML_SELECT if regime in (BULL, SIDEWAYS, BEAR) else None
     if strategy == TREND:
         return TREND
     if strategy == MEAN_REVERSION:
@@ -49,6 +51,11 @@ def regime_sentence(targets: Targets) -> str:
     source = f"({targets.regime_source})"
     if targets.strategy in (TREND, MEAN_REVERSION):
         return f"{name} regime {source}; {targets.strategy} ignores the regime."
+    if targets.strategy == ML_SELECT:
+        if targets.regime not in REGIME_NAMES:
+            return f"No regime at {targets.session.date()}: no positions."
+        predictor = targets.extra.get("predictor") or "the predictor"
+        return f"{name} regime {source}: ML selection by {predictor} at {_pct(targets.regime_exposure, 0)} exposure."
     rule = {BULL: "trend rule", SIDEWAYS: "dip-buy rule", BEAR: "trend rule"}.get(targets.regime)
     if targets.regime == BEAR:
         return f"{name} regime {source}: {rule} at {_pct(targets.regime_exposure, 0)} exposure."
@@ -61,6 +68,8 @@ def rule_sentence(stock: pd.Series, targets: Targets, settings: Settings) -> str
     """Why the strategy holds the stock, or why it does not."""
     reversion = settings.strategies.mean_reversion
     price, sma = stock["price_vs_sma200"], stock["sma50_vs_sma200"]
+    if targets.strategy == ML_SELECT:
+        return ml_sentence(stock, targets, settings)
     if not bool(stock["has_data"]):
         return "No indicator data at T."
     if stock["rule"] == TREND:
@@ -86,6 +95,23 @@ def rule_sentence(stock: pd.Series, targets: Targets, settings: Settings) -> str
             return f"{prefix}Not a dip buy: RSI {stock['rsi14']:.0f} (entry < {reversion.rsi_entry:g})."
         return f"{prefix}Not a dip buy: RSI {stock['rsi14']:.0f} but the MACD histogram is not rising."
     return "No regime: not held."
+
+
+def ml_sentence(stock: pd.Series, targets: Targets, settings: Settings) -> str:
+    """Why the predictor's selection holds the stock, or not (section 17, ml_select)."""
+    config = settings.strategies.ml_select
+    probability = stock.get("probability")
+    if probability is None or pd.isna(probability):
+        return "No prediction at T (missing inputs)."
+    rank, ranked = int(stock["rank"]), targets.extra.get("ranked", 0)
+    now = f"probability {probability:.2f}, rank {rank} of {ranked}"
+    rule = (f"top {config.top_n} chosen every {config.rebalance_every_sessions} sessions, "
+            f"kept while within the top {config.keep_rank}")
+    if stock["rule"] == ML_SELECT:
+        return f"ML pick: {now} ({rule}); in the strategy for {int(stock['held_sessions'])} sessions."
+    last = targets.extra.get("last_rebalance")
+    when = f" (last chosen {last.date()})" if last is not None else ""
+    return f"Not in the ML selection{when}: {now} ({rule})."
 
 
 def limit_sentences(stock: pd.Series, targets: Targets, settings: Settings) -> list[str]:
@@ -142,7 +168,7 @@ def action_sentence(row: pd.Series, hold_band: float) -> str:
 
 def signal_reason(row: pd.Series, stock: pd.Series, targets: Targets, settings: Settings, hold_band: float) -> str:
     parts = [regime_sentence(targets), rule_sentence(stock, targets, settings)]
-    if stock["rule"] in (TREND, MEAN_REVERSION) and stock["target_weight"] <= 0 and targets.regime_exposure == 0:
+    if stock["rule"] in (TREND, MEAN_REVERSION, ML_SELECT) and stock["target_weight"] <= 0 and targets.regime_exposure == 0:
         parts.append("Bear exposure 0%: held in cash.")
     parts += limit_sentences(stock, targets, settings)
     parts += flag_sentences(stock, settings, row["signal"])

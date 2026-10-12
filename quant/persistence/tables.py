@@ -183,6 +183,22 @@ market_regimes = Table(
 )
 
 
+# 6.7 predictions - the ACTIVE predictor's calibrated probability per stock and session.
+# A model output only, never a BUY/HOLD label; input_hash fingerprints the exact inputs used.
+predictions = Table(
+    "predictions",
+    metadata,
+    Column("symbol", String, nullable=False),
+    Column("date", Date, nullable=False),
+    Column("model_version", String, nullable=False),  # the predictor's model_id
+    Column("probability", Float, nullable=False),
+    Column("target_definition", Text, nullable=False),  # JSON, as registered with the model
+    Column("input_hash", String, nullable=False),  # sha256 of the input values (float64, model column order)
+    Column("created_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("symbol", "date", "model_version", name="pk_predictions"),
+)
+
+
 # 6.8 positions — snapshots of the holdings the signals were computed against.
 # One snapshot per as-of session and source; re-running a session replaces it.
 positions = Table(

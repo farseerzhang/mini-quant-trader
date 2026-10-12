@@ -495,3 +495,28 @@ def model_counts(engine: Engine) -> pd.DataFrame:
     with engine.connect() as conn:
         rows = conn.execute(stmt).mappings().all()
     return pd.DataFrame([dict(row) for row in rows], columns=["role", "status", "models", "gates_passed"])
+
+
+def replace_predictions(engine: Engine, model_version: str, since: date, rows: Sequence[Mapping[str, Any]]) -> int:
+    """Store a model's predictions from ``since`` on, replacing what was stored for those sessions."""
+    now = _now()
+    payload = [{**row, "model_version": model_version, "created_at": now} for row in rows]
+    predictions = tables.predictions
+    with engine.begin() as conn:
+        conn.execute(predictions.delete().where(
+            predictions.c.model_version == model_version, predictions.c.date >= since))
+        if payload:
+            conn.execute(predictions.insert(), payload)
+    return len(payload)
+
+
+def load_predictions(engine: Engine, model_version: str) -> pd.DataFrame:
+    """A model's stored predictions, indexed by (date, symbol)."""
+    p = tables.predictions
+    stmt = select(p.c.date, p.c.symbol, p.c.probability, p.c.input_hash).where(
+        p.c.model_version == model_version).order_by(p.c.date, p.c.symbol)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).all()
+    frame = pd.DataFrame(rows, columns=["date", "symbol", "probability", "input_hash"])
+    frame["date"] = pd.DatetimeIndex(frame["date"])
+    return frame.set_index(["date", "symbol"])

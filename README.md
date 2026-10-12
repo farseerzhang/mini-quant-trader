@@ -196,6 +196,22 @@ It fits a 3-state hidden Markov model on daily SPY returns, market volatility an
 
 This builds the dataset (label: stock vs SPY over the next `model.target.horizon_days` sessions, section 14 of `proposal.md`), searches the hyperparameters in `retrain.search.space` on purged walk-forward folds, backtests the best candidate walk-forward as `ml_select` against `regime_switch` after costs, evaluates the gates in `retrain.gates.predictor`, refits the model on all development data and registers it as a CANDIDATE in `model_versions`. The model file goes to `retrain.models_dir` and a readable validation report to `retrain.reports_dir`, one folder per model type like the model files (`reports/<model_type>/<model_id>.md`; both git-ignored). It never changes an active model, and the holdout is used only with `--evaluate-holdout` (logged; the count is shared with `backtest`). Logistic Regression takes about 20 seconds, Random Forest about 3 minutes, XGBoost longer (30 random search trials).
 
+#### Status and Promotion
+
+```bash
+python -m quant status
+python -m quant promote <model_id>
+python -m quant promote <model_id> --override "reason"
+```
+
+`status` is read-only: data freshness against the last completed NYSE session, the last successful run of every stage, the ACTIVE model per role, which strategy and regime the signals use, and warnings (stale data, failed runs, quarantined rows, a positions file edited after the last signals, an ACTIVE model whose outputs are behind). `promote` makes a candidate the ACTIVE model of its role and retires the previous one; a candidate whose gates failed is refused unless `--override` gives a reason, which is logged. Promoting another model again undoes it.
+
+With an ACTIVE HMM, `calculate-regime` also stores its filtered regime and the signals use it. With an ACTIVE predictor, `generate-signals` first stores its predictions (table `predictions`, with a hash of the inputs) and `ml_select` drives the signals: the top `strategies.ml_select.top_n` stocks by probability, the regime setting the exposure, the same risk caps and hold band. Today no model has passed its gates, so the rule-based path is what runs.
+
+#### Logs
+
+Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.
+
 Every command accepts `--db PATH` to use another SQLite file instead of `database.url` from `config/settings.yaml`.
 
 ### Configuration

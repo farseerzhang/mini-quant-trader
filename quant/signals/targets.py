@@ -9,7 +9,7 @@ which risk limit bound, its indicators at T and the informational risk flags.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -17,14 +17,16 @@ from sqlalchemy import Engine
 
 from quant.config.settings import Settings
 from quant.persistence import queries
-from quant.regime.pipeline import RULE_METHOD
+from quant.models.live import PREDICTOR, load_probabilities
+from quant.regime.active import ActiveModelError, regime_in_use
 from quant.strategies import PANEL_COLUMNS, StrategyParts, parts_weights, strategy_parts
+from quant.strategies.ml import ml_select_parts
 from quant.strategies.rules import Panel
 
 # Indicators reported per stock (the strategy inputs plus the two risk-flag inputs).
 RISK_COLUMNS = ("realized_volatility_20d", "atr14_over_price")
 TARGET_COLUMNS = tuple(dict.fromkeys((*PANEL_COLUMNS, *RISK_COLUMNS)))
-REGIME = "REGIME"
+ML_SELECT = "ml_select"
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ class Targets:
     regime_source: str  # model_version of the regime used, e.g. rule_based-v1
     regime_exposure: float
     stocks: pd.DataFrame  # one row per pool stock, see stock_details()
+    model_version: str = ""  # stored with the signals: rule_based-v<strategies.version> or the predictor id
+    extra: dict = field(default_factory=dict)  # ml_select: predictor, last_rebalance, ranked
 
     @property
     def weights(self) -> pd.Series:
@@ -102,45 +106,83 @@ def stock_details(
     return frame
 
 
+def _ml_details(stocks: pd.DataFrame, probabilities: pd.DataFrame, session: pd.Timestamp) -> pd.DataFrame:
+    """Probability, rank and rank percentile at T (rank 1 = highest probability)."""
+    today = probabilities.loc[session].reindex(stocks.index)
+    ranked = int(today.notna().sum())
+    rank = today.rank(ascending=False, method="first")
+    stocks = stocks.copy()
+    stocks["probability"] = today
+    stocks["rank"] = rank
+    stocks["rank_percentile"] = 1 - (rank - 1) / ranked if ranked else np.nan
+    return stocks
+
+
 def compute_targets(
     panel: Panel, regimes: pd.Series, settings: Settings, raw_closes: pd.DataFrame,
     strategy: str | None = None, regime_source: str | None = None,
+    probabilities: pd.DataFrame | None = None, predictor: str | None = None,
 ) -> Targets:
-    """Targets at the last session with a regime (T), from data at or before T only."""
+    """Targets at the last session with a regime (T), from data at or before T only.
+
+    With ``probabilities`` (dates x stocks from the predictor ``predictor``) the strategy is
+    ``ml_select``; otherwise it is the rule-based ``strategy`` (default ``signals.strategy``).
+    """
     if regimes.empty:
         raise ValueError("no stored regimes; run calculate-features and calculate-regime first")
-    strategy = strategy or settings.signals.strategy
     session = regimes.index[-1]
     reference = panel["price_vs_sma200"]
     if session not in reference.index:
         raise ValueError(f"no features for {session.date()}, the latest regime; run calculate-features first")
     panel = {name: frame.loc[:session] for name, frame in panel.items()}
     regimes = regimes.loc[:session]
-    parts = strategy_parts(strategy, panel, regimes, settings)
+    extra: dict = {}
+    if probabilities is not None:
+        strategy = ML_SELECT
+        probabilities = probabilities.loc[:session].reindex(columns=reference.columns)
+        if session not in probabilities.index:
+            raise ValueError(f"no predictions for {session.date()}; run `quant generate-signals`")
+        parts = ml_select_parts(probabilities, regimes, settings)
+        every = settings.strategies.ml_select.rebalance_every_sessions
+        extra = {"predictor": predictor, "ranked": int(probabilities.loc[session].notna().sum()),
+                 "last_rebalance": probabilities.index[(len(probabilities) - 1) // every * every]}
+        model_version = predictor or ML_SELECT
+    else:
+        strategy = strategy or settings.signals.strategy
+        parts = strategy_parts(strategy, panel, regimes, settings)
+        model_version = f"rule_based-v{settings.strategies.version}"
     weights = parts_weights(parts, settings)
     raw_close = raw_closes.loc[:session].ffill().iloc[-1] if not raw_closes.empty else pd.Series(dtype=float)
+    stocks = stock_details(parts, weights, panel, settings, session, raw_close)
+    if probabilities is not None:
+        stocks = _ml_details(stocks, probabilities, session)
     return Targets(
         session=session,
         strategy=strategy,
         regime=regimes.iloc[-1],
         regime_source=regime_source or settings.regime.rule_version,
         regime_exposure=float(parts.exposure.loc[session]),
-        stocks=stock_details(parts, weights, panel, settings, session, raw_close),
+        stocks=stocks,
+        model_version=model_version,
+        extra=extra,
     )
 
 
 def load_targets(engine: Engine, settings: Settings) -> Targets:
-    """Targets from the stored features and regime. The regime is the ACTIVE REGIME model's;
-    with none ACTIVE (the case until `quant promote` exists) it is the rule-based regime."""
-    active = queries.active_model(engine, REGIME)
-    if active is not None:
-        raise NotImplementedError(
-            f"an ACTIVE regime model ({active['model_id']}) is not supported by the signal engine yet; "
-            "signals use the rule-based regime"
-        )
+    """Targets from the stored features, the regime in use (the ACTIVE REGIME model's, else
+    rule-based) and, with an ACTIVE PREDICTOR, its stored predictions (then ``ml_select``)."""
+    regime = regime_in_use(engine, settings)
+    predictor = queries.active_model(engine, PREDICTOR)
+    probabilities = None
+    if predictor is not None:
+        probabilities = load_probabilities(engine, predictor["model_id"])
+        if probabilities.empty:
+            raise ActiveModelError(f"no stored predictions of the ACTIVE predictor {predictor['model_id']}; "
+                                   "run `quant generate-signals`")
     stocks = list(settings.market.stocks)
     panel = queries.load_feature_panel(engine, settings.features.feature_version, stocks, TARGET_COLUMNS)
-    regimes = queries.load_regimes(engine, RULE_METHOD, settings.regime.rule_version)
-    since = None if regimes.empty else (regimes.index[-1] - pd.Timedelta(days=30)).date()
+    since = None if regime.regimes.empty else (regime.regimes.index[-1] - pd.Timedelta(days=30)).date()
     raw_closes = queries.load_raw_closes(engine, stocks, since=since)
-    return compute_targets(panel, regimes, settings, raw_closes)
+    return compute_targets(panel, regime.regimes, settings, raw_closes, regime_source=regime.model_version,
+                           probabilities=probabilities,
+                           predictor=None if predictor is None else predictor["model_id"])

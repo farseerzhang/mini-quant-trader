@@ -279,6 +279,8 @@ A prediction is a **model output only**: the calibrated probability of the defin
 
 Also snapshot (or hash) the feature vector used, so the prediction can be reproduced even if upstream data is later corrected.
 
+Implementation (Phase 9, `quant/models/live.py`): columns `symbol, date, model_version, probability, target_definition, input_hash, created_at`; `input_hash` is the sha256 of the input values (float64, in the model's column order). With an ACTIVE predictor, `generate-signals` scores every pool stock on every session after the model's training end up to T and replaces those rows, so a re-run never duplicates and gives the same probabilities and hashes. The whole stretch is scored because `ml_select` keeps held stocks within a rank band and rebalances every few sessions; anchoring the schedule at the first session after training keeps it identical on every run. Inputs use the regime the model was trained with (`depends_on`).
+
 ## 6.8 positions
 
 ```text
@@ -1034,6 +1036,8 @@ Rules:
 - Deciding to evaluate the holdout.
 
 `quant run-daily` never trains; it only loads the `ACTIVE` model of each role. If no active `REGIME` model exists, it uses the rule-based regime. If no active `PREDICTOR` exists, it uses rule-based signals only. In both cases it says so.
+
+Implementation (Phase 9): with an ACTIVE HMM, `calculate-regime` also runs its final fit forward (filtered probabilities, the same dwell) and stores it in `market_regimes` as method `HMM`, `model_version` = the model id (`quant/regime/active.py`); the signals then use that regime. With an ACTIVE predictor, `ml_select` drives the signals automatically (printed), with `score` = calibrated probability and `confidence` = rank percentile (1.0 = ranked first), and the signals are stored under the predictor's model id. A model whose inputs no longer match the configuration (HMM observations, feature version, a regime it depends on that is not stored) or whose file is missing is refused with a message. `quant status` names the strategy and regime in use and warns when the ACTIVE models' outputs are behind.
 
 Retrain parameters (window type, fold length, horizon, embargo, search space, gates) come from configuration, with CLI overrides.
 

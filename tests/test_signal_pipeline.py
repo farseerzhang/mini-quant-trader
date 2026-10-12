@@ -76,18 +76,6 @@ class SignalPipelineTests(unittest.TestCase):
         self.assertTrue(queries.load_positions(self.engine, run.signals.session.date(), MANUAL).empty)
         self.assertGreater(run.signals_stored, 0)
 
-    def test_an_active_predictor_is_refused_until_supported(self):
-        with self.engine.begin() as conn:
-            conn.execute(tables.model_versions.insert().values(
-                model_id="lr-x", role="PREDICTOR", model_type="logistic_regression", version=1, status="ACTIVE",
-                training_start=date(2010, 1, 1), training_end=date(2020, 1, 1), feature_version="technical-v1",
-                target_definition="{}", hyperparameters="{}", metrics="{}", gates_passed=1, gate_results="{}",
-                trial_count=1, holdout_evaluated=0, model_path="x", library_versions="{}", config_hash="h",
-                created_at=datetime.now(timezone.utc),
-            ))
-        with self.assertRaisesRegex(NotImplementedError, "lr-x"):
-            generate_and_store_signals(self.engine, self.settings)
-
 
 class GenerateSignalsCommandTests(unittest.TestCase):
     def setUp(self):

@@ -46,12 +46,20 @@ def top_n_holdings(probabilities: pd.DataFrame, top_n: int, every: int, keep_ran
     return pd.DataFrame(out, index=probabilities.index, columns=probabilities.columns)
 
 
-def ml_select_weights(probabilities: pd.DataFrame, regimes: pd.Series, settings: Settings) -> pd.DataFrame:
-    """Target weights at the close of T from probabilities and the regime at T."""
+def ml_select_parts(probabilities: pd.DataFrame, regimes: pd.Series, settings: Settings):
+    """The selection and the regime exposure per session, as StrategyParts (rule ``ml_select``)."""
+    from quant.strategies import StrategyParts  # the package imports the rule modules, not this one
+
     config = settings.strategies.ml_select
     holdings = top_n_holdings(probabilities, config.top_n, config.rebalance_every_sessions, config.keep_rank)
     regime = regimes.reindex(probabilities.index)
     exposure = pd.Series(0.0, index=probabilities.index)
     exposure[(regime == BULL) | (regime == SIDEWAYS)] = 1.0
     exposure[regime == BEAR] = settings.strategies.regime_switch.bear_exposures[0]
-    return target_weights(holdings, settings.market.sectors, settings.risk, exposure)
+    return StrategyParts({"ml_select": holdings}, exposure)
+
+
+def ml_select_weights(probabilities: pd.DataFrame, regimes: pd.Series, settings: Settings) -> pd.DataFrame:
+    """Target weights at the close of T from probabilities and the regime at T."""
+    parts = ml_select_parts(probabilities, regimes, settings)
+    return target_weights(parts.holdings, settings.market.sectors, settings.risk, parts.exposure)
