@@ -15,6 +15,8 @@ from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
 from quant.forward.real import TradesError
 from quant.forward.report import build_report, format_report
+from quant.forward.freeze import freeze_session
+from quant.forward.paper import update_paper_equity
 from quant.logs import close_logging, configure_logging
 from quant.models.ml_backtest import BASELINE
 from quant.models.retrain import run_retrain
@@ -138,6 +140,17 @@ def build_parser() -> argparse.ArgumentParser:
     retire_command.add_argument("model_id", help="the ACTIVE model to retire (see `quant status`)")
     retire_command.add_argument("--reason", help="why; logged with the change")
     retire_command.add_argument("--db", help=db_help)
+
+    freeze_command = commands.add_parser(
+        "forward-test",
+        help="forward test: freeze tonight's targets of live and the shadows, update the paper and real values "
+        "(also the last stage of run-daily)",
+    )
+    freeze_command.add_argument(
+        "--start", action="store_true",
+        help="ONCE, after the close: start the forward test with data/positions.csv as your real account",
+    )
+    freeze_command.add_argument("--db", help=db_help)
 
     forward_command = commands.add_parser(
         "forward-report",
@@ -513,6 +526,43 @@ def _run_retire(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
+    start = bool(getattr(args, "start", False))
+    engine = _engine(settings, args.db)
+    try:
+        before = queries.forward_start(engine)
+        result = freeze_session(engine, settings, start=start)
+        if not result.started:
+            print("Forward test not started: put your real account in data/positions.csv, then run "
+                  "`python -m quant forward-test --start` after a close (before the next open).")
+            return 0
+        if start and before is not None:
+            print(f"The forward test already started on {before['started_on']}; nothing to start.")
+        elif before is None:
+            begun = queries.forward_start(engine)
+            print(f"Forward test STARTED on {begun['started_on']} with {begun['start_value']:,.2f} "
+                  f"({begun['value_source']}). From now on record trades in {settings.positions.trades_path}; "
+                  "data/positions.csv is not read again.")
+        paper = update_paper_equity(engine, settings)
+    except (TradesError, ValueError) as exc:
+        _error(f"Forward test failed: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    session = result.session.date()
+    if result.frozen:
+        print(f"Froze {session} for {', '.join(result.frozen)} (deadline {result.deadline:%Y-%m-%d %H:%M} UTC).")
+    elif result.missed:
+        _error(f"{session} was NOT frozen: the next open ({result.deadline:%Y-%m-%d %H:%M} UTC) has passed. "
+               "It is counted as missed (no backfill); run run-daily each evening after the close.")
+    else:
+        print(f"{session} was already frozen ({', '.join(result.already)}); left as it was.")
+    if paper is not None:
+        print(f"Paper and real values updated through {paper.sessions[-1].date()} "
+              f"({len(paper.sessions) - 1} forward sessions). See `quant forward-report`.")
+    return 0
+
+
 def _run_forward_report(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
@@ -562,7 +612,7 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     fail to download do not stop it: features and the regime are calculated
     from the data that is stored, and the exit code still reports the failure.
     """
-    print("[1/4] update-market-data")
+    print("[1/5] update-market-data")
     market_data = _update_market_data(args, settings)
     if market_data == _FAILED:
         _error("run-daily stopped: market data update failed")
@@ -571,8 +621,9 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
         (2, "calculate-features", _run_features),
         (3, "calculate-regime", _run_regime),
         (4, "generate-signals", _run_signals),
+        (5, "forward-test", _run_forward),
     ):
-        print(f"[{step}/4] {name}")
+        print(f"[{step}/5] {name}")
         if run(args, settings) != 0:
             _error(f"run-daily stopped: {name} failed")
             return 1
@@ -591,6 +642,7 @@ COMMANDS = {
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),
     "forward-report": lambda args, settings: _run_forward_report(args, settings),
+    "forward-test": lambda args, settings: _run_forward(args, settings),
     "generate-signals": lambda args, settings: _run_signals(args, settings),
     "run-daily": lambda args, settings: _run_daily(args, settings),
     "backtest": lambda args, settings: _run_backtest(args, settings),

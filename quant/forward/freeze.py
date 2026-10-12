@@ -36,6 +36,7 @@ class FreezeResult:
     already: list[str]  # portfolios frozen earlier for this session (left as they were)
     deadline: datetime  # the next open: the latest moment this session can be frozen
     missed: bool  # True when the deadline had passed: nothing was written
+    started: bool = True  # False: the forward test has not been started (nothing was written)
 
 
 def _model_row(engine: Engine, model_id: str):
@@ -105,9 +106,24 @@ def start_value(engine: Engine, settings: Settings, session: pd.Timestamp) -> tu
     return float(valued["value"].iloc[0]), source, rows
 
 
-def freeze_session(engine: Engine, settings: Settings, now: datetime | None = None) -> FreezeResult:
-    """Freeze live and every shadow for the latest stored session, if still before the next open."""
+class NotStartedError(ActiveModelError):
+    """The forward test needs `quant forward-test --start` first."""
+
+
+def freeze_session(
+    engine: Engine, settings: Settings, now: datetime | None = None, start: bool = False
+) -> FreezeResult:
+    """Freeze live and every shadow for the latest stored session, if still before the next open.
+
+    The forward test starts only when asked (``start``: `quant forward-test --start`), because the
+    start fixes the real account's starting positions and value for good. Until then nothing is
+    written. Starting on a session whose deadline has passed is refused (no backfill).
+    """
     now = now or datetime.now(timezone.utc)
+    if queries.forward_start(engine) is None and not start:
+        session = load_targets(engine, settings).session
+        return FreezeResult(session, [], [], next_open_after(session.date(), settings.market.calendar),
+                            missed=False, started=False)
     live = load_targets(engine, settings)
     session = live.session
     deadline = next_open_after(session.date(), settings.market.calendar)
@@ -116,6 +132,11 @@ def freeze_session(engine: Engine, settings: Settings, now: datetime | None = No
         portfolios[name] = lambda shadow=shadow: shadow_targets(engine, settings, shadow)
     stored = queries.frozen_sessions(engine)
     done = set(stored.loc[stored["session"] == session.date(), "portfolio"])
+    if now >= deadline and queries.forward_start(engine) is None:
+        raise NotStartedError(
+            f"cannot start on {session.date()}: its next open ({deadline:%Y-%m-%d %H:%M} UTC) has passed. Run "
+            "`quant run-daily` after the next close, then `quant forward-test --start` before the following open"
+        )
     if now >= deadline:
         missing = [name for name in portfolios if name not in done]
         if missing:

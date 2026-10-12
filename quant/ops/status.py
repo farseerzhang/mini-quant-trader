@@ -62,6 +62,7 @@ class StatusReport:
     candidates: dict[str, tuple[int, int]]  # role -> (candidates, of which gates passed)
     holdout_evaluations: int
     warnings: list[str] = field(default_factory=list)
+    forward: ForwardStatus | None = None
     strategy_in_use: str = ""  # ml_select with an ACTIVE predictor, else signals.strategy
     regime_in_use: str = ""  # the ACTIVE regime model id, else rule_based-v<N>
 
@@ -171,10 +172,13 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
     week = queries.count_quarantined(engine, since=now - timedelta(days=7))
     if week:
         warnings.append(f"{week} rows quarantined in the last 7 days (see data_quarantine)")
-    if not positions_file.exists():
-        warnings.append(f"no positions file at {positions_file}: signals assume an all-cash portfolio")
-    elif file_changed:
-        warnings.append(f"{positions_file} changed after the last signals: run `quant generate-signals`")
+    forward = forward_status(engine, settings, now, prices_as_of)
+    if forward.started_on is None:
+        if not positions_file.exists():
+            warnings.append(f"no positions file at {positions_file}: signals assume an all-cash portfolio")
+        elif file_changed:
+            warnings.append(f"{positions_file} changed after the last signals: run `quant generate-signals`")
+    warnings += forward.warnings
     predictor = active["PREDICTOR"]
     if predictor is not None:
         regime = active["REGIME"]
@@ -194,8 +198,55 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
         positions_as_of=positions_as_of, positions_file=positions_file, positions_file_changed=file_changed,
         stages=stages, last_run_daily=daily.last_ok, active=active, candidates=candidates,
         holdout_evaluations=queries.count_holdout_evaluations(engine), warnings=warnings,
-        strategy_in_use=strategy_in_use, regime_in_use=regime_in_use,
+        strategy_in_use=strategy_in_use, regime_in_use=regime_in_use, forward=forward,
     )
+
+
+@dataclass(frozen=True)
+class ForwardStatus:
+    started_on: date | None
+    frozen: int  # sessions frozen for live
+    missed: list[date]
+    warnings: list[str]
+
+
+def forward_status(engine: Engine, settings: Settings, now: datetime, prices_as_of: date | None) -> ForwardStatus:
+    """The forward test: missed sessions, tonight's freeze, the trade log (Phase 10)."""
+    from quant.data.calendar import next_open_after, sessions_between
+    from quant.forward.real import TradesError, load_start, read_trades, replay
+
+    start = queries.forward_start(engine)
+    if start is None or prices_as_of is None:
+        return ForwardStatus(None, 0, [], [])
+    started_on = start["started_on"]
+    frozen = set(queries.frozen_sessions(engine, "live")["session"])
+    sessions = sessions_between(started_on, prices_as_of, settings.market.calendar)
+    latest = sessions[-1] if sessions else None
+    tonight = latest is not None and latest not in frozen and now < next_open_after(latest, settings.market.calendar)
+    missed = [d for d in sessions if d not in frozen and not (tonight and d == latest)]
+    warnings = []
+    if tonight:
+        deadline = next_open_after(latest, settings.market.calendar)
+        warnings.append(f"forward test: {latest} is not frozen yet; run `quant run-daily` before "
+                        f"{deadline:%Y-%m-%d %H:%M} UTC or it is missed")
+    if missed:
+        shown = ", ".join(str(d) for d in missed[-5:]) + (" ..." if len(missed) > 5 else "")
+        warnings.append(f"forward test: {len(missed)} missed session(s) since {started_on} ({shown})")
+    try:
+        ledger_start = load_start(engine)
+        if sessions:
+            trades = read_trades(settings.positions.trades_path)
+            replay(ledger_start, trades, pd.DatetimeIndex([pd.Timestamp(d) for d in sessions]))
+    except TradesError as exc:
+        warnings.append(f"trade log: {exc}")
+    positions = Path(settings.positions.path)
+    created = start["created_at"]
+    if positions.exists() and created is not None:
+        created = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+        if datetime.fromtimestamp(positions.stat().st_mtime, timezone.utc) > created:
+            warnings.append(f"{positions} changed after the forward test started: it is no longer read; "
+                            f"record trades in {settings.positions.trades_path}")
+    return ForwardStatus(started_on, len(frozen), missed, warnings)
 
 
 def _when(value: datetime | None) -> str:
@@ -214,6 +265,12 @@ def format_status(report: StatusReport) -> str:
     lines.append(f"  signals                 {report.signals_as_of or 'none'}: {counts}")
     lines.append(f"  positions snapshot      {report.positions_as_of or 'none'}")
     lines.append(f"  quarantined rows        {report.quarantined_total} in total, {report.quarantined_last_week} this week")
+    forward = report.forward
+    if forward is None or forward.started_on is None:
+        lines.append("  forward test            not started (`quant forward-test --start`)")
+    else:
+        lines.append(f"  forward test            since {forward.started_on}: {forward.frozen} frozen, "
+                     f"{len(forward.missed)} missed")
     lines += ["", "Last successful runs"]
     lines.append(f"  run-daily               {_when(report.last_run_daily)}")
     for stage in report.stages:

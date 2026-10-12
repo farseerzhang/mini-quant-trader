@@ -1748,7 +1748,7 @@ Do not implement live trading in V1.
 
 Fixed before the first forward session; a change after forward data exists is logged here as a design change, never a silent edit.
 
-**Start.** The first session frozen by `run-daily` after Phase 10 is built. No backfill: a session the system did not freeze on its own evening is never added later (a missed session is counted, and paper portfolios keep their last targets over it).
+**Start.** The first session frozen by `run-daily` after Phase 10 is built. *Design change (2026-10-12, step 6, before any forward data):* the start fixes the real account's starting positions and value for good, so it is an explicit one-time command, `quant forward-test --start`, run after a close and before the next open with the real account in `data/positions.csv`; until then `run-daily`'s forward stage only reports "not started", and starting after a session's deadline is refused. After the start, `run-daily` freezes every evening (stage 5, `forward-test`) and updates `forward_equity`; `quant status` counts frozen and missed sessions and warns when tonight's session is not frozen yet, when the trade log has an error, and when the positions file is edited after the start (it is no longer read). No backfill: a session the system did not freeze on its own evening is never added later (a missed session is counted, and paper portfolios keep their last targets over it).
 
 **Portfolios** (all from the same stored data each evening):
 

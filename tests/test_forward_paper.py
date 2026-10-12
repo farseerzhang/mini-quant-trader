@@ -107,7 +107,7 @@ class PaperTests(PaperFixture):
 
     def test_the_first_freeze_records_the_start_from_the_positions_file(self):
         Path(self.settings.positions.path).write_text("symbol,quantity\nAAPL,10\nCASH,2500\n", encoding="utf-8")
-        freeze_session(self.engine, self.settings, now=EVENING)
+        freeze_session(self.engine, self.settings, now=EVENING, start=True)
         start = queries.forward_start(self.engine)
         closes = queries.load_raw_closes(self.engine, ["AAPL"])
         self.assertEqual(start["started_on"], DATES[-1].date())

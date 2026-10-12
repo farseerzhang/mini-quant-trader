@@ -8,7 +8,7 @@ import joblib
 import yaml
 
 from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, ForwardTestSettings, ShadowSettings, load_settings
-from quant.forward.freeze import freeze_session
+from quant.forward.freeze import NotStartedError, freeze_session
 from quant.persistence import queries, tables
 from quant.persistence.database import create_db_engine
 from quant.regime.hmm import fit_hmm, load_observations
@@ -55,7 +55,7 @@ class FreezeTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_every_portfolio_is_frozen_once_on_the_evening(self):
-        result = freeze_session(self.engine, self.settings, now=EVENING)
+        result = freeze_session(self.engine, self.settings, now=EVENING, start=True)
         self.assertEqual((result.session, result.missed), (LAST, False))
         self.assertEqual(sorted(result.frozen), ["live", "shadow_hmm", "shadow_lr"])
         self.assertEqual(result.deadline, MONDAY_OPEN)
@@ -73,16 +73,17 @@ class FreezeTests(unittest.TestCase):
         self.assertTrue(all(row["score"] is not None for row in scores))
 
     def test_a_rerun_and_later_data_never_change_a_frozen_session(self):
-        freeze_session(self.engine, self.settings, now=EVENING)
+        freeze_session(self.engine, self.settings, now=EVENING, start=True)
         before = queries.load_forward_targets(self.engine, "live")
         with self.engine.begin() as conn:  # a data revision after the freeze
             conn.execute(tables.features.update().where(tables.features.c.date == LAST.date())
                          .values(price_vs_sma200=-1.0))
-        again = freeze_session(self.engine, self.settings, now=EVENING)
+        again = freeze_session(self.engine, self.settings, now=EVENING, start=True)
         self.assertEqual((again.frozen, sorted(again.already)), ([], ["live", "shadow_hmm", "shadow_lr"]))
         self.assertTrue(queries.load_forward_targets(self.engine, "live").equals(before))
 
     def test_after_the_next_open_the_session_is_missed_for_good(self):
+        queries.record_forward_start(self.engine, DATES[-2].date(), 1000.0, "test")  # started the day before
         result = freeze_session(self.engine, self.settings, now=MONDAY_OPEN)
         self.assertTrue(result.missed)
         self.assertEqual(result.frozen, [])
@@ -92,11 +93,22 @@ class FreezeTests(unittest.TestCase):
                 tables.pipeline_runs.c.command == "forward-test")).mappings().first()["message"]
         self.assertIn("no backfill", message)
 
+    def test_nothing_is_written_before_the_start(self):
+        result = freeze_session(self.engine, self.settings, now=EVENING)
+        self.assertFalse(result.started)
+        self.assertTrue(queries.frozen_sessions(self.engine).empty)
+        self.assertIsNone(queries.forward_start(self.engine))
+
+    def test_a_start_after_the_deadline_is_refused(self):
+        with self.assertRaisesRegex(NotStartedError, "cannot start on .*next open .* has passed"):
+            freeze_session(self.engine, self.settings, now=MONDAY_OPEN, start=True)
+        self.assertIsNone(queries.forward_start(self.engine))
+
     def test_a_portfolio_that_targets_nothing_still_gets_its_session_row(self):
         with self.engine.begin() as conn:
             conn.execute(tables.market_regimes.update().where(tables.market_regimes.c.date == LAST.date())
                          .values(regime="BEAR"))
-        freeze_session(self.engine, self.settings, now=EVENING)
+        freeze_session(self.engine, self.settings, now=EVENING, start=True)
         live = queries.frozen_sessions(self.engine, "live").iloc[0]
         self.assertEqual((live["regime"], live["positions"], live["invested"]), ("BEAR", 0, 0.0))
 

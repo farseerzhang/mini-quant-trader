@@ -119,7 +119,7 @@ class RealPortfolioTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_the_start_is_stored_and_the_positions_file_is_then_ignored(self):
-        freeze_session(self.engine, self.settings, now=EVENING)
+        freeze_session(self.engine, self.settings, now=EVENING, start=True)
         start = queries.forward_start_positions(self.engine).set_index("symbol")["quantity"].to_dict()
         self.assertEqual(start, {"AAPL": 10.0, "TSLA": 2.0, "CASH": 1000.0})
         self.positions.write_text("symbol,quantity\nCASH,1\n", encoding="utf-8")  # edited after the start
@@ -131,12 +131,12 @@ class RealPortfolioTests(unittest.TestCase):
         self.assertIn("TSLA is not in the stock pool", " | ".join(signals.warnings))
 
     def test_the_start_value_counts_every_holding_and_unpriced_ones_at_cost(self):
-        freeze_session(self.engine, self.settings, now=EVENING)
+        freeze_session(self.engine, self.settings, now=EVENING, start=True)
         close = queries.load_raw_closes(self.engine, ["AAPL"])["AAPL"].iloc[-1]
         self.assertAlmostEqual(queries.forward_start(self.engine)["start_value"], 10 * close + 2 * 200 + 1000)
 
     def test_real_portfolio_from_trades_is_valued_every_session(self):
-        freeze_session(self.engine, self.settings, now=EVENING)
+        freeze_session(self.engine, self.settings, now=EVENING, start=True)
         start = queries.forward_start(self.engine)
         # The fixture ends at the start; a trade log for later sessions is checked against stored data.
         self.trades.write_text(f"date,symbol,side,quantity,price\n{DATES[-1].date()},AAPL,SELL,1,100\n",

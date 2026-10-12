@@ -102,6 +102,39 @@ class StatusTests(unittest.TestCase):
                       " | ".join(report.warnings))
 
 
+class ForwardStatusTests(StatusTests):
+    """Reuses the status fixture; the inherited status tests run once, in StatusTests."""
+
+    locals().update({name: None for name in dir(StatusTests) if name.startswith("test_")})
+
+    def start(self):
+        queries.record_forward_start(self.engine, DATES[-3].date(), 1000.0, "test",
+                                     [{"symbol": "CASH", "quantity": 1000.0, "cost_basis": None}])
+        queries.freeze_forward(self.engine, {
+            "session": DATES[-3].date(), "portfolio": "live", "strategy": "regime_switch", "regime": "BULL",
+            "regime_source": "rule_based-v1", "model_version": "rule_based-v1", "invested": 0.0, "positions": 0}, [])
+
+    def test_missed_sessions_and_tonight(self):
+        self.start()
+        report = self.status()  # the evening of the last session: not frozen yet
+        text = " | ".join(report.warnings)
+        self.assertIn(f"forward test: {LAST} is not frozen yet; run `quant run-daily` before", text)
+        self.assertIn(f"forward test: 1 missed session(s) since {DATES[-3].date()} ({DATES[-2].date()})", text)
+        self.assertEqual((report.forward.frozen, report.forward.missed), (1, [DATES[-2].date()]))
+        self.assertIn("forward test            since", format_status(report))
+
+    def test_a_broken_trade_log_is_a_warning(self):
+        self.start()
+        trades = self.root / "trades.csv"
+        trades.write_text("date,symbol,side,quantity,price\n2020-01-02,AAPL,BUY,1,1\n", encoding="utf-8")
+        settings = dataclasses.replace(self.settings, positions=dataclasses.replace(
+            self.settings.positions, trades_path=str(trades)))
+        self.assertIn("trade log:", " | ".join(collect_status(self.engine, settings, now=EVENING).warnings))
+
+    def test_before_the_start(self):
+        self.assertIn("forward test            not started", format_status(self.status()))
+
+
 class StatusCommandTests(unittest.TestCase):
     def test_status_command_prints_every_section(self):
         with tempfile.TemporaryDirectory() as directory:
