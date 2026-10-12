@@ -568,14 +568,37 @@ def forward_start(engine: Engine):
         return conn.execute(select(tables.forward_start)).mappings().first()
 
 
-def record_forward_start(engine: Engine, started_on: date, start_value: float, value_source: str) -> bool:
-    """Write the start once; False if it already exists (the start never moves)."""
+def record_forward_start(engine: Engine, started_on: date, start_value: float, value_source: str,
+                         positions: Sequence[Mapping[str, Any]] = ()) -> bool:
+    """Write the start (and the starting holdings) once; False if it already exists (it never moves)."""
     with engine.begin() as conn:
         if conn.execute(select(tables.forward_start.c.started_on)).first() is not None:
             return False
         conn.execute(tables.forward_start.insert().values(
             started_on=started_on, start_value=start_value, value_source=value_source, created_at=_now()))
+        if positions:
+            conn.execute(tables.forward_start_positions.insert(), list(positions))
     return True
+
+
+def forward_start_positions(engine: Engine) -> pd.DataFrame:
+    with engine.connect() as conn:
+        rows = conn.execute(select(tables.forward_start_positions)).mappings().all()
+    return pd.DataFrame([dict(r) for r in rows], columns=["symbol", "quantity", "cost_basis"])
+
+
+def load_raw_opens(engine: Engine, symbols: Sequence[str], since: date | None = None) -> pd.DataFrame:
+    """Stored (as-traded) opens: dates x symbols."""
+    prices = tables.daily_prices
+    stmt = select(prices.c.date, prices.c.symbol, prices.c.open).where(prices.c.symbol.in_(list(symbols)))
+    if since is not None:
+        stmt = stmt.where(prices.c.date >= since)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).all()
+    frame = pd.DataFrame(rows, columns=["date", "symbol", "open"])
+    wide = frame.pivot(index="date", columns="symbol", values="open")
+    wide.index = pd.DatetimeIndex(wide.index)
+    return wide.sort_index().astype(float)
 
 
 def replace_forward_equity(engine: Engine, rows: Sequence[Mapping[str, Any]]) -> int:

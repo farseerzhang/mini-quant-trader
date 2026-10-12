@@ -210,11 +210,13 @@ class RiskSettings:
 @dataclass(frozen=True)
 class PositionSettings:
     # CSV of current holdings (section 6.8): symbol,quantity,cost_basis plus one CASH row.
+    # Once the forward test has started it is its start; holdings then come from the trade log.
     path: str
+    trades_path: str  # forward test (Phase 10): every BUY / SELL / DIVIDEND after the start
 
     def __post_init__(self) -> None:
-        if not str(self.path).strip():
-            raise ConfigError("positions.path must not be empty")
+        if not str(self.path).strip() or not str(self.trades_path).strip():
+            raise ConfigError("positions.path and positions.trades_path must not be empty")
 
 
 @dataclass(frozen=True)

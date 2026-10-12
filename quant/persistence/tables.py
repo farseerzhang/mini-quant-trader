@@ -270,6 +270,16 @@ forward_start = Table(
     Column("created_at", DateTime, nullable=False),
 )
 
+# The real account's holdings at the start (the positions file read once at the first freeze);
+# later holdings are these plus the trade log.
+forward_start_positions = Table(
+    "forward_start_positions",
+    metadata,
+    Column("symbol", String, primary_key=True),  # a stock, or CASH (quantity = cash amount)
+    Column("quantity", Float, nullable=False),
+    Column("cost_basis", Float),
+)
+
 # Daily value of each paper portfolio (live, shadows, SPY); derived from the frozen targets and
 # prices, so it is recomputed (replaced) on every run.
 forward_equity = Table(

@@ -132,8 +132,12 @@ def load_signals(engine: Engine, settings: Settings) -> Signals:
     each signal with its reason."""
     from quant.signals.reasons import with_reasons  # reasons builds on this module
 
+    from quant.forward.real import holdings_at  # once the forward test has started: start + trade log
+
     targets = load_targets(engine, settings)
-    holdings = read_positions(settings.positions.path, settings.market.stocks, settings.backtest.initial_cash)
+    holdings = holdings_at(engine, settings, targets.session)
+    if holdings is None:
+        holdings = read_positions(settings.positions.path, settings.market.stocks, settings.backtest.initial_cash)
     since = (targets.session - pd.Timedelta(days=30)).date()
     closes = queries.load_raw_closes(engine, list(holdings.quantities), since=since) if holdings.quantities else pd.DataFrame()
     valuation = value_holdings(holdings, closes, targets.session)

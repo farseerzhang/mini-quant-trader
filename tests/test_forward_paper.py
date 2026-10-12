@@ -44,7 +44,8 @@ class PaperTests(unittest.TestCase):
 
     def freeze(self, sessions):
         """Write the live targets of ``sessions`` as the evening freezes would (live = backtest)."""
-        queries.record_forward_start(self.engine, sessions[0].date(), 50_000.0, "test")
+        queries.record_forward_start(self.engine, sessions[0].date(), 50_000.0, "test",
+                                     [{"symbol": "CASH", "quantity": 50_000.0, "cost_basis": None}])
         for session in sessions:
             row = self.weights.loc[session]
             held = row[row > 0]
@@ -93,9 +94,11 @@ class PaperTests(unittest.TestCase):
         update_paper_equity(self.engine, self.settings)
         update_paper_equity(self.engine, self.settings)  # a re-run replaces, never duplicates
         equity = queries.load_forward_equity(self.engine)
-        self.assertEqual(sorted(equity["portfolio"].unique()), ["SPY", "live"])
+        self.assertEqual(sorted(equity["portfolio"].unique()), ["SPY", "live", "real"])
+        real = equity[equity["portfolio"] == "real"]
+        self.assertTrue((real["value"] == 50_000.0).all())  # all cash, no trades
         self.assertEqual(equity.groupby("portfolio")["date"].count().to_dict(),
-                         {"SPY": len(DATES[DATES >= WINDOW[0]]), "live": len(DATES[DATES >= WINDOW[0]])})
+                         {name: len(DATES[DATES >= WINDOW[0]]) for name in ("SPY", "live", "real")})
 
     def test_the_first_freeze_records_the_start_from_the_positions_file(self):
         Path(self.settings.positions.path).write_text("symbol,quantity\nAAPL,10\nCASH,2500\n", encoding="utf-8")

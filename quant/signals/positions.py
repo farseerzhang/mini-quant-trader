@@ -133,6 +133,7 @@ def parse_positions(lines: Iterable[str], stocks: Iterable[str], path: Path | No
             continue  # listed but not held
         if symbol not in pool:
             unmanaged[symbol] = quantity
+            cost_basis[symbol] = basis  # kept: values a holding without stored prices (forward test)
             warnings.append(f"{symbol} is not in the stock pool: not managed, no signal, left out of the portfolio value")
             continue
         quantities[symbol] = quantity
@@ -190,7 +191,7 @@ def snapshot_rows(holdings: Holdings, as_of: date) -> list[dict]:
          "source": holdings.source}
         for s, q in holdings.quantities.items()
     ]
-    rows += [{"symbol": s, "as_of_date": as_of, "quantity": q, "cost_basis": None, "managed": 0,
+    rows += [{"symbol": s, "as_of_date": as_of, "quantity": q, "cost_basis": holdings.cost_basis.get(s), "managed": 0,
               "source": holdings.source} for s, q in holdings.unmanaged.items()]
     rows.append({"symbol": CASH, "as_of_date": as_of, "quantity": holdings.cash, "cost_basis": None, "managed": 1,
                  "source": holdings.source})

@@ -85,16 +85,24 @@ def _rows(name: str, targets: Targets) -> tuple[dict, list[dict]]:
     return header, rows
 
 
-def start_value(engine: Engine, settings: Settings, session: pd.Timestamp) -> tuple[float, str]:
-    """The real account's value at the close of ``session``: managed holdings plus cash, as the
-    signals value it (the positions file; without one, the notional ``backtest.initial_cash``)."""
-    from quant.signals.positions import read_positions, value_holdings
+def start_value(engine: Engine, settings: Settings, session: pd.Timestamp) -> tuple[float, str, list[dict]]:
+    """The real account at the close of ``session`` from the positions file (every holding, in the
+    pool or not, at as-traded closes, plus cash), its source and its rows for the stored start.
+    Without a file: the notional ``backtest.initial_cash``, all cash."""
+    from quant.forward.real import Ledger, Start, start_rows, value_ledger
+    from quant.signals.positions import read_positions
 
     holdings = read_positions(settings.positions.path, settings.market.stocks, settings.backtest.initial_cash)
-    closes = queries.load_raw_closes(engine, list(holdings.quantities)) if holdings.quantities else pd.DataFrame()
-    valuation = value_holdings(holdings, closes, session)
+    rows = start_rows(holdings)
+    quantities = {**holdings.quantities, **holdings.unmanaged}
+    start = Start(session, quantities, dict(holdings.cost_basis), holdings.cash)
+    index = pd.DatetimeIndex([session])
+    ledger = Ledger(pd.DataFrame([quantities], index=index, columns=list(quantities)).fillna(0.0),
+                    pd.Series([holdings.cash], index=index), [], ())
+    closes = queries.load_raw_closes(engine, list(quantities)) if quantities else pd.DataFrame()
+    valued, _ = value_ledger(ledger, closes.loc[:session], start)
     source = str(holdings.path) if holdings.path is not None else "notional backtest.initial_cash (no positions file)"
-    return float(valuation.total), source
+    return float(valued["value"].iloc[0]), source, rows
 
 
 def freeze_session(engine: Engine, settings: Settings, now: datetime | None = None) -> FreezeResult:
@@ -119,8 +127,8 @@ def freeze_session(engine: Engine, settings: Settings, now: datetime | None = No
         return FreezeResult(session, [], sorted(done), deadline, missed=bool(missing))
 
     if queries.forward_start(engine) is None:
-        value, source = start_value(engine, settings, session)
-        queries.record_forward_start(engine, session.date(), value, source)
+        value, source, rows = start_value(engine, settings, session)
+        queries.record_forward_start(engine, session.date(), value, source, rows)
         log.info("forward test starts %s with %.2f from %s", session.date(), value, source)
 
     frozen, already = [], []

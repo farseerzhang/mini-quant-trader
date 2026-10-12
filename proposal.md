@@ -1613,6 +1613,8 @@ risk:                              # section 19.1; applied in this order to the 
 
 positions:                         # section 6.8; your holdings, read by run-daily (data/ is git-ignored)
   path: data/positions.csv         # columns symbol,quantity,cost_basis; one CASH row holds the cash amount
+                                   # (once the forward test starts it is read only once, as its start)
+  trades_path: data/trades.csv     # forward test: date,symbol,side,quantity,price,fees,amount after the start
 
 signals:                           # section 18.1; BUY / HOLD / REDUCE / EXIT at the close of T
   strategy: regime_switch          # a rule-based strategy from section 17.1 (baseline or a variant)
@@ -1769,6 +1771,8 @@ Implementation (step 1, `quant/forward/freeze.py`): tables `forward_sessions` (o
 Implementation (step 2, `quant/forward/paper.py`): the start session and start value are written once at the first freeze (`forward_start`; the positions file's managed holdings plus cash at that close, as the signals value it; the notional `backtest.initial_cash` without a file) and never move. Every run re-simulates each paper portfolio from the start with the backtest engine on its frozen targets (a missed session keeps the previous targets) and replaces `forward_equity` (date, portfolio, value, invested): the frozen targets are the record, the values are derived from them and the prices. Paper values use total-return prices, as the backtest; dividends the real account receives count only if recorded (step 4).
 
 **Real portfolio.** Holdings at each close are the starting positions plus every trade dated on or before that session (`date, symbol, side, quantity, price`, optional `fees`); cash follows from the trades. Valued at the as-traded close. Deposits and withdrawals are not tracked (owner's choice): any would show up as return. A trade added later with its real date corrects the real history; frozen targets are never changed by it.
+
+Implementation (step 4, `quant/forward/real.py`): `positions.trades_path` (`data/trades.csv`) has `date,symbol,side,quantity,price,fees,amount`; `side` is BUY, SELL or **DIVIDEND** (`amount` = cash received: part of the return, not a deposit). The positions file is read once at the first freeze and stored (`forward_start_positions`); from then on the **signals also take the current holdings from the start plus the trade log**, so the positions file is not edited again. Every holding counts, in the pool or not, at as-traded closes; one without stored prices keeps its last trade price or cost basis (with a warning). Refused with the line: a trade on or before the start session, after the latest stored session, or selling more than is held; negative cash is a warning. Followed share on session T compares the close of T with the `live` target frozen on T-1 (the target that day's trades were meant to reach). Execution cost per BUY / SELL: the fill price against the as-traded open of its date, fees included, in basis points.
 
 **Scores** (`quant forward-report`, dashboard): for every portfolio since the start: total return, annualised volatility, Sharpe (daily, no risk-free rate), max drawdown; sessions covered and missed. For `real` also: the **followed share** each day, the sum over stocks of min(actual weight, `live` target weight); and the **cost of execution**, the owner's fill prices against the next open after the signal.
 

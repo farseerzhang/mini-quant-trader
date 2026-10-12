@@ -142,6 +142,8 @@ risk:                              # section 19.1; applied in this order to the 
 
 positions:                         # section 6.8; your holdings, read by run-daily (data/ is git-ignored)
   path: data/positions.csv         # columns symbol,quantity,cost_basis; one CASH row holds the cash amount
+                                   # (once the forward test starts it is read only once, as its start)
+  trades_path: data/trades.csv     # forward test: date,symbol,side,quantity,price,fees,amount after the start
 
 signals:                           # section 18.1; BUY / HOLD / REDUCE / EXIT at the close of T
   strategy: regime_switch          # a rule-based strategy from section 17.1 (baseline or a variant)
