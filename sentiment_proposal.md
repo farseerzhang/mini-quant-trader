@@ -1,6 +1,6 @@
 # YouTube Creator Opinion Factor — Proposal (Draft)
 
-Status: draft, awaiting confirmation. No code is written before it is approved.
+Status: approved 2026-10-12 (decisions in section 14). S0 done (section 12.1); S1 next.
 Date: 2026-10-12
 
 ---
@@ -218,11 +218,13 @@ sentiment:
   min_duration_seconds: 180          # skip Shorts
   include_live: false
   request_delay_seconds: [2, 5]      # random wait range
-  channels:
-    - {handle: "@JosephCarlsonShow",    language: en, style: long-term holdings}
+  channels:                          # chosen after S0 (section 12.1)
     - {handle: "@FinancialEducation",   language: en, style: aggressive growth}
-    - {handle: "@meitou",               language: zh, style: broad coverage}
-    - {handle: "@shiyehuanqiucaijing",  language: zh, style: conservative}
+    - {handle: "@chipstockinvestor",    language: en, style: semiconductors / AI}
+    - {handle: "@NaNaShuoMeiGu",        language: zh, style: daily market wrap}
+    - {handle: "@yttalkjun",            language: zh, style: macro + sectors}
+    - {handle: "@Zac-Stock-Journal",    language: zh, style: technical buy points, own holdings}
+    - {handle: "@nick_stockcafe",       language: zh, style: own buys, Traditional Chinese}
   extraction:
     model: claude-sonnet-5-5         # decided after the S2 comparison
     prompt_version: 1
@@ -235,7 +237,7 @@ sentiment:
     min_samples: 30
 ```
 
-The channel handles are placeholders; S0 verifies the real `channel_id`s.
+The handles were verified in S0; their `channel_id`s are listed in section 12.1. Members-only videos (Chip Stock Investor posts about half of its videos that way) are recorded as `SKIPPED`.
 
 The API key is read only from the `ANTHROPIC_API_KEY` environment variable (you put it in `.env`; `.env` must be added to `.gitignore` first, as it is not ignored today). The first version needs no YouTube key.
 
@@ -285,6 +287,38 @@ sentiment = ["yt-dlp", "youtube-transcript-api", "anthropic", "opencc-python-rei
 | **S5 Whisper** | Local transcription of videos without captions (optional) | Decided by the caption coverage found in S0 |
 | **S6 Factor** | Pre-register per section 9, then add to `features` | Separate pre-registration |
 
+## 12.1 S0 findings (2026-10-12, window 2026-09-28 .. 2026-10-12)
+
+| Channel | Handle / channel_id | Videos in 14 days | Captions | Notes |
+|---|---|---|---|---|
+| Joseph Carlson | `@JosephCarlsonShow` | 0 | — | Now posts every 1–2 months (last: 2026-08-12, before that 2026-06-08) |
+| Financial Education | `@FinancialEducation` / `UCnMn36GT_H0X-w5_ckLtlgQ` | 4 | 4/4 auto (`en`) | ~35–40 min, ~38k characters per transcript; auto captions read cleanly |
+| 美投讲美股 | `@MeiTouJun` / `UCBUH38E0ngqvmTqdchWunwQ` | 2 public (+ members-only) | 0 — captions disabled | ~1 video a week publicly; more macro/theme than single-stock calls |
+| 视野环球财经 | `@RhinoFinance` / `UCFQsi7WaF5X41tcuOryDk8w` | 9 public + 2 members-only | 0 — captions disabled | Near-daily, ~20–25 min, titles packed with tickers (NVDA, META, ORCL, …) |
+
+Consequences:
+
+- **Both Chinese channels disable captions**, including auto captions, so they can only be covered by transcribing audio (S5 Whisper must move forward). The machine has an RTX 5070 (12 GB), enough for a local Whisper large model; `ffmpeg` is not installed, but `faster-whisper` decodes audio without it.
+- **Joseph Carlson posts too rarely** to contribute to a daily summary.
+- **Members-only videos** (both Chinese channels) cannot be read and are recorded as `SKIPPED`.
+- The handles in section 10 are corrected to `@MeiTouJun` and `@RhinoFinance`.
+
+Decision: replace Joseph Carlson and both Chinese channels with channels that publish captions, keeping the first version captions-only (Whisper stays in S5).
+
+### Replacement candidates (same window; at most 10 videos checked per channel)
+
+| Channel | Handle / channel_id | Long videos in 14 days | Captions | Content |
+|---|---|---|---|---|
+| Chip Stock Investor | `@chipstockinvestor` / `UC3aD-gfmHV_MhMmcwyIu1wA` | 10 (5 public, 5 members-only) | manual `en` on all public | Semiconductors/AI single stocks (ON, MU, neoclouds); clean text |
+| Ticker Symbol: YOU | `@TickerSymbolYOU` / `UC7kCeZ53sli_9XwuQeFxLqw` | 1 | auto `en` | Good single-stock calls but about every 1–2 weeks |
+| NaNa说美股 | `@NaNaShuoMeiGu` / `UCFhJ8ZFg9W4kLwFTBBNIjOw` | 10+ (daily) | manual `zh-Hans` + `zh-Hant` | Daily market wrap: indices, sectors, single stocks, options; very clean text |
+| 投资TALK君 | `@yttalkjun` / `UCRBrH2qS7yKGMNSmjnj8gcw` | 9 | manual `zh` on 7/9 | Macro-heavy (CPI, Fed, rates) with sector/single-stock views; clean text |
+| Zac美股笔记 | `@Zac-Stock-Journal` / `UCawshLsWXrFnYhAlnmn0h2A` | 3 | manual `zh-Hans` + `zh-Hant` | Explicit buy-point calls and real holdings, but half the videos are technical-analysis lessons |
+| Nick 美股咖啡館 | `@nick_stockcafe` / `UCjrP2TtSTifuRJ76hW2IW1A` | 4 | manual `zh-TW` | Explicit buys and own positions, but the captions are noisy (misrecognized words) |
+| 老李玩钱 | `@老李玩钱` | 4 | none | Captions disabled |
+| 北美韭菜日记, Money Manta | | 0 | — | Inactive since 2023 / 2022 |
+| 猴哥财经 | `@猴哥财经` | 0 | — | Last video 2026-09-23 |
+
 ---
 
 # 13. Risks
@@ -301,9 +335,9 @@ sentiment = ["yt-dlp", "youtube-transcript-api", "anthropic", "opencc-python-rei
 
 ---
 
-# 14. Decisions needed from you
+# 14. Decisions (2026-10-12)
 
-1. **Channels**: use Joseph Carlson, Financial Education, 美投讲美股 and 视野环球财经 for the first version?
-2. **Backfill**: how much history to backfill in S4? I suggest 6 months.
-3. **Stock scope**: count only stocks in the `settings.yaml` pool, or every US stock mentioned? I suggest every stock, with pool stocks marked separately in the summary.
-4. **Report language**: English or Chinese?
+1. **Channels**: initially Joseph Carlson, Financial Education, 美投讲美股 and 视野环球财经. After S0 (section 12.1): Financial Education, Chip Stock Investor, NaNa说美股, 投资TALK君, Zac美股笔记 and Nick 美股咖啡館.
+2. **Backfill**: 6 months in S4.
+3. **Stock scope**: every US stock mentioned; stocks in the `settings.yaml` pool are marked separately in the summary.
+4. **Report language**: English.
