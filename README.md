@@ -202,9 +202,10 @@ This builds the dataset (label: stock vs SPY over the next `model.target.horizon
 python -m quant status
 python -m quant promote <model_id>
 python -m quant promote <model_id> --override "reason"
+python -m quant retire <model_id> --reason "why"
 ```
 
-`status` is read-only: data freshness against the last completed NYSE session, the last successful run of every stage, the ACTIVE model per role, which strategy and regime the signals use, and warnings (stale data, failed runs, quarantined rows, a positions file edited after the last signals, an ACTIVE model whose outputs are behind). `promote` makes a candidate the ACTIVE model of its role and retires the previous one; a candidate whose gates failed is refused unless `--override` gives a reason, which is logged. Promoting another model again undoes it.
+`status` is read-only: data freshness against the last completed NYSE session, the last successful run of every stage, the ACTIVE model per role, which strategy and regime the signals use, and warnings (stale data, failed runs, quarantined rows, a positions file edited after the last signals, an ACTIVE model whose outputs are behind). `promote` makes a candidate the ACTIVE model of its role and retires the previous one; a candidate whose gates failed is refused unless `--override` gives a reason, which is logged. `retire` sets the ACTIVE model of a role to RETIRED, so that role falls back to its rule-based version (the rule-based regime, or rule-based signals); `promote` it again to undo. Both are logged.
 
 With an ACTIVE HMM, `calculate-regime` also stores its filtered regime and the signals use it. With an ACTIVE predictor, `generate-signals` first stores its predictions (table `predictions`, with a hash of the inputs) and `ml_select` drives the signals: the top `strategies.ml_select.top_n` stocks by probability, the regime setting the exposure, the same risk caps and hold band. Today no model has passed its gates, so the rule-based path is what runs.
 

@@ -17,15 +17,15 @@ market:
   # modelled as corporate actions). Chosen today, and sectors are today's classification,
   # so backtests carry survivorship bias (section 20).
   symbols:
-    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD, MU, PLTR, RMBS, LITE, FIG]
-    communication_services: [GOOGL, DIS, NFLX]
+    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD, MU, PLTR, RMBS, LITE, FIG, AVGO, AMAT, LRCX, DELL, PANW, ANET, SNDK, IBM]
+    communication_services: [GOOGL, DIS, NFLX, META]
     consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX, TSLA, LULU, SE, CCL]
-    consumer_staples: [PG, KO, PEP, WMT, COST]
-    health_care: [JNJ, UNH, AMGN, LLY, TMO, TEM]
-    financials: [BRK-B, XYZ, JPM, BAC, WFC, GS, BLK]
-    industrials: [CAT, UNP, LMT, DE, SPCX]
+    consumer_staples: [PG, KO, PEP, WMT, COST, PM]
+    health_care: [JNJ, UNH, AMGN, LLY, TMO, TEM, ABBV, MRK]
+    financials: [BRK-B, XYZ, JPM, BAC, WFC, GS, BLK, V, MA, MS, C]
+    industrials: [CAT, UNP, LMT, DE, SPCX, GE, GEV, RTX]
     energy: [XOM, CVX, SLB]
-    materials: [SHW, NEM]
+    materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
   market_symbols: [SPY, QQQ, ^VIX]

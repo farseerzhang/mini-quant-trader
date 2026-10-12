@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from quant import cli
 from quant.config.settings import DEFAULT_CONFIG_PATH
-from quant.ops.promote import PromotionError, promote_model
+from quant.ops.promote import PromotionError, promote_model, retire_model
 from quant.ops.status import collect_status
 from quant.persistence import tables
 from quant.persistence.database import create_db_engine, init_db
@@ -128,6 +128,25 @@ class PromoteTests(unittest.TestCase):
         self.add("lr-hmm", depends_on="hmm-1")
         self.assertEqual(promote_model(self.engine, self.settings, "lr-hmm").stale_predictor, "lr-hmm")
 
+    def test_retire_falls_back_to_rule_based_and_promote_undoes_it(self):
+        self.add("hmm-1", role="REGIME")
+        self.add("lr-1", status="ACTIVE")
+        promote_model(self.engine, self.settings, "hmm-1")
+        self.assertEqual(retire_model(self.engine, self.settings, "hmm-1", "too much turnover"), "REGIME")
+        self.assertEqual(self.status_of(), {"hmm-1": "RETIRED", "lr-1": "ACTIVE"})  # the other role untouched
+        with self.engine.connect() as conn:
+            message = conn.execute(select(tables.pipeline_runs.c.message)
+                                   .where(tables.pipeline_runs.c.command == "retire")).scalar_one()
+        self.assertEqual(message, "hmm-1 RETIRED; REGIME falls back to the rule-based regime; reason: too much turnover")
+        promote_model(self.engine, self.settings, "hmm-1")
+        self.assertEqual(self.status_of()["hmm-1"], "ACTIVE")
+
+    def test_retire_refuses_a_model_that_is_not_active(self):
+        self.add("lr-1")
+        for model_id, message in (("lr-1", "is CANDIDATE, not ACTIVE"), ("nope", "no model 'nope'")):
+            with self.subTest(model_id), self.assertRaisesRegex(PromotionError, message):
+                retire_model(self.engine, self.settings, model_id)
+
     def test_the_database_allows_one_active_model_per_role(self):
         self.add("lr-1", status="ACTIVE")
         with self.assertRaises(IntegrityError):
@@ -165,11 +184,14 @@ class PromoteCommandTests(unittest.TestCase):
                 ))
             engine.dispose()
 
-            def run(*args):
+            def run_command(*args):
                 output, errors = StringIO(), StringIO()
                 with redirect_stdout(output), redirect_stderr(errors):
-                    code = cli.main(["--config", str(config), "promote", *args])
+                    code = cli.main(["--config", str(config), *args])
                 return code, output.getvalue(), errors.getvalue()
+
+            def run(*args):
+                return run_command("promote", *args)
 
             code, _, errors = run("hmm-1")
             self.assertEqual(code, 1)
@@ -178,6 +200,13 @@ class PromoteCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("hmm-1 is now the ACTIVE REGIME model.", output)
             self.assertIn("OVERRIDE logged", output)
+            self.assertIn("Undo with `quant retire hmm-1` (back to the rule-based regime)", output)
+            code, output, _ = run_command("retire", "hmm-1", "--reason", "test")
+            self.assertEqual(code, 0)
+            self.assertIn("hmm-1 is RETIRED. REGIME now uses the rule-based regime", output)
+            code, _, errors = run_command("retire", "hmm-1")
+            self.assertEqual(code, 1)
+            self.assertIn("Retire refused: hmm-1 is RETIRED, not ACTIVE", errors)
 
 
 if __name__ == "__main__":

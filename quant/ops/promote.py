@@ -100,4 +100,27 @@ def promote_model(engine: Engine, settings: Settings, model_id: str, override_re
                      override_reason.strip() if overridden else None, failed, stale)
 
 
-__all__ = ["CANDIDATE", "Promotion", "PromotionError", "promote_model"]
+FALLBACK = {"REGIME": "the rule-based regime", "PREDICTOR": "rule-based signals only"}
+
+
+def retire_model(engine: Engine, settings: Settings, model_id: str, reason: str | None = None) -> str:
+    """`quant retire <model_id>`: set the ACTIVE model of a role to RETIRED, so the role falls back
+    to its rule-based version (section 16.3). Returns the role. Promoting it again undoes this."""
+    models = tables.model_versions
+    with engine.connect() as conn:
+        row = conn.execute(select(models).where(models.c.model_id == model_id)).mappings().first()
+    if row is None:
+        raise PromotionError(f"no model {model_id!r} in model_versions (see `quant status`)")
+    if row["status"] != ACTIVE:
+        raise PromotionError(f"{model_id} is {row['status']}, not ACTIVE; only the ACTIVE model of a role can be retired")
+    with engine.begin() as conn:
+        conn.execute(models.update().where(models.c.model_id == model_id).values(status=RETIRED))
+    role = row["role"]
+    message = f"{model_id} RETIRED; {role} falls back to {FALLBACK[role]}"
+    if reason and reason.strip():
+        message += f"; reason: {reason.strip()}"
+    queries.record_pipeline_run(engine, command="retire", stage="retire", status="OK", message=message)
+    return role
+
+
+__all__ = ["CANDIDATE", "Promotion", "PromotionError", "promote_model", "retire_model"]

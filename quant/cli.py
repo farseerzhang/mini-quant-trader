@@ -16,7 +16,7 @@ from quant.features.pipeline import calculate_and_store_features
 from quant.logs import close_logging, configure_logging
 from quant.models.ml_backtest import BASELINE
 from quant.models.retrain import run_retrain
-from quant.ops.promote import PromotionError, promote_model
+from quant.ops.promote import FALLBACK, PromotionError, promote_model, retire_model
 from quant.ops.status import collect_status, format_status
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
@@ -128,6 +128,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--override", metavar="REASON", help="promote although the gates failed; the reason is logged"
     )
     promote_command.add_argument("--db", help=db_help)
+
+    retire_command = commands.add_parser(
+        "retire",
+        help="MANUAL: set an ACTIVE model to RETIRED; its role falls back to the rule-based version",
+    )
+    retire_command.add_argument("model_id", help="the ACTIVE model to retire (see `quant status`)")
+    retire_command.add_argument("--reason", help="why; logged with the change")
+    retire_command.add_argument("--db", help=db_help)
 
     status_command = commands.add_parser(
         "status",
@@ -477,7 +485,23 @@ def _run_promote(args: argparse.Namespace, settings: Settings) -> int:
     if promotion.stale_predictor:
         print(f"warning: the ACTIVE predictor {promotion.stale_predictor} was trained on another regime; "
               "retrain it (`quant status` warns until then)")
-    print("The other role is unchanged. Undo by promoting the previous model again.")
+    undo = (f"`quant promote {promotion.retired}`" if promotion.retired
+            else f"`quant retire {promotion.model_id}` (back to {FALLBACK[promotion.role]})")
+    print(f"The other role is unchanged. Undo with {undo}.")
+    return 0
+
+
+def _run_retire(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
+    try:
+        role = retire_model(engine, settings, args.model_id, args.reason)
+    except PromotionError as exc:
+        _error(f"Retire refused: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(f"{args.model_id} is RETIRED. {role} now uses {FALLBACK[role]}; run `quant run-daily` (or generate-signals) "
+          f"to refresh the signals. Undo with `quant promote {args.model_id}`.")
     return 0
 
 
@@ -543,6 +567,7 @@ COMMANDS = {
     "calculate-features": lambda args, settings: _run_features(args, settings),
     "calculate-regime": lambda args, settings: _run_regime(args, settings),
     "promote": lambda args, settings: _run_promote(args, settings),
+    "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),
     "generate-signals": lambda args, settings: _run_signals(args, settings),
     "run-daily": lambda args, settings: _run_daily(args, settings),

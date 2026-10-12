@@ -978,7 +978,48 @@ B: selected in each fold       0.497   -0.03%            2/11                9.0
 
 Cleaner inputs improve the probabilities a little, but not enough to beat `regime_switch` after costs; the binding constraints remain the weak signal and the cost of trading it.
 
-## 15.5 Final refit
+### 15.4.6 Retrain on the 81-stock pool (registered 2026-10-12, before running)
+
+The pool grew from 48 to 81 stocks (section 17.1.3). A cross-sectional predictor has more stocks to rank, which is a reason to expect a weak signal to trade better; the regime model trades a different pool. One retrain per model type with **everything else unchanged**: the configured search spaces, `max_trials`, folds, embargo, target, features, `ml_select` (top 10, keep 10, every 5 sessions), the HMM settings, and the gates in `retrain.gates` exactly as they are. The baseline is `regime_switch` on the same 81 stocks and folds. No holdout is used here (step 3 decides that, once, for the best candidate). Each model type's trial count rises by its search trials; nothing is promoted by this step.
+
+**Result (2026-10-12; walk-forward 2014-09-26 .. 2025-10-01, after costs; baseline `regime_switch` on 81 stocks: CAGR 13.2%, Sharpe 0.97, max DD -25.0%, turnover 4.1x):**
+
+```text
+candidate                                     CAGR  Sharpe  max DD  turnover  folds beating  gates
+hmm-20261012T174554Z-5f979a (regime_switch)  10.4%   0.976  -19.9%     8.2x   -              PASSED (4/4)
+logistic_regression-20261012T174649Z-dd9714  17.3%   1.04   -23.3%    17.4x   6/11 = 55%     FAILED (folds)
+xgboost-20261012T174934Z-9f4b96              14.9%   0.96   -33.1%    29.6x   7/11 = 64%     FAILED (Sharpe, DD)
+random_forest-20261012T175038Z-1b254a        13.7%   0.84   -26.6%    18.1x   4/11 = 36%     FAILED (3 gates)
+```
+
+- **HMM passes every gate**, but narrowly: Sharpe 0.9757 vs 0.9712 with the rule-based regime. The fitted HMM is the same as on 48 stocks (it sees only SPY and VIX; same 95.1% agreement, 31.8-session dwell); what changed is the pool it trades. It trades lower risk for lower return (max DD -19.9% vs -25.0%, invested 58% vs 76%, CAGR 10.4% vs 13.2%) at twice the turnover. With bear exposure 0.5 the same pattern holds (Sharpe 1.09 vs 1.07, max DD -18.4% vs -30.8%).
+- **Logistic regression** clears the Sharpe and drawdown gates with the 81-stock pool (it did not with 48: 0.92 and -24.5% vs 0.86 and -21.3%) and fails only the consistency gate, by one fold (6 of 11, 7 needed). The signal is still weak (AUC 0.535) and the strategy trades 17x a year against 4x.
+- XGBoost and Random Forest stay below the baseline after costs, as on 48 stocks.
+
+### 15.4.7 Pre-registered trial C: fold-wise selection among stock features (registered 2026-10-12, before running)
+
+Motivated by a development-period check of the 23 stock features (2006-2025, holdout excluded): 11 have |t| below 1 against the 5-day excess return, the three `relative_return_*_spy` columns rank stocks exactly as `return_*` do (SPY's return is the same for every stock on a day), and the market and regime inputs are the same for every stock on a day, so they cannot change a linear model's ranking. Because that check used the same years the trial is tested on, the trial does **not** use its result to pick features; each fold picks its own.
+
+- **Pool:** the 23 stock features minus `relative_return_1m_spy`, `relative_return_3m_spy`, `relative_return_6m_spy` (20 features). No market or regime inputs.
+- **Selection inside each fold** (`ic_selector`, as in trial B): keep the pool features whose rank IC against the 5-day excess return on that fold's fit rows has |t| >= 2 on non-overlapping sessions; at least the single strongest. Calibration and validation data are never seen by the choice.
+- **Models and fixed hyperparameters** (the best of the 81-stock search, 15.4.6; no new search): logistic regression C = 1.0; random forest max_depth 8, min_samples_leaf 20; XGBoost learning_rate 0.1, max_depth 5, min_child_weight 5, n_estimators 300, reg_lambda 1.
+- **Everything else unchanged:** 81 stocks, folds, embargo, target, calibration, `ml_select` (top 10, keep 10, every 5 sessions), baseline `regime_switch` with the rule-based regime, and the gates. No holdout. One trial per model type (3 in all). A passing configuration would still need a `quant retrain` with this input selection before it could be registered or promoted.
+
+**Result (2026-10-12; walk-forward 2014-09-26 .. 2025-10-01, after costs; baseline `regime_switch` Sharpe 0.97, max DD -25.0%):**
+
+```text
+                     with selection (trial C)                 all 35 inputs (15.4.6)
+                     CAGR   Sharpe  max DD  turnover  AUC     Sharpe  max DD  AUC
+logistic_regression  15.0%   0.86   -35.4%   21.0x   0.504    1.04   -23.3%  0.535
+random_forest        12.5%   0.75   -33.6%   22.2x   0.508    0.84   -26.6%
+xgboost              12.2%   0.79   -31.5%   31.6x   0.501    0.96   -33.1%
+```
+
+Every model fails three gates (Sharpe, 4/11 folds, drawdown). The folds chose the same 1-5 inputs for all three models: `return_5d` and `return_12m` (9 of 11 folds each), `return_6m` (6), `sma50_vs_sma200` (5), `price_vs_sma200` (1); fewer in the early folds (only `return_5d` in folds 1-2).
+
+- Screening features one at a time throws away information the models use **in combination**: features that are noise on their own (|t| < 1) help when read together with others, e.g. a stock far above its 200-day average *given* its 6-month return (the full model's `price_vs_sma200` coefficient is negative while its own IC is positive). With 1-5 inputs the probabilities are no better than chance (AUC about 0.50) and the selection churns more.
+- Dropping the market and regime inputs cannot by itself change a linear model's daily ranking, so the loss comes from the stock features removed.
+- The configured 35 inputs stay. Univariate screening is not repeated; a multivariate alternative (e.g. L1-regularised logistic regression, which drops inputs inside the fit) would be a new pre-registered trial.
 
 After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).
 
@@ -1062,6 +1103,30 @@ Phase 4 implements the rule-based baselines below (`quant/strategies/`). Each is
 | `regime_switch` | BULL: `trend`; SIDEWAYS: `mean_reversion`, with new entries only on SIDEWAYS sessions; BEAR: `trend` scaled by `bear_exposure`; no regime: nothing | follows the rules above |
 
 `strategies.regime_switch.bear_exposures` lists the BEAR exposure of the baseline first (`0`: all cash) and then the pre-registered variants (`0.5`: trend at half size, reported as `regime_switch_bear50`). Variants are fixed in configuration before any result is seen; adding one later is a new trial (section 15.4).
+
+### 17.1.3 Stock pool expansion by rule (registered 2026-10-12, before any result with it)
+
+The pool grew by hand (48 stocks, then 13 added on 2026-10-11 after their strong runs, 61 in all). Twenty more are added by a fixed rule, so this step picks no winners: **the 20 largest S&P 100 members by market cap that are not already in the pool**, one share class per company (GOOG skipped: GOOGL is in). Constituents from the S&P 100 components table (101 members, Wikipedia, read 2026-10-12); market caps from Yahoo `fast_info` on 2026-10-12; sectors as listed there. Added (largest first): META, AVGO, V, MA, ABBV, AMAT, LRCX, DELL, MRK, PANW, GE, PM, MS, ANET, GEV, RTX, LIN, C, SNDK, IBM (the 20th, IBM, $213B; the next, AXP, $210B). BNY did not resolve on Yahoo and is far below the cut.
+
+- The new pool (81 stocks) is a new trial for every strategy and model; the 61-stock results stay as they are.
+- Still survivorship-biased: today's largest companies are, by construction, ones that did well. GEV (2024) and SNDK (2025) have short histories and contribute little to backtests.
+- Hindsight check, as before: results are also reported for the 48-stock pool and the 68 stocks without the 13 hand-picked additions of 2026-10-11.
+
+**Result (2026-10-12, development 2005-10-17 .. 2025-10-09, after costs; 81-stock batch `20261012T174259Z-994221`; the two checks without the random baseline):**
+
+```text
+                     81 stocks (all)          68 (no hand-picked)      48 (original)
+                     CAGR  Sharpe  max DD     CAGR  Sharpe  max DD     CAGR  Sharpe  max DD
+regime_switch        13.2%  1.03  -25.0%      12.0%  1.00  -24.1%      11.2%  0.97  -21.3%
+regime_switch_bear50 14.0%  1.03  -30.8%      12.8%  1.00  -27.4%      11.7%  0.96  -27.0%
+trend                15.6%  0.97  -39.0%      14.3%  0.95  -37.3%      12.2%  0.86  -39.1%
+equal_weight         16.9%  0.97  -41.2%      16.8%  0.94  -43.0%      16.8%  0.90  -45.1%
+SPY                  11.1%  0.64  -55.2%      (same)
+```
+
+- `regime_switch` stays the best risk-adjusted strategy on every pool; the rule-based 20 add a little (Sharpe 0.97 -> 1.00) and the 13 hand-picked stocks a little more (-> 1.03), with a somewhat deeper drawdown (-21% -> -25%).
+- On 81 stocks it beats 70% of the random baselines on Sharpe and 100% on CAGR (48 stocks: 94%); a larger pool of mostly strong stocks makes random picks from it harder to beat, so the stock choice adds less than the regime timing.
+- `regime_switch` remains the baseline that the models (next) must beat.
 
 ## 17.2 Sizing (section 19)
 
@@ -1309,6 +1374,8 @@ python -m quant retrain --role predictor|regime [--model logistic_regression|ran
                                        #  role has no holdout gate, so --evaluate-holdout is rejected there)
 python -m quant promote <model_id> [--override "<reason>"]
                                        # activate a candidate for its role (refuses failed gates)
+python -m quant retire <model_id> [--reason "<why>"]
+                                       # ACTIVE -> RETIRED; the role falls back to rule-based (logged)
 python -m quant backtest [--strategy NAME ...] [--evaluate-holdout]
                                        # rule-based strategies vs SPY, equal weight, random baseline;
                                        # holdout only with the flag, every evaluation logged
@@ -1367,15 +1434,15 @@ market:
   # modelled as corporate actions). Chosen today, and sectors are today's classification,
   # so backtests carry survivorship bias (section 20).
   symbols:
-    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD, MU, PLTR, RMBS, LITE, FIG]
-    communication_services: [GOOGL, DIS, NFLX]
+    information_technology: [AAPL, MSFT, NVDA, ORCL, CSCO, INTC, ADBE, TXN, QCOM, AMD, MU, PLTR, RMBS, LITE, FIG, AVGO, AMAT, LRCX, DELL, PANW, ANET, SNDK, IBM]
+    communication_services: [GOOGL, DIS, NFLX, META]
     consumer_discretionary: [AMZN, HD, NKE, SBUX, LOW, TJX, TSLA, LULU, SE, CCL]
-    consumer_staples: [PG, KO, PEP, WMT, COST]
-    health_care: [JNJ, UNH, AMGN, LLY, TMO, TEM]
-    financials: [JPM, BAC, WFC, GS, BLK]
-    industrials: [CAT, UNP, LMT, DE, SPCX]
+    consumer_staples: [PG, KO, PEP, WMT, COST, PM]
+    health_care: [JNJ, UNH, AMGN, LLY, TMO, TEM, ABBV, MRK]
+    financials: [BRK-B, XYZ, JPM, BAC, WFC, GS, BLK, V, MA, MS, C]
+    industrials: [CAT, UNP, LMT, DE, SPCX, GE, GEV, RTX]
     energy: [XOM, CVX, SLB]
-    materials: [SHW, NEM]
+    materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
   market_symbols: [SPY, QQQ, ^VIX]
