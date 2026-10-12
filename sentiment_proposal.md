@@ -1,4 +1,4 @@
-# YouTube Creator Opinion Factor — Proposal (Draft)
+# Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
 Status: approved 2026-10-12 (decisions in section 14). S0 done (section 12.1); S1 next.
 Date: 2026-10-12
@@ -143,9 +143,11 @@ The dev database is disposable and can be rebuilt, so there are no migrations be
 `video_id` (PK), `language`, `is_generated`, `segments_json` (`[{start, duration, text}]`), `char_count`, `fetched_at`.
 
 ### sentiment_opinions
-`opinion_id` (PK), `video_id`, `channel_id`, `published_at`, `effective_date`, `ticker`, `asset_type`, `stance`, `horizon`, `condition`, `conviction`, `action`, `quote`, `start_seconds`, `reasoning`, `verification` (`VERIFIED` / `UNVERIFIED` / `UNRESOLVED`), `model`, `prompt_version`, `extracted_at`.
+`opinion_id` (PK), `source` (`youtube` / `reddit`), `item_id` (YouTube `video_id` or Reddit post id), `channel_id` (YouTube channel or `r/<subreddit>`), `author` (Reddit username; null for YouTube), `published_at`, `effective_date`, `ticker`, `asset_type`, `stance`, `horizon`, `condition`, `conviction`, `action`, `quote`, `start_seconds` (null for Reddit), `reasoning`, `verification` (`VERIFIED` / `UNVERIFIED` / `UNRESOLVED`), `model`, `prompt_version`, `extracted_at`.
 
-Unique constraint: `(video_id, ticker, horizon, prompt_version)`.
+Unique constraint: `(source, item_id, ticker, horizon, prompt_version)`.
+
+`source`, `item_id` and `author` exist from S1 so that Reddit (section 15) can share this table and the downstream report and scorecard code without a schema change.
 
 ---
 
@@ -256,6 +258,7 @@ quant/sentiment/
   prompts.py        # system prompt (with prompt_version)
   aggregate.py      # date × stock summary
   scorecard.py      # hit rates
+  reddit.py         # S3b: ApeWisdom + praw fetch, mention counting (section 15)
   report.py         # Markdown reports
   cli.py            # subcommands, registered in quant/cli.py (one line)
 config/sentiment_aliases.yaml
@@ -284,6 +287,7 @@ sentiment = ["yt-dlp", "youtube-transcript-api", "anthropic", "opencc-python-rei
 | **S2 Extract** | Prompt, structured output, quote check, alias table, hand-labeled gold set of ~20 videos | Ticker and stance accuracy both ≥ 85% on the gold set; model chosen |
 | **S3 Report** | Daily summary + appendix with quotes and links | You have reviewed a week of reports and accept the quality |
 | **S4 Scorecard** | Historical backfill (e.g. 6 months) + hit rates + permutation test | Report produced; conclusions follow section 9 and are not overstated |
+| **S3b Reddit** | Mention counts (ApeWisdom, then Reddit API) + extraction of DD / high-score posts (section 15) | Daily mention table and Reddit opinions appear in the daily summary; Reddit API access approved |
 | **S5 Whisper** | Local transcription of videos without captions (optional) | Decided by the caption coverage found in S0 |
 | **S6 Factor** | Pre-register per section 9, then add to `features` | Separate pre-registration |
 
@@ -332,6 +336,9 @@ Decision: replace Joseph Carlson and both Chinese channels with channels that pu
 | Vague opinions that are hard to classify | `CONDITIONAL` / `NEUTRAL` categories; quotes kept for manual review |
 | Small samples make hit rates unreliable | Minimum sample size and permutation test; backfilled data for exploration only |
 | API cost runs away | Token estimate before each run; per-run cap; transcripts fetched once and re-extractable |
+| Reddit API approval delayed or refused | Start with ApeWisdom mention counts (no key); apply early so approval overlaps S1–S3 |
+| Reddit history cannot be backfilled | Treat Reddit as forward-only from the day logging starts; no Reddit backtest before enough history exists |
+| WSB sarcasm, memes and pump posts | Extraction only on DD / high-score posts; `stance` from the post body, not the title; mention counts kept separate from opinions |
 
 ---
 
@@ -341,3 +348,117 @@ Decision: replace Joseph Carlson and both Chinese channels with channels that pu
 2. **Backfill**: 6 months in S4.
 3. **Stock scope**: every US stock mentioned; stocks in the `settings.yaml` pool are marked separately in the summary.
 4. **Report language**: English.
+
+---
+
+# 15. Phase S3b: Reddit (added 2026-10-12)
+
+## 15.1 Why, and what is different
+
+YouTube gives a few named creators making explicit calls, so each can be scored. Reddit (especially r/wallstreetbets) gives a crowd: thousands of short, mostly anonymous posts. Its main signal is **attention and crowd mood** (how often a ticker is mentioned, how fast that rises, the bull/bear balance), not a per-person track record. It is therefore a complementary input, not more of the same.
+
+Reddit is handled in two layers:
+
+| Layer | What | Cost | Used for |
+|---|---|---|---|
+| **A. Mentions** | Daily mention count per ticker per subreddit | Cheap, no LLM | Attention factor |
+| **B. Opinions** | Claude extraction from DD and high-score posts only | LLM, capped per run | Same opinion table, report and scorecard as YouTube |
+
+## 15.2 Sources
+
+- **Subreddits**: r/wallstreetbets, r/stocks, r/investing, r/ValueInvesting (configurable).
+- **ApeWisdom** (S3b-1): its public feed of ticker mentions and rank changes across subreddits. Needs no key and no Reddit approval, so it can start immediately. Its endpoints, terms and rate limits are verified directly before use; the history it serves is not relied on.
+- **Reddit Data API** via `praw` (S3b-2): a "script" app with OAuth, read-only, at most about 100 requests/min (free non-commercial tier). New apps reportedly need manual approval that can take weeks, so **you submit the application from your Reddit account now**, and it overlaps S1–S3. Credentials are read only from `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` in `.env`.
+- Once the Reddit API works, layer A is computed from our own fetched posts as well, so it no longer depends on ApeWisdom alone; both are stored with their `provider` so they can be compared.
+
+## 15.3 What is fetched
+
+- Each run reads the `new` and `top` (day) listings of every configured subreddit and stores **posts only**, not comments. Comments multiply the volume many times over and are mostly noise; they can be reconsidered after S3b.
+- Each post is stored once with its score, comment count and upvote ratio **at fetch time**, and `fetched_at`. Runs happen at a fixed time of day so these snapshots are comparable.
+- Posts deleted or removed later are deleted locally on the next run that notices it, as Reddit's Data API terms require for stored content (to be confirmed against the current terms in S3b-2). Text stays local and is never redistributed.
+
+## 15.4 Ticker detection (layer A)
+
+WSB text is full of words that collide with tickers (`A`, `IT`, `ON`, `ALL`, `DD`, `YOLO`, `CEO`, `NOW`). A mention counts only if it is:
+
+- a cashtag (`$NVDA`), or
+- an uppercase word in the SEC ticker list **and** not on a stop list (`config/sentiment_reddit_stoplist.yaml`), or
+- a company name or nickname from the alias table (section 4.4), which gets Reddit nicknames added (e.g. `TSLA: [..., Elon's car company]`, `GME: [..., GameStop]`).
+
+The same post counts at most once per ticker. Title and body are both scanned.
+
+## 15.5 Opinion extraction (layer B)
+
+A post is sent to Claude only if one of these holds at fetch time:
+
+- its flair is DD / Due Diligence / Fundamentals / Technical Analysis, or
+- its score is ≥ `reddit.min_score` and its body is ≥ `reddit.min_chars` characters.
+
+Then the same prompt rules as YouTube apply (section 4.2), with Reddit-specific additions:
+
+- Stance comes from the body, not the title (titles are often jokes or bait).
+- Sarcasm, memes and "to the moon" without reasoning are recorded as `NEUTRAL` or skipped.
+- `action` uses position screenshots or statements in the text ("I bought 50 calls").
+- The quote check (section 4.3) runs against title + body. `start_seconds` is null.
+
+A per-run cap (`reddit.max_posts_per_run`) and a token estimate before each run apply, as for YouTube.
+
+## 15.6 Timing
+
+`published_at` is the post's `created_utc`; `effective_date` follows section 5 (next NYSE open).
+
+Selecting posts by score adds a subtle look-ahead: a post's score at fetch time is partly earned after it was published. For research this is accepted and documented. For any live feature, selection must use only the score known at the decision time, which the fixed-time daily fetch provides.
+
+## 15.7 Database
+
+Two new tables; opinions go into the shared `sentiment_opinions` (section 6) with `source = reddit`.
+
+### reddit_posts
+`post_id` (PK), `subreddit`, `author`, `created_utc`, `title`, `body`, `flair`, `score`, `num_comments`, `upvote_ratio`, `url`, `fetched_at`, `extraction_status` (`PENDING` / `SELECTED` / `DONE` / `NOT_SELECTED` / `DELETED`).
+
+### reddit_mentions
+`date`, `ticker`, `subreddit`, `provider` (`apewisdom` / `reddit`), `mentions`, `upvotes` (sum of scores of mentioning posts; ApeWisdom's own figure for that provider), `rank`, `fetched_at`. Primary key: `(date, ticker, subreddit, provider)`.
+
+## 15.8 Output
+
+The daily summary (section 8.1) gets a **Reddit attention** section: the top tickers by mentions, each with its change against its own 20-day average (`mention_z`), and Reddit opinions listed alongside YouTube ones with a source marker.
+
+The scorecard (section 8.2) scores Reddit **per subreddit**, not per user, because most users post too rarely. Individual authors are scored only once they have at least `evaluation.min_samples` opinions.
+
+## 15.9 Factors (with S6)
+
+Candidates for the S6 pre-registration: `reddit_mention_z` (attention spike), `reddit_mention_trend_5d`, `reddit_net_stance_5d`. The research literature on retail attention suggests both short-term momentum and later reversal, so the pre-registration tests both signs rather than assuming one.
+
+**Reddit cannot be backfilled** in practice: listings only reach about the last 1,000 posts, and Pushshift is no longer open to the public. Reddit evidence therefore comes only from forward logging, starting the day S3b-1 runs. It is not eligible for S6 until the same 3-month minimum (section 9) has passed.
+
+## 15.10 CLI and configuration
+
+```bash
+quant sentiment reddit-fetch   [--subreddit wallstreetbets]   # posts + mentions
+quant sentiment extract        [--source youtube|reddit]       # shared extraction
+quant sentiment run                                            # now includes reddit-fetch
+```
+
+```yaml
+sentiment:
+  reddit:
+    enabled: false                   # true once S3b-1 is built
+    subreddits: [wallstreetbets, stocks, investing, ValueInvesting]
+    providers: [apewisdom]           # add reddit after API approval
+    listings: [new, top_day]
+    min_score: 100
+    min_chars: 800
+    extract_flairs: [DD, Due Diligence, Fundamentals, Technical Analysis]
+    max_posts_per_run: 30
+    request_delay_seconds: [1, 2]
+```
+
+## 15.11 Steps
+
+| Step | Content | Done when |
+|---|---|---|
+| **Now (you)** | Apply for Reddit API access (script app, non-commercial research) | Application submitted |
+| **S3b-1** | ApeWisdom mentions → `reddit_mentions`; Reddit attention section in the daily report | A week of daily mention tables reviewed |
+| **S3b-2** | `praw` fetch → `reddit_posts`; own mention counts; DD/high-score extraction; deletion handling | Extraction accuracy ≥ 85% on a hand-labeled set of ~20 posts; own counts agree broadly with ApeWisdom |
+
+Not in S3b: comments, Stocktwits, X/Twitter, Chinese forums (雪球, 富途). These can be proposed separately later.
