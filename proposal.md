@@ -1622,6 +1622,11 @@ logging:                           # section 26; written to <database directory>
   level: INFO                      # DEBUG | INFO | WARNING | ERROR
   max_megabytes: 5                 # rotate the file at this size ...
   backups: 5                       # ... keeping this many old files
+
+forward_test:                      # Phase 10 pre-registration (section 29); frozen once per session, never traded
+  shadows:                         # portfolio name -> strategy, and the regime model or predictor it uses
+    shadow_hmm: {strategy: regime_switch, regime_model: hmm-20261012T174554Z-5f979a}
+    shadow_lr: {strategy: ml_select, predictor: logistic_regression-20261012T183319Z-cf2d50}
 ```
 
 `config/settings.yaml` holds exactly this block. Every section and key is required and unknown keys are rejected at startup, so the two must be changed together.
@@ -1736,6 +1741,36 @@ Signal Engine -> Paper Trading -> Broker API
 ```
 
 Do not implement live trading in V1.
+
+### Phase 10 pre-registration (2026-10-12, before any forward data)
+
+Fixed before the first forward session; a change after forward data exists is logged here as a design change, never a silent edit.
+
+**Start.** The first session frozen by `run-daily` after Phase 10 is built. No backfill: a session the system did not freeze on its own evening is never added later (a missed session is counted, and paper portfolios keep their last targets over it).
+
+**Portfolios** (all from the same stored data each evening):
+
+| Name | What | Role |
+|---|---|---|
+| `live` | `signals.strategy` (`regime_switch`) with the regime in use (rule-based) | what the signals show |
+| `shadow_hmm` | `regime_switch` with the regime of `hmm-20261012T174554Z-5f979a` (RETIRED; its final fit applied forward, filtered, same dwell) | shadow, never traded |
+| `shadow_lr` | `ml_select` with `logistic_regression-20261012T183319Z-cf2d50` (35 inputs; probabilities from its saved final model), rule-based regime for exposure | shadow, never traded |
+| `real` | the owner's account: `data/positions.csv` once at the start, then `data/trades.csv` replayed | what was actually held |
+| `SPY` | buy-and-hold from the start | benchmark |
+
+Shadows are listed in `forward_test.shadows`; they never change the signals.
+
+**Frozen log.** Each evening, once per session, the targets of `live` and every shadow (weight per stock, the as-traded close of T) are written to a log that is never updated or deleted; a re-run of a frozen session leaves it as it is.
+
+Implementation (step 1, `quant/forward/freeze.py`): tables `forward_sessions` (one row per session and portfolio, also when it targets nothing: strategy, regime, regime source, model version, invested, positions, frozen_at) and `forward_targets` (one row per held stock: target weight, as-traded close, probability for `ml_select`). "Its own evening" is operational: a session is frozen only before the next market open (NYSE calendar), while its signals can still be acted on; after that the run logs it as SKIPPED (no backfill). Shadows are computed from the same stored data as the signals: `shadow_hmm` runs the retired model's final fit forward (filtered, same dwell) without storing it in `market_regimes`; `shadow_lr` scores every session after its training end from its saved model.
+
+**Paper portfolios** (`live`, shadows, `SPY`) start from cash equal to the `real` portfolio's value at the start session and trade their frozen targets with the backtest engine: fill at the next open, `backtest.fee_bps` and `slippage_bps`, `backtest.min_trade_weight`.
+
+**Real portfolio.** Holdings at each close are the starting positions plus every trade dated on or before that session (`date, symbol, side, quantity, price`, optional `fees`); cash follows from the trades. Valued at the as-traded close. Deposits and withdrawals are not tracked (owner's choice): any would show up as return. A trade added later with its real date corrects the real history; frozen targets are never changed by it.
+
+**Scores** (`quant forward-report`, dashboard): for every portfolio since the start: total return, annualised volatility, Sharpe (daily, no risk-free rate), max drawdown; sessions covered and missed. For `real` also: the **followed share** each day, the sum over stocks of min(actual weight, `live` target weight); and the **cost of execution**, the owner's fill prices against the next open after the signal.
+
+**Checkpoints.** A first look after **6 months** (about 126 forward sessions); no promotion, retirement or rule change is made on forward evidence before it. A verdict after **12 months** (about 252 sessions). One year's Sharpe has an uncertainty of about +/-1, so even then a difference is evidence, not proof. A shadow becomes a candidate to replace `live` only if, over the 12 months, its Sharpe is higher **and** its max drawdown no deeper than `live`'s; the decision stays the owner's.
 
 ---
 

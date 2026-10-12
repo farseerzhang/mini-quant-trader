@@ -151,3 +151,8 @@ logging:                           # section 26; written to <database directory>
   level: INFO                      # DEBUG | INFO | WARNING | ERROR
   max_megabytes: 5                 # rotate the file at this size ...
   backups: 5                       # ... keeping this many old files
+
+forward_test:                      # Phase 10 pre-registration (section 29); frozen once per session, never traded
+  shadows:                         # portfolio name -> strategy, and the regime model or predictor it uses
+    shadow_hmm: {strategy: regime_switch, regime_model: hmm-20261012T174554Z-5f979a}
+    shadow_lr: {strategy: ml_select, predictor: logistic_regression-20261012T183319Z-cf2d50}

@@ -500,6 +500,44 @@ class LoggingSettings:
             raise ConfigError("logging.backups must not be negative")
 
 
+RESERVED_PORTFOLIOS = ("live", "real", "SPY")
+
+
+@dataclass(frozen=True)
+class ShadowSettings:
+    """A forward-test shadow: a strategy run every evening and frozen, never traded (Phase 10)."""
+
+    strategy: str
+    regime_model: str | None = None  # a REGIME model id; None: the rule-based regime
+    predictor: str | None = None  # a PREDICTOR model id; required by ml_select
+
+
+@dataclass(frozen=True)
+class ForwardTestSettings:
+    shadows: Mapping[str, ShadowSettings]
+
+    def __post_init__(self) -> None:
+        for name, shadow in self.shadows.items():
+            if name in RESERVED_PORTFOLIOS:
+                raise ConfigError(f"forward_test.shadows: {name!r} is reserved ({', '.join(RESERVED_PORTFOLIOS)})")
+            if (shadow.strategy == "ml_select") != (shadow.predictor is not None):
+                raise ConfigError(f"forward_test.shadows.{name}: ml_select needs a predictor, and only ml_select uses one")
+
+
+def _as_shadows(value: Any) -> dict[str, ShadowSettings]:
+    if not isinstance(value, Mapping):
+        raise ConfigError("forward_test.shadows must map portfolio names to {strategy, regime_model | predictor}")
+    shadows = {}
+    for name, spec in value.items():
+        if not isinstance(spec, Mapping):
+            raise ConfigError(f"forward_test.shadows.{name} must be a mapping")
+        unknown = sorted(set(spec) - {"strategy", "regime_model", "predictor"})
+        if unknown or "strategy" not in spec:
+            raise ConfigError(f"forward_test.shadows.{name}: needs 'strategy'; unknown key(s): {', '.join(unknown) or '-'}")
+        shadows[str(name)] = ShadowSettings(**{k: (str(v) if v is not None else None) for k, v in spec.items()})
+    return shadows
+
+
 @dataclass(frozen=True)
 class Settings:
     database: DatabaseSettings
@@ -514,8 +552,12 @@ class Settings:
     positions: PositionSettings
     signals: SignalSettings
     logging: LoggingSettings
+    forward_test: ForwardTestSettings
 
     def __post_init__(self) -> None:
+        for name, shadow in self.forward_test.shadows.items():
+            if shadow.strategy != "ml_select" and shadow.strategy not in self.strategies.rule_names:
+                raise ConfigError(f"forward_test.shadows.{name}: unknown strategy {shadow.strategy!r}")
         if self.signals.strategy not in self.strategies.rule_names:
             raise ConfigError(
                 f"signals.strategy {self.signals.strategy!r} is not a rule-based strategy; "
@@ -730,4 +772,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         positions=_build(PositionSettings, "positions", _section(raw, "positions")),
         signals=_build(SignalSettings, "signals", _section(raw, "signals")),
         logging=_build(LoggingSettings, "logging", _section(raw, "logging")),
+        forward_test=_build(ForwardTestSettings, "forward_test", _section(raw, "forward_test"),
+                            {"shadows": _as_shadows}),
     )

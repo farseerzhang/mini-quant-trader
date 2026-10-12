@@ -47,3 +47,25 @@ def next_session_after(session_date: date, through: date, calendar_name: str) ->
         pd.Timestamp(through.isoformat()),
     )
     return sessions[0].date() if len(sessions) else None
+
+
+def next_open_after(session_date: date, calendar_name: str) -> datetime:
+    """The UTC time of the first market open after ``session_date``'s session.
+
+    A signal computed at that session's close can be acted on until then; a forward test
+    freezes a session only before this moment (Phase 10: no backfill).
+    """
+    calendar = _calendar(calendar_name, session_date)
+    following = calendar.sessions_in_range(
+        pd.Timestamp((session_date + timedelta(days=1)).isoformat()),
+        pd.Timestamp((session_date + timedelta(days=15)).isoformat()),
+    )
+    if not len(following):
+        raise ValueError(f"no {calendar_name} session found after {session_date}")
+    return calendar.session_open(following[0]).to_pydatetime().astimezone(timezone.utc)
+
+
+def sessions_between(first: date, last: date, calendar_name: str) -> list[date]:
+    """Every session from ``first`` to ``last``, both included."""
+    calendar = _calendar(calendar_name, first)
+    return [s.date() for s in calendar.sessions_in_range(pd.Timestamp(first.isoformat()), pd.Timestamp(last.isoformat()))]

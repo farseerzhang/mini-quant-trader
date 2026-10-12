@@ -520,3 +520,43 @@ def load_predictions(engine: Engine, model_version: str) -> pd.DataFrame:
     frame = pd.DataFrame(rows, columns=["date", "symbol", "probability", "input_hash"])
     frame["date"] = pd.DatetimeIndex(frame["date"])
     return frame.set_index(["date", "symbol"])
+
+
+def frozen_sessions(engine: Engine, portfolio: str | None = None) -> pd.DataFrame:
+    """forward_sessions rows (all portfolios, or one), ordered by session."""
+    fs = tables.forward_sessions
+    stmt = select(fs).order_by(fs.c.session, fs.c.portfolio)
+    if portfolio is not None:
+        stmt = stmt.where(fs.c.portfolio == portfolio)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return pd.DataFrame([dict(r) for r in rows], columns=[c.name for c in fs.columns])
+
+
+def freeze_forward(engine: Engine, header: Mapping[str, Any], targets: Sequence[Mapping[str, Any]]) -> bool:
+    """Write one portfolio's session once. Returns False (and writes nothing) if it is already
+    frozen: a frozen session is never updated, whatever later data says."""
+    fs, ft = tables.forward_sessions, tables.forward_targets
+    with engine.begin() as conn:
+        exists = conn.execute(select(fs.c.session).where(
+            fs.c.session == header["session"], fs.c.portfolio == header["portfolio"])).first()
+        if exists is not None:
+            return False
+        conn.execute(fs.insert().values(**header, frozen_at=_now()))
+        rows = [{**row, "session": header["session"], "portfolio": header["portfolio"]} for row in targets]
+        if rows:
+            conn.execute(ft.insert(), rows)
+    return True
+
+
+def load_forward_targets(engine: Engine, portfolio: str) -> pd.DataFrame:
+    """Frozen target weights of one portfolio, sessions x symbols (0 where not held)."""
+    ft = tables.forward_targets
+    with engine.connect() as conn:
+        rows = conn.execute(select(ft.c.session, ft.c.symbol, ft.c.target_weight)
+                            .where(ft.c.portfolio == portfolio)).all()
+    frame = pd.DataFrame(rows, columns=["session", "symbol", "target_weight"])
+    wide = frame.pivot(index="session", columns="symbol", values="target_weight")
+    wide.index = pd.DatetimeIndex(wide.index)
+    sessions = frozen_sessions(engine, portfolio)["session"]
+    return wide.reindex(pd.DatetimeIndex(sessions)).fillna(0.0).sort_index()

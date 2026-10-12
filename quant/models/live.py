@@ -92,7 +92,8 @@ def predict_sessions(model: FinalModel, features: pd.DataFrame, market: pd.DataF
     }, index=inputs.index)
 
 
-def predict_and_store(engine: Engine, settings: Settings, row) -> PredictionSummary:
+def model_predictions(engine: Engine, settings: Settings, row) -> tuple[pd.Timestamp, pd.DataFrame]:
+    """A predictor's probability and input hash per (date, symbol) after its training end (any status)."""
     model = load_active_predictor(row, settings)
     stocks = list(settings.market.stocks)
     start = pd.Timestamp(row["training_end"]) + pd.Timedelta(days=1)
@@ -101,6 +102,11 @@ def predict_and_store(engine: Engine, settings: Settings, row) -> PredictionSumm
     frame = predict_sessions(model, features, market, predictor_regimes(engine, settings, row), start)
     if frame.empty:
         raise ActiveModelError(f"no session after {row['training_end']} has complete inputs; run `quant run-daily`")
+    return start, frame
+
+
+def predict_and_store(engine: Engine, settings: Settings, row) -> PredictionSummary:
+    start, frame = model_predictions(engine, settings, row)
     target = row["target_definition"] or json.dumps({})
     rows = [
         {"date": date.date(), "symbol": symbol, "probability": float(r.probability),

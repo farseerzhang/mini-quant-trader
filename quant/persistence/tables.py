@@ -241,6 +241,37 @@ signals = Table(
 )
 
 
+# Forward test (Phase 10): what each portfolio targeted at the close of a session, frozen on
+# that session's evening and never updated or deleted. forward_sessions has one row per
+# (session, portfolio), also when it targets nothing; forward_targets one per held stock.
+forward_sessions = Table(
+    "forward_sessions",
+    metadata,
+    Column("session", Date, nullable=False),
+    Column("portfolio", String, nullable=False),  # live | a shadow name
+    Column("strategy", String, nullable=False),
+    Column("regime", String),
+    Column("regime_source", String, nullable=False),  # rule_based-v<N> or a REGIME model id
+    Column("model_version", String, nullable=False),  # rule_based-v<N> or a PREDICTOR model id
+    Column("invested", Float, nullable=False),
+    Column("positions", Integer, nullable=False),
+    Column("frozen_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("session", "portfolio", name="pk_forward_sessions"),
+)
+
+forward_targets = Table(
+    "forward_targets",
+    metadata,
+    Column("session", Date, nullable=False),
+    Column("portfolio", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("target_weight", Float, nullable=False),
+    Column("close", Float),  # as-traded close of the session
+    Column("score", Float),  # calibrated probability (ml_select)
+    PrimaryKeyConstraint("session", "portfolio", "symbol", name="pk_forward_targets"),
+)
+
+
 # 6.11 backtest_runs — one row per portfolio and period of one `quant backtest` invocation (a batch).
 # HOLDOUT rows exist only when the holdout was explicitly evaluated (section 15.2).
 backtest_runs = Table(
