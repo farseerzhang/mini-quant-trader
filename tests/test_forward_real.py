@@ -141,8 +141,9 @@ class RealPortfolioTests(unittest.TestCase):
         # The fixture ends at the start; a trade log for later sessions is checked against stored data.
         self.trades.write_text(f"date,symbol,side,quantity,price\n{DATES[-1].date()},AAPL,SELL,1,100\n",
                                encoding="utf-8")
-        with self.assertRaisesRegex(TradesError, "not after the start"):
-            real_portfolio(self.engine, self.settings, pd.DatetimeIndex([DATES[-1]]))
+        _, ledger, _, warnings = real_portfolio(self.engine, self.settings, pd.DatetimeIndex([DATES[-1]]))
+        self.assertEqual(ledger.trades, [])  # dated on the start: part of the start positions
+        self.assertIn("1 trade(s) dated on or before the start", warnings[0])
         self.trades.write_text("date,symbol,side,quantity,price\n", encoding="utf-8")
         _, _, valued, warnings = real_portfolio(self.engine, self.settings, pd.DatetimeIndex([DATES[-1]]))
         self.assertAlmostEqual(valued["value"].iloc[0], start["start_value"])

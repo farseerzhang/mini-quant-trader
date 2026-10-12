@@ -150,12 +150,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--start", action="store_true",
         help="ONCE, after the close: start the forward test with data/positions.csv as your real account",
     )
+    freeze_command.add_argument(
+        "--end", action="store_true",
+        help="end the running forward test (kept, never deleted; needs --reason); then --start begins a new run",
+    )
+    freeze_command.add_argument("--reason", help="why the run is ended (logged with it)")
     freeze_command.add_argument("--db", help=db_help)
 
     forward_command = commands.add_parser(
         "forward-report",
         help="forward test: every portfolio (live, shadows, your account, SPY) since the start (read-only)",
     )
+    forward_command.add_argument("--run", type=int, help="show this run (default: the running one)")
     forward_command.add_argument("--db", help=db_help)
 
     status_command = commands.add_parser(
@@ -526,7 +532,36 @@ def _run_retire(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _end_forward(args: argparse.Namespace, settings: Settings) -> int:
+    if getattr(args, "start", False):
+        _error("--end and --start are separate steps: end the run, then start a new one after a close")
+        return 1
+    reason = (args.reason or "").strip()
+    if not reason:
+        _error('--end needs --reason, e.g. --reason "started with the wrong positions" (it is logged)')
+        return 1
+    engine = _engine(settings, args.db)
+    try:
+        run = queries.end_forward_run(engine, reason)
+        if run is None:
+            _error("No forward test is running; nothing to end.")
+            return 1
+        frozen = len(queries.frozen_sessions(engine, "live", run["run_id"]))
+        queries.record_pipeline_run(engine, command="forward-test", stage="end", status="OK",
+                                    message=f"run {run['run_id']} (since {run['started_on']}, {frozen} frozen "
+                                            f"sessions) ended: {reason}")
+    finally:
+        engine.dispose()
+    print(f"Forward test run {run['run_id']} (since {run['started_on']}, {frozen} frozen sessions) ENDED: {reason}. "
+          f"It is kept: `quant forward-report --run {run['run_id']}`.")
+    print("To start a new run: put the real account in data/positions.csv (trades.csv can stay: only trades after "
+          "the new start count), then `quant forward-test --start` after a close.")
+    return 0
+
+
 def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
+    if getattr(args, "end", False):
+        return _end_forward(args, settings)
     start = bool(getattr(args, "start", False))
     engine = _engine(settings, args.db)
     try:
@@ -537,10 +572,12 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
                   "`python -m quant forward-test --start` after a close (before the next open).")
             return 0
         if start and before is not None:
-            print(f"The forward test already started on {before['started_on']}; nothing to start.")
+            print(f"Forward test run {before['run_id']} is already running (since {before['started_on']}); "
+                  'nothing to start. To restart: `quant forward-test --end --reason "..."` first.')
         elif before is None:
             begun = queries.forward_start(engine)
-            print(f"Forward test STARTED on {begun['started_on']} with {begun['start_value']:,.2f} "
+            print(f"Forward test run {begun['run_id']} STARTED on {begun['started_on']} with "
+                  f"{begun['start_value']:,.2f} "
                   f"({begun['value_source']}). From now on record trades in {settings.positions.trades_path}; "
                   "data/positions.csv is not read again.")
         paper = update_paper_equity(engine, settings)
@@ -566,7 +603,7 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
 def _run_forward_report(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
-        report = build_report(engine, settings)
+        report = build_report(engine, settings, getattr(args, "run", None))
     except (TradesError, ValueError) as exc:
         _error(f"Forward report failed: {exc}")
         return 1

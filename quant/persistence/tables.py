@@ -241,12 +241,42 @@ signals = Table(
 )
 
 
-# Forward test (Phase 10): what each portfolio targeted at the close of a session, frozen on
-# that session's evening and never updated or deleted. forward_sessions has one row per
-# (session, portfolio), also when it targets nothing; forward_targets one per held stock.
+# Forward test (Phase 10). A forward test is a numbered run; a run can be ended (with a reason) and
+# a new one started, and nothing of an ended run is deleted. At most one run is open.
+forward_runs = Table(
+    "forward_runs",
+    metadata,
+    Column("run_id", Integer, primary_key=True, autoincrement=True),
+    Column("started_on", Date, nullable=False),  # its first session
+    Column("start_value", Float, nullable=False),  # every paper portfolio starts with this cash
+    Column("value_source", String, nullable=False),  # the positions file, or the notional cash without one
+    Column("created_at", DateTime, nullable=False),
+    Column("ended_at", DateTime),
+    Column("end_reason", Text),
+    Column("is_open", Integer),  # 1 while open, NULL once ended (the unique index allows one open run)
+    CheckConstraint("is_open IS NULL OR is_open = 1", name="ck_forward_runs_is_open"),
+)
+one_open_forward_run = Index("uq_forward_runs_one_open", forward_runs.c.is_open, unique=True)
+
+# The real account's holdings at a run's start (the positions file, read once); later holdings
+# are these plus the trade log.
+forward_start_positions = Table(
+    "forward_start_positions",
+    metadata,
+    Column("run_id", Integer, nullable=False),
+    Column("symbol", String, nullable=False),  # a stock, or CASH (quantity = cash amount)
+    Column("quantity", Float, nullable=False),
+    Column("cost_basis", Float),
+    PrimaryKeyConstraint("run_id", "symbol", name="pk_forward_start_positions"),
+)
+
+# What each portfolio targeted at the close of a session, frozen on that session's evening and
+# never updated or deleted: one forward_sessions row per (run, session, portfolio), also when it
+# targets nothing; one forward_targets row per held stock.
 forward_sessions = Table(
     "forward_sessions",
     metadata,
+    Column("run_id", Integer, nullable=False),
     Column("session", Date, nullable=False),
     Column("portfolio", String, nullable=False),  # live | a shadow name
     Column("strategy", String, nullable=False),
@@ -256,32 +286,24 @@ forward_sessions = Table(
     Column("invested", Float, nullable=False),
     Column("positions", Integer, nullable=False),
     Column("frozen_at", DateTime, nullable=False),
-    PrimaryKeyConstraint("session", "portfolio", name="pk_forward_sessions"),
+    PrimaryKeyConstraint("run_id", "session", "portfolio", name="pk_forward_sessions"),
 )
 
-# The forward test's start, written once at the first freeze: the session and the value every
-# paper portfolio starts with (the real account's managed holdings plus cash at that close).
-forward_start = Table(
-    "forward_start",
+forward_targets = Table(
+    "forward_targets",
     metadata,
-    Column("started_on", Date, primary_key=True),
-    Column("start_value", Float, nullable=False),
-    Column("value_source", String, nullable=False),  # the positions file, or the notional cash without one
-    Column("created_at", DateTime, nullable=False),
+    Column("run_id", Integer, nullable=False),
+    Column("session", Date, nullable=False),
+    Column("portfolio", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("target_weight", Float, nullable=False),
+    Column("close", Float),  # as-traded close of the session
+    Column("score", Float),  # calibrated probability (ml_select)
+    PrimaryKeyConstraint("run_id", "session", "portfolio", "symbol", name="pk_forward_targets"),
 )
 
-# The real account's holdings at the start (the positions file read once at the first freeze);
-# later holdings are these plus the trade log.
-forward_start_positions = Table(
-    "forward_start_positions",
-    metadata,
-    Column("symbol", String, primary_key=True),  # a stock, or CASH (quantity = cash amount)
-    Column("quantity", Float, nullable=False),
-    Column("cost_basis", Float),
-)
-
-# Daily value of each paper portfolio (live, shadows, SPY); derived from the frozen targets and
-# prices, so it is recomputed (replaced) on every run.
+# Daily value of each portfolio of the open run (live, shadows, real, SPY); derived from the frozen
+# targets, the trade log and prices, so it is recomputed (replaced) on every run of the pipeline.
 forward_equity = Table(
     "forward_equity",
     metadata,
@@ -290,18 +312,6 @@ forward_equity = Table(
     Column("value", Float, nullable=False),
     Column("invested", Float),
     PrimaryKeyConstraint("date", "portfolio", name="pk_forward_equity"),
-)
-
-forward_targets = Table(
-    "forward_targets",
-    metadata,
-    Column("session", Date, nullable=False),
-    Column("portfolio", String, nullable=False),
-    Column("symbol", String, nullable=False),
-    Column("target_weight", Float, nullable=False),
-    Column("close", Float),  # as-traded close of the session
-    Column("score", Float),  # calibrated probability (ml_select)
-    PrimaryKeyConstraint("session", "portfolio", "symbol", name="pk_forward_targets"),
 )
 
 

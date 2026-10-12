@@ -56,7 +56,7 @@ class ReportTests(PaperFixture):
         self.assertTrue(((report.followed >= 0) & (report.followed <= 1 + 1e-9)).all())
         self.assertEqual(report.followed.index[0], WINDOW[1])  # day 1 compares with the start's target
         text = format_report(report)
-        for part in ("Forward test since", f"{FIRST_LOOK - report.sessions} to go", "Followed share",
+        for part in ("Forward test run 1 since", f"{FIRST_LOOK - report.sessions} to go", "Followed share",
                      "Execution: 1 trades", "the backtest assumes 6 bp", "not advice"):
             self.assertIn(part, text)
 
@@ -67,7 +67,7 @@ class ReportTests(PaperFixture):
         with redirect_stdout(output):
             code = cli.main(["--config", str(PROJECT_SETTINGS), "forward-report", "--db", str(self.engine.url.database)])
         self.assertEqual(code, 0)
-        self.assertIn("has not started", output.getvalue())
+        self.assertIn("is not running", output.getvalue())
 
 
 if __name__ == "__main__":

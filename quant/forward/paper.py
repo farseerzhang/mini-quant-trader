@@ -32,6 +32,7 @@ class PaperResult:
     sessions: pd.DatetimeIndex  # every session from the start to the latest stored one
     simulations: dict[str, Simulation]
     missed: dict[str, list[pd.Timestamp]]  # sessions without a freeze, per portfolio
+    run_id: int = 0
 
 
 def paper_targets(frozen: pd.DataFrame, sessions: pd.DatetimeIndex) -> pd.DataFrame:
@@ -39,17 +40,21 @@ def paper_targets(frozen: pd.DataFrame, sessions: pd.DatetimeIndex) -> pd.DataFr
     return frozen.reindex(sessions).ffill().fillna(0.0)
 
 
-def run_paper(engine: Engine, settings: Settings) -> PaperResult | None:
-    """Simulate every portfolio from the start; None before the first freeze."""
-    start = queries.forward_start(engine)
+def run_paper(engine: Engine, settings: Settings, run_id: int | None = None) -> PaperResult | None:
+    """Simulate every portfolio of a run (default: the open one) from its start; None without one.
+    An ended run is shown up to its last frozen session."""
+    start = queries.forward_run(engine, run_id)
     if start is None:
         return None
+    run_id = start["run_id"]
     started_on = pd.Timestamp(start["started_on"])
     portfolios = ["live", *settings.forward_test.shadows]
-    frozen = {name: queries.load_forward_targets(engine, name) for name in portfolios}
+    frozen = {name: queries.load_forward_targets(engine, name, run_id) for name in portfolios}
     symbols = sorted({s for frame in frozen.values() for s in frame.columns} | {BENCHMARK})
     prices = load_prices(engine, symbols)
     sessions = prices.close.index[prices.close.index >= started_on]
+    if start["ended_at"] is not None and len(frozen["live"].index):  # (an all-cash run has no columns)
+        sessions = sessions[sessions <= frozen["live"].index[-1]]
     bt = dataclasses.replace(settings.backtest, initial_cash=float(start["start_value"]))
 
     simulations, missed = {}, {}
@@ -58,7 +63,7 @@ def run_paper(engine: Engine, settings: Settings) -> PaperResult | None:
         simulations[name] = simulate(order_targets(weights, bt.min_trade_weight), prices, bt)
         missed[name] = [s for s in sessions if s not in targets.index]
     simulations[BENCHMARK] = simulate(buy_and_hold(sessions, BENCHMARK), prices, bt)
-    return PaperResult(started_on, float(start["start_value"]), sessions, simulations, missed)
+    return PaperResult(started_on, float(start["start_value"]), sessions, simulations, missed, run_id)
 
 
 def update_paper_equity(engine: Engine, settings: Settings) -> PaperResult | None:
@@ -73,7 +78,7 @@ def update_paper_equity(engine: Engine, settings: Settings) -> PaperResult | Non
     ]
     from quant.forward.real import real_portfolio
 
-    real = real_portfolio(engine, settings, result.sessions)
+    real = real_portfolio(engine, settings, result.sessions, result.run_id)
     if real is not None:
         _, _, valued, _ = real
         rows += [{"date": date.date(), "portfolio": "real", "value": float(r["value"]),

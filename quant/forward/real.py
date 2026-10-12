@@ -143,11 +143,12 @@ def start_rows(holdings: Holdings) -> list[dict]:
     return rows + [{"symbol": CASH, "quantity": holdings.cash, "cost_basis": None}]
 
 
-def load_start(engine: Engine) -> Start | None:
-    row = queries.forward_start(engine)
+def load_start(engine: Engine, run_id: int | None = None) -> Start | None:
+    """A run's start (default: the open run), or None."""
+    row = queries.forward_run(engine, run_id)
     if row is None:
         return None
-    frame = queries.forward_start_positions(engine).set_index("symbol")
+    frame = queries.forward_start_positions(engine, row["run_id"]).set_index("symbol")
     cash = float(frame.loc[CASH, "quantity"]) if CASH in frame.index else 0.0
     stocks = frame.drop(index=CASH, errors="ignore")
     return Start(pd.Timestamp(row["started_on"]), stocks["quantity"].astype(float).to_dict(),
@@ -216,18 +217,31 @@ def value_ledger(ledger: Ledger, closes: pd.DataFrame, start: Start) -> tuple[pd
     return pd.concat([frame, holdings.add_prefix("value:")], axis=1), warnings
 
 
-def real_portfolio(engine: Engine, settings: Settings, sessions: pd.DatetimeIndex):
-    """(start, ledger, valued frame, warnings) from the start to the last of ``sessions``; None
-    before the first freeze."""
-    start = load_start(engine)
+def real_portfolio(engine: Engine, settings: Settings, sessions: pd.DatetimeIndex, run_id: int | None = None):
+    """(start, ledger, valued frame, warnings) from a run's start to the last of ``sessions``; None
+    without a run. Only trades after the run's start count (earlier runs' trades stay in the log)."""
+    start = load_start(engine, run_id)
     if start is None:
         return None
     sessions = sessions[sessions >= start.started_on]
-    ledger = replay(start, read_trades(settings.positions.trades_path), sessions)
+    logged = read_trades(settings.positions.trades_path)
+    trades = [t for t in logged if t.date > start.started_on]
+    early = len(logged) - len(trades)
+    if start_is_ended(engine, run_id):
+        trades = [t for t in trades if t.date <= sessions[-1]]  # an ended run stops at its last session
+    ledger = replay(start, trades, sessions)
     symbols = list(ledger.quantities.columns)
     closes = queries.load_raw_closes(engine, symbols, since=start.started_on.date()) if symbols else pd.DataFrame()
     valued, warnings = value_ledger(ledger, closes, start)
+    if early:
+        warnings.insert(0, f"{early} trade(s) dated on or before the start ({start.started_on.date()}) are left out: "
+                           "the start positions (or an earlier run) already include them")
     return start, ledger, valued, list(ledger.warnings) + warnings
+
+
+def start_is_ended(engine: Engine, run_id: int | None) -> bool:
+    run = queries.forward_run(engine, run_id)
+    return run is not None and run["ended_at"] is not None
 
 
 def holdings_at(engine: Engine, settings: Settings, session: pd.Timestamp) -> Holdings | None:
@@ -237,7 +251,7 @@ def holdings_at(engine: Engine, settings: Settings, session: pd.Timestamp) -> Ho
         return None
     sessions = pd.DatetimeIndex([d for d in pd.bdate_range(start.started_on, session)])
     trades = read_trades(settings.positions.trades_path)
-    trades = [t for t in trades if t.date <= session]
+    trades = [t for t in trades if start.started_on < t.date <= session]  # earlier runs' trades stay out
     ledger = replay(start, trades, sessions)
     pool = set(settings.market.stocks)
     last = ledger.quantities.iloc[-1]

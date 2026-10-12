@@ -48,6 +48,9 @@ class ForwardReport:
     costs: pd.DataFrame  # real account, per trade
     assumed_cost_bps: float
     warnings: list[str]
+    run_id: int | None = None
+    runs: pd.DataFrame | None = None  # every run, for the history lines
+    ended: tuple | None = None  # (ended_at, reason) when the run shown has ended
 
     @property
     def started(self) -> bool:
@@ -64,23 +67,29 @@ class ForwardReport:
         return f"{self.sessions} forward sessions: past the 12-month verdict point."
 
 
-def build_report(engine: Engine, settings: Settings) -> ForwardReport:
+def build_report(engine: Engine, settings: Settings, run_id: int | None = None) -> ForwardReport:
+    """The report of a run (default: the open one)."""
     assumed = settings.backtest.fee_bps + settings.backtest.slippage_bps
-    paper = run_paper(engine, settings)
+    runs = queries.list_forward_runs(engine)
+    if run_id is not None and run_id not in set(runs["run_id"]):
+        raise ValueError(f"no forward-test run {run_id}; runs: {', '.join(map(str, runs['run_id'])) or 'none'}")
+    paper = run_paper(engine, settings, run_id)
     if paper is None:
         empty = pd.DataFrame()
-        return ForwardReport(None, None, None, 0, empty, empty, pd.Series(dtype=float), empty, assumed, [])
+        return ForwardReport(None, None, None, 0, empty, empty, pd.Series(dtype=float), empty, assumed, [],
+                             runs=runs)
+    run = queries.forward_run(engine, paper.run_id)
     values = pd.DataFrame({name: sim.value for name, sim in paper.simulations.items()})
     warnings: list[str] = []
     followed, costs = pd.Series(dtype=float), pd.DataFrame()
-    real = real_portfolio(engine, settings, paper.sessions)
+    real = real_portfolio(engine, settings, paper.sessions, paper.run_id)
     if real is not None:
         _, ledger, valued, real_warnings = real
         warnings += real_warnings
         values["real"] = valued["value"]
         weights = valued.filter(like="value:").div(valued["value"], axis=0)
         weights.columns = [c.removeprefix("value:") for c in weights.columns]
-        followed = followed_share(weights, queries.load_forward_targets(engine, "live"))
+        followed = followed_share(weights, queries.load_forward_targets(engine, "live", paper.run_id))
         symbols = sorted({t.symbol for t in ledger.trades})
         opens = queries.load_raw_opens(engine, symbols, since=paper.started_on.date()) if symbols else pd.DataFrame()
         costs = execution_costs(ledger.trades, opens)
@@ -88,20 +97,35 @@ def build_report(engine: Engine, settings: Settings) -> ForwardReport:
     values = values[[c for c in order if c in values.columns]]
     scores = pd.DataFrame({name: score(values[name]) for name in values.columns}).T
     scores["missed"] = [len(paper.missed.get(name, [])) if name in paper.missed else np.nan for name in scores.index]
+    ended = (run["ended_at"], run["end_reason"]) if run["ended_at"] is not None else None
     return ForwardReport(paper.started_on, paper.start_value, paper.sessions[-1], len(paper.sessions) - 1,
-                         scores, values, followed, costs, assumed, warnings)
+                         scores, values, followed, costs, assumed, warnings, paper.run_id, runs, ended)
+
+
+def _history(report: ForwardReport) -> list[str]:
+    """One line per other run, so a restart is always visible."""
+    runs = report.runs
+    if runs is None or runs.empty:
+        return []
+    lines = []
+    for _, run in runs[runs["run_id"] != report.run_id].iterrows():
+        state = f"ended {run['ended_at']:%Y-%m-%d}: {run['end_reason']}" if pd.notna(run["ended_at"]) else "running"
+        lines.append(f"Other run {run['run_id']}: started {run['started_on']}, {state} "
+                     f"(`quant forward-report --run {run['run_id']}`)")
+    return lines
 
 
 def format_report(report: ForwardReport) -> str:
+    history = _history(report)
     if not report.started:
-        return ("The forward test has not started: the first `quant run-daily` after the close, before the next "
-                "open, freezes its first session.")
-    lines = [
-        f"Forward test since {report.started_on.date()} (start value {report.start_value:,.2f}), "
-        f"through {report.last_session.date()}",
-        report.checkpoint,
-        "",
-    ]
+        return "\n".join(["The forward test is not running: put your real account in data/positions.csv and run "
+                          "`quant forward-test --start` after a close (before the next open).", *history])
+    title = f"Forward test run {report.run_id}" + (" (ENDED)" if report.ended else "")
+    lines = [f"{title} since {report.started_on.date()} (start value {report.start_value:,.2f}), "
+             f"through {report.last_session.date()}"]
+    if report.ended:
+        lines.append(f"Ended {report.ended[0]:%Y-%m-%d}: {report.ended[1]}")
+    lines += [report.checkpoint, *history, ""]
     table = pd.DataFrame({
         "return": report.scores["total_return"].map(lambda v: f"{v:+.2%}"),
         "volatility": report.scores["volatility"].map(lambda v: "-" if v != v else f"{v:.1%}"),

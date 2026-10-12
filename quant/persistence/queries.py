@@ -522,10 +522,74 @@ def load_predictions(engine: Engine, model_version: str) -> pd.DataFrame:
     return frame.set_index(["date", "symbol"])
 
 
-def frozen_sessions(engine: Engine, portfolio: str | None = None) -> pd.DataFrame:
-    """forward_sessions rows (all portfolios, or one), ordered by session."""
+def forward_run(engine: Engine, run_id: int | None = None):
+    """A forward-test run (default: the open one), or None."""
+    runs = tables.forward_runs
+    stmt = select(runs).where(runs.c.run_id == run_id) if run_id is not None else \
+        select(runs).where(runs.c.is_open == 1)
+    with engine.connect() as conn:
+        return conn.execute(stmt).mappings().first()
+
+
+forward_start = forward_run  # the open run is the forward test in progress
+
+
+def list_forward_runs(engine: Engine) -> pd.DataFrame:
+    runs = tables.forward_runs
+    with engine.connect() as conn:
+        rows = conn.execute(select(runs).order_by(runs.c.run_id)).mappings().all()
+    return pd.DataFrame([dict(r) for r in rows], columns=[c.name for c in runs.columns])
+
+
+def _run_id(engine: Engine, run_id: int | None) -> int | None:
+    if run_id is not None:
+        return run_id
+    run = forward_run(engine)
+    return None if run is None else run["run_id"]
+
+
+def record_forward_start(engine: Engine, started_on: date, start_value: float, value_source: str,
+                         positions: Sequence[Mapping[str, Any]] = ()) -> bool:
+    """Open a new run with its start and starting holdings; False if a run is open already."""
+    runs = tables.forward_runs
+    with engine.begin() as conn:
+        if conn.execute(select(runs.c.run_id).where(runs.c.is_open == 1)).first() is not None:
+            return False
+        run_id = conn.execute(runs.insert().values(
+            started_on=started_on, start_value=start_value, value_source=value_source, created_at=_now(),
+            is_open=1)).inserted_primary_key[0]
+        if positions:
+            conn.execute(tables.forward_start_positions.insert(), [{**dict(r), "run_id": run_id} for r in positions])
+    return True
+
+
+def end_forward_run(engine: Engine, reason: str):
+    """End the open run (kept, never deleted); its derived equity is cleared. Returns the run, or None."""
+    runs = tables.forward_runs
+    with engine.begin() as conn:
+        run = conn.execute(select(runs).where(runs.c.is_open == 1)).mappings().first()
+        if run is None:
+            return None
+        conn.execute(runs.update().where(runs.c.run_id == run["run_id"])
+                     .values(ended_at=_now(), end_reason=reason, is_open=None))
+        conn.execute(tables.forward_equity.delete())
+    return run
+
+
+def forward_start_positions(engine: Engine, run_id: int | None = None) -> pd.DataFrame:
+    run_id = _run_id(engine, run_id)
+    fsp = tables.forward_start_positions
+    with engine.connect() as conn:
+        rows = conn.execute(select(fsp.c.symbol, fsp.c.quantity, fsp.c.cost_basis)
+                            .where(fsp.c.run_id == run_id)).mappings().all()
+    return pd.DataFrame([dict(r) for r in rows], columns=["symbol", "quantity", "cost_basis"])
+
+
+def frozen_sessions(engine: Engine, portfolio: str | None = None, run_id: int | None = None) -> pd.DataFrame:
+    """forward_sessions rows of a run (default: the open one; none without one), ordered by session."""
+    run_id = _run_id(engine, run_id)
     fs = tables.forward_sessions
-    stmt = select(fs).order_by(fs.c.session, fs.c.portfolio)
+    stmt = select(fs).where(fs.c.run_id == run_id).order_by(fs.c.session, fs.c.portfolio)
     if portfolio is not None:
         stmt = stmt.where(fs.c.portfolio == portfolio)
     with engine.connect() as conn:
@@ -534,57 +598,38 @@ def frozen_sessions(engine: Engine, portfolio: str | None = None) -> pd.DataFram
 
 
 def freeze_forward(engine: Engine, header: Mapping[str, Any], targets: Sequence[Mapping[str, Any]]) -> bool:
-    """Write one portfolio's session once. Returns False (and writes nothing) if it is already
-    frozen: a frozen session is never updated, whatever later data says."""
+    """Write one portfolio's session once, in the open run. Returns False (and writes nothing) if
+    it is already frozen: a frozen session is never updated, whatever later data says."""
+    run_id = _run_id(engine, header.get("run_id"))
+    if run_id is None:
+        raise ValueError("no open forward-test run: `quant forward-test --start` first")
     fs, ft = tables.forward_sessions, tables.forward_targets
+    header = {**header, "run_id": run_id}
     with engine.begin() as conn:
         exists = conn.execute(select(fs.c.session).where(
-            fs.c.session == header["session"], fs.c.portfolio == header["portfolio"])).first()
+            fs.c.run_id == run_id, fs.c.session == header["session"], fs.c.portfolio == header["portfolio"])).first()
         if exists is not None:
             return False
         conn.execute(fs.insert().values(**header, frozen_at=_now()))
-        rows = [{**row, "session": header["session"], "portfolio": header["portfolio"]} for row in targets]
+        rows = [{**row, "run_id": run_id, "session": header["session"], "portfolio": header["portfolio"]}
+                for row in targets]
         if rows:
             conn.execute(ft.insert(), rows)
     return True
 
 
-def load_forward_targets(engine: Engine, portfolio: str) -> pd.DataFrame:
-    """Frozen target weights of one portfolio, sessions x symbols (0 where not held)."""
+def load_forward_targets(engine: Engine, portfolio: str, run_id: int | None = None) -> pd.DataFrame:
+    """Frozen target weights of one portfolio in a run, sessions x symbols (0 where not held)."""
+    run_id = _run_id(engine, run_id)
     ft = tables.forward_targets
     with engine.connect() as conn:
         rows = conn.execute(select(ft.c.session, ft.c.symbol, ft.c.target_weight)
-                            .where(ft.c.portfolio == portfolio)).all()
+                            .where(ft.c.run_id == run_id, ft.c.portfolio == portfolio)).all()
     frame = pd.DataFrame(rows, columns=["session", "symbol", "target_weight"])
     wide = frame.pivot(index="session", columns="symbol", values="target_weight")
     wide.index = pd.DatetimeIndex(wide.index)
-    sessions = frozen_sessions(engine, portfolio)["session"]
+    sessions = frozen_sessions(engine, portfolio, run_id)["session"]
     return wide.reindex(pd.DatetimeIndex(sessions)).fillna(0.0).sort_index()
-
-
-def forward_start(engine: Engine):
-    """The forward test's start row, or None before the first freeze."""
-    with engine.connect() as conn:
-        return conn.execute(select(tables.forward_start)).mappings().first()
-
-
-def record_forward_start(engine: Engine, started_on: date, start_value: float, value_source: str,
-                         positions: Sequence[Mapping[str, Any]] = ()) -> bool:
-    """Write the start (and the starting holdings) once; False if it already exists (it never moves)."""
-    with engine.begin() as conn:
-        if conn.execute(select(tables.forward_start.c.started_on)).first() is not None:
-            return False
-        conn.execute(tables.forward_start.insert().values(
-            started_on=started_on, start_value=start_value, value_source=value_source, created_at=_now()))
-        if positions:
-            conn.execute(tables.forward_start_positions.insert(), list(positions))
-    return True
-
-
-def forward_start_positions(engine: Engine) -> pd.DataFrame:
-    with engine.connect() as conn:
-        rows = conn.execute(select(tables.forward_start_positions)).mappings().all()
-    return pd.DataFrame([dict(r) for r in rows], columns=["symbol", "quantity", "cost_basis"])
 
 
 def load_raw_opens(engine: Engine, symbols: Sequence[str], since: date | None = None) -> pd.DataFrame:
