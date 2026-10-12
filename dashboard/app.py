@@ -65,7 +65,9 @@ def page_status(engine, settings):
     stages = pd.DataFrame([{"stage": s.label, "finished (UTC)": s.last_ok, "data to": s.data_as_of,
                             "last run failed": "yes" if s.failed_since else ""} for s in report.stages])
     stages.loc[len(stages)] = ["run-daily", report.last_run_daily, None, ""]
-    stages = stages.astype(object).where(stages.notna(), "never")
+    stages["finished (UTC)"] = stages["finished (UTC)"].map(
+        lambda v: v.strftime("%Y-%m-%d %H:%M") if v is not None and pd.notna(v) else "never")
+    stages["data to"] = stages["data to"].map(lambda v: str(v) if v is not None and pd.notna(v) else "never")
     stages.loc[stages["stage"] == "run-daily", "data to"] = ""
     st.dataframe(stages, hide_index=True, width="stretch")
     st.subheader("Models")
