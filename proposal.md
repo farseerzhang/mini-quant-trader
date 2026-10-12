@@ -1021,6 +1021,60 @@ Every model fails three gates (Sharpe, 4/11 folds, drawdown). The folds chose th
 - Dropping the market and regime inputs cannot by itself change a linear model's daily ranking, so the loss comes from the stock features removed.
 - The configured 35 inputs stay. Univariate screening is not repeated; a multivariate alternative (e.g. L1-regularised logistic regression, which drops inputs inside the fit) would be a new pre-registered trial.
 
+### 15.4.8 Holdout check of the logistic regression (registered 2026-10-12, before viewing the holdout)
+
+The first evaluation of the holdout (section 15.2): `quant retrain --role predictor --model logistic_regression --evaluate-holdout`, with the 15.4.6 configuration unchanged (81 stocks, 35 inputs, the same search). The holdout is the last 12 months of stored sessions; the comparison is `ml_logistic_regression` against `regime_switch` with the rule-based regime on the same sessions, after costs. Decided before looking:
+
+| Holdout result | Action |
+|---|---|
+| Sharpe at least as high **and** max drawdown no deeper | Candidate for promotion with `--override` (the consistency gate still failed), with the rule-based selection tracked in shadow (Phase 10) |
+| One better, one worse | No promotion; the logistic regression runs in shadow in Phase 10 |
+| Both worse | No promotion; shadow optional; the rule-based stock selection stays |
+
+Whatever the result, the model is not changed and re-checked on this holdout; later research is judged on development data and forward testing. One year is a short test (a single year's Sharpe has an uncertainty of about +/-1), so the result is weak evidence either way.
+
+**Result (2026-10-12, holdout evaluation #1; holdout 2025-10-10 .. 2026-10-01, after costs; candidate `logistic_regression-20261012T183319Z-cf2d50`, the same configuration and walk-forward result as 15.4.6):**
+
+```text
+                        CAGR   Sharpe  max DD  invested  turnover
+ml_logistic_regression  17.0%   0.86   -14.5%     75%      17.1x
+regime_switch           35.4%   1.70   -10.7%     91%       4.6x
+SPY                     17.3%   1.32    -8.9%    100%
+equal_weight            33.8%   2.08    -8.4%     99%
+```
+
+**Both worse** (Sharpe 0.86 vs 1.70, max DD -14.5% vs -10.7%): under the rule above, no promotion, and the rule-based stock selection stays; shadow tracking of the logistic regression in Phase 10 is optional. The `holdout_not_worse_than_baseline` gate fails as well. In a strong, broad rally the model's weekly picks trailed the pool (equal weight +33.8%) while trading almost four times as often.
+
+### 13.2 Holdout check of the ACTIVE HMM regime (registered 2026-10-12, before viewing)
+
+The HMM `hmm-20261012T174554Z-5f979a` was promoted on its development gates (15.4.6), which never use the holdout. Its labels over the holdout year (seen while comparing regimes, no returns) disagree with the rule-based regime on most days (it called 151 of the rule-based regime's 234 BULL days SIDEWAYS), so its trading result there is checked once (holdout evaluation #2; the predictor's check, 15.4.8, was #1).
+
+- **Compared:** `regime_switch` (baseline bear exposure 0) with the HMM's stored regime vs with the rule-based regime; same 81 stocks, sizing, costs and minimum trade size as `quant backtest`; simulated over the full history so holdings carry into the window; metrics on the holdout sessions only (2025-10-10 .. latest). The HMM's regime there is its final fit (trained to 2025-10-01) applied forward: out of sample.
+- **Decided before looking:**
+
+| Holdout result (HMM vs rule-based, regime_switch) | Action |
+|---|---|
+| Sharpe at least as high **and** max drawdown no deeper | Keep the HMM ACTIVE |
+| One better, one worse | Keep it ACTIVE, with the rule-based regime in shadow in Phase 10 |
+| Both worse | `quant retire` it; the rule-based regime returns, with the HMM in shadow in Phase 10 |
+
+One year is a short test; the HMM is not refit or changed because of this result.
+
+**Result (2026-10-12, holdout evaluation #2; 2025-10-10 .. 2026-10-01, after costs; `regime_switch`, 81 stocks):**
+
+```text
+                       as registered (holdings carried in)      started from cash on 2025-10-10
+regime               CAGR   Sharpe  max DD  invested turnover    CAGR   Sharpe  max DD
+rule-based          +26.4%   1.39   -10.7%    90%      4.3x     +35.4%   1.70   -10.7%
+HMM (ACTIVE)         +8.5%   0.73    -7.2%    54%     12.5x     +10.0%   0.87    -7.2%
+regime days in the window: rule-based BULL 228 / SIDEWAYS 10 / BEAR 7; HMM BULL 77 / SIDEWAYS 168
+```
+
+- **Mixed** under the rule above (Sharpe worse, drawdown shallower): the HMM stays ACTIVE and the rule-based regime runs in shadow in Phase 10.
+- The two halves are not of equal size: the HMM gave up about 18 points of return and half the Sharpe ratio for a drawdown 3.5 points shallower, because it called two thirds of a steady rally SIDEWAYS (regime_switch then holds mostly cash) and switched often (12.5x turnover). The rule did not weigh the two sizes; it is not changed after the fact, and keeping or retiring the HMM remains the owner's decision.
+- **Decision (2026-10-12, owner):** retired (`quant retire`, logged with the reason). The rule-based regime is back in use; the HMM is to run in shadow in Phase 10. `quant promote hmm-20261012T174554Z-5f979a` would restore it (its development gates passed, so no override is needed).
+- The fresh-start columns reproduce the predictor check's baseline (15.4.8, +35.4%, Sharpe 1.70); the gap between the two starts is path dependence: a fresh start buys the whole target list at equal weight on day 1, while carried positions drift within the 2-point minimum trade size.
+
 After a model type and its hyperparameters are chosen, the deployed model is refit with those fixed parameters on **all data up to the cutoff** (including the most recent years), so it has seen recent market conditions. A refit model has no untouched out-of-sample data left. Its evidence comes from forward testing: logging live signals and scoring them against realized outcomes (Phase 10).
 
 ---
