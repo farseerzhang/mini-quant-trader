@@ -13,6 +13,8 @@ from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, Settings, lo
 from quant.data.store import sync_market_data, sync_symbol_table
 from quant.data.yfinance_provider import MarketDataError, YFinanceProvider
 from quant.features.pipeline import calculate_and_store_features
+from quant.forward.real import TradesError
+from quant.forward.report import build_report, format_report
 from quant.logs import close_logging, configure_logging
 from quant.models.ml_backtest import BASELINE
 from quant.models.retrain import run_retrain
@@ -136,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
     retire_command.add_argument("model_id", help="the ACTIVE model to retire (see `quant status`)")
     retire_command.add_argument("--reason", help="why; logged with the change")
     retire_command.add_argument("--db", help=db_help)
+
+    forward_command = commands.add_parser(
+        "forward-report",
+        help="forward test: every portfolio (live, shadows, your account, SPY) since the start (read-only)",
+    )
+    forward_command.add_argument("--db", help=db_help)
 
     status_command = commands.add_parser(
         "status",
@@ -505,6 +513,19 @@ def _run_retire(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_forward_report(args: argparse.Namespace, settings: Settings) -> int:
+    engine = _engine(settings, args.db)
+    try:
+        report = build_report(engine, settings)
+    except (TradesError, ValueError) as exc:
+        _error(f"Forward report failed: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(format_report(report))
+    return 0
+
+
 def _run_status(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
@@ -569,6 +590,7 @@ COMMANDS = {
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),
+    "forward-report": lambda args, settings: _run_forward_report(args, settings),
     "generate-signals": lambda args, settings: _run_signals(args, settings),
     "run-daily": lambda args, settings: _run_daily(args, settings),
     "backtest": lambda args, settings: _run_backtest(args, settings),

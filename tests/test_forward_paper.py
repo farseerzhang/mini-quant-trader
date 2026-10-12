@@ -21,7 +21,9 @@ from tests.test_forward_freeze import EVENING
 WINDOW = DATES[-30:]
 
 
-class PaperTests(unittest.TestCase):
+class PaperFixture(unittest.TestCase):
+    """A stored market, regime_switch's weights and a frozen live window (shared with the report tests)."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
@@ -61,6 +63,9 @@ class PaperTests(unittest.TestCase):
         bt = dataclasses.replace(self.settings.backtest, initial_cash=50_000.0)
         return simulate(order_targets(weights, bt.min_trade_weight), self.prices, bt)
 
+
+
+class PaperTests(PaperFixture):
     def test_paper_equals_the_backtest_engine_on_the_same_targets(self):
         self.freeze(WINDOW)
         result = run_paper(self.engine, self.settings)

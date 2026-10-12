@@ -1776,6 +1776,8 @@ Implementation (step 4, `quant/forward/real.py`): `positions.trades_path` (`data
 
 **Scores** (`quant forward-report`, dashboard): for every portfolio since the start: total return, annualised volatility, Sharpe (daily, no risk-free rate), max drawdown; sessions covered and missed. For `real` also: the **followed share** each day, the sum over stocks of min(actual weight, `live` target weight); and the **cost of execution**, the owner's fill prices against the next open after the signal.
 
+Implementation (step 5, `quant/forward/report.py`, `quant forward-report`): read-only; the paper portfolios are re-simulated from the frozen targets and the real account replayed from its trade log in memory. It prints the start, the checkpoint (sessions to the 6-month first look and the 12-month verdict), each portfolio's return, volatility, Sharpe, max drawdown and missed sessions, the average and latest followed share, and the notional-weighted execution cost against the open next to the backtest's assumed fee + slippage.
+
 **Checkpoints.** A first look after **6 months** (about 126 forward sessions); no promotion, retirement or rule change is made on forward evidence before it. A verdict after **12 months** (about 252 sessions). One year's Sharpe has an uncertainty of about +/-1, so even then a difference is evidence, not proof. A shadow becomes a candidate to replace `live` only if, over the 12 months, its Sharpe is higher **and** its max drawdown no deeper than `live`'s; the decision stays the owner's.
 
 ---
