@@ -336,6 +336,17 @@ python -m quant sentiment review-export
 
 It prints the agreement with the labels and writes every disagreement (only in the labels, only from the extractor, or a different direction) with the quote, a link to the second in the video and the transcript lines around it to `data/sentiment_gold/reviews/review-<backend>-<model>-v<prompt>.csv`. Fill in `verdict` (`reference`, `extractor`, `both` or `neither`) and optionally `comment`; the file is never overwritten.
 
+#### Insider Transactions (research, `altdata_proposal.md`)
+
+SEC Form 4 filings for the stock pool: who among a company's officers, directors and 10% owners bought or sold its stock, when, how much and at what price. Research only: not part of `run-daily`, and no feature uses it until the pre-registered research of the proposal (section 8) is done.
+
+```bash
+python -m quant altdata update
+python -m quant altdata coverage
+```
+
+The first `update` is a backfill from 2006: one quarterly SEC data set at a time (about 1.2 GB of downloads in total; only the pool's rows are kept), then the filings since the newest quarter, one by one from EDGAR. Later runs only fetch what is new. Every request sends `altdata.user_agent` (the SEC requires a name and an email) and stays at `altdata.sec.max_requests_per_second` (5; the SEC allows 10). A filing from the quarterly data sets counts from the session after its filing date (they have no time of day); a filing fetched live from the first session closing after it was accepted. Bad lines (no price, a price far from that day's close, a trade dated after its filing) go to `data_quarantine`. `coverage` writes `reports/altdata/coverage-form4.md`: filings and purchase / sale lines per stock and year.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.

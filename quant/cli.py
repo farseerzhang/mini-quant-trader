@@ -28,6 +28,7 @@ from quant.persistence.database import create_db_engine, init_db
 from quant.regime.active import calculate_and_store_active_regime
 from quant.regime.pipeline import calculate_and_store_regimes
 from quant.regime.retrain import run_regime_retrain
+from quant.altdata import cli as altdata_cli
 from quant.sentiment import cli as sentiment_cli
 from quant.signals.pipeline import generate_and_store_signals
 from quant.signals.positions import PositionsError
@@ -188,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily_command.add_argument("--db", help=db_help)
 
     sentiment_cli.add_parser(commands, db_help)
+    altdata_cli.add_parser(commands, db_help)
     return parser
 
 
@@ -722,6 +724,7 @@ COMMANDS = {
     "backtest": lambda args, settings: _run_backtest(args, settings),
     "retrain": lambda args, settings: _run_retrain(args, settings),
     "sentiment": sentiment_cli.run,
+    "altdata": altdata_cli.run,
 }
 
 

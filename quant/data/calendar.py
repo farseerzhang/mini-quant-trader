@@ -85,6 +85,30 @@ def first_session_opening_after(moment: datetime, calendar_name: str) -> date:
     raise ValueError(f"no {calendar_name} session opens within 15 days after {moment}")
 
 
+def first_session_after(day: date, calendar_name: str) -> date:
+    """The first session strictly after ``day`` (a calendar date, session or not)."""
+    calendar = _calendar(calendar_name, day)
+    sessions = calendar.sessions_in_range(pd.Timestamp((day + timedelta(days=1)).isoformat()),
+                                          pd.Timestamp((day + timedelta(days=15)).isoformat()))
+    if not len(sessions):
+        raise ValueError(f"no {calendar_name} session within 15 days after {day}")
+    return sessions[0].date()
+
+
+def first_session_closing_after(moment: datetime, calendar_name: str) -> date:
+    """The first session whose close is after ``moment`` (timezone-aware): something public
+    before a session's close can be used at that close; after it, from the next session."""
+    if moment.tzinfo is None:
+        raise ValueError("moment must be timezone-aware")
+    calendar = _calendar(calendar_name, moment.date())
+    sessions = calendar.sessions_in_range(pd.Timestamp(moment.date().isoformat()),
+                                          pd.Timestamp((moment.date() + timedelta(days=15)).isoformat()))
+    for session in sessions:
+        if calendar.session_close(session).to_pydatetime() > moment:
+            return session.date()
+    raise ValueError(f"no {calendar_name} session closes within 15 days after {moment}")
+
+
 def sessions_between(first: date, last: date, calendar_name: str) -> list[date]:
     """Every session from ``first`` to ``last``, both included."""
     calendar = _calendar(calendar_name, first)

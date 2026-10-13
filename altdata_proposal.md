@@ -1,6 +1,6 @@
 # Free Structured Alternative Data — Proposal (Draft)
 
-Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) next.
+Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) built 2026-10-13 (section 13.2).
 Date: 2026-10-13
 
 Companion to `sentiment_proposal.md`. That proposal turns **text** (YouTube, Reddit) into opinions with an LLM and mostly has to be logged going forward. This one covers **already-structured records** from free, official sources that have **years of history**, so they can be researched on the existing development folds now.
@@ -290,6 +290,17 @@ User-Agent `mini-quant-trader Chenghao Zhang chenghao.zhang@outlook.de` (`altdat
 | 13D | A company's submissions list holds both 13Ds **about** it and 13Ds it **filed about others** (e.g. BRK-B, LLY as investors). The recent lists show 1-4 per company for 20 pool stocks since 2014, but which side they are on needs each filing's header (`SUBJECT COMPANY` vs `FILED BY`) | 13D needs the header check in A1; events about pool companies are rare (section 10 holds) |
 
 Decided (section 15, decisions 6 and 7): the conservative availability rule above; A1 builds Form 4 only.
+
+## 13.2 A1 as built (2026-10-13, Form 4 only)
+
+- `quant altdata update [--max-quarters N] [--no-live] [--reload]` and `quant altdata coverage` (writes `reports/altdata/coverage-form4.md`); code in `quant/altdata/` (`tables.py`, `edgar.py`, `form4.py`, `cli.py`), registered in `quant/cli.py`. Tests: `tests/test_altdata_form4.py`, offline with a synthetic quarterly zip, a Form 4 XML and a fake SEC client.
+- **Tables differ from section 4**: a Form 4 can be filed jointly by several owners for the same transactions (e.g. a fund and its manager), so the owner fields moved out of the transaction rows: `altdata_insider_filings` (one row per filing: document type, filing date, acceptance time when known, `available_on`, the 10b5-1 flag, source), `altdata_insider_owners` (per filing and owner: name, director / officer / 10% owner / other, title) and `altdata_insider_transactions` (per non-derivative line: date, code, shares, price, shares owned after, direct / indirect). `altdata_entities` (ticker -> CIK) and `altdata_sync` (one row per loaded quarter, plus the live updates) as planned.
+- `available_on` is the session at whose close a filing may first be used: data-set filings the session after their filing date (decision 6), live filings the first session closing after their acceptance time.
+- The 10b5-1 flag is per filing (`AFF10B5ONE` / `aff10b5One`), normalized to 1 / 0 / NULL.
+- Amendments (4/A) are stored with `date_of_original`; linking them to the filing they amend (the data sets give only the original's date) is left to the feature step (A4).
+- Live filings are fetched only once every published quarter is loaded, after the newest quarter's end. A first live run with only one quarter loaded reached back to 2006 through the submissions lists and was stopped before it stored anything; the rule above prevents that.
+- A live filing keeps its exact acceptance time when its quarter's data set is loaded later. A filing whose issuer is not the pool company (e.g. a pool company reporting as an owner of another company) is skipped.
+- Quality (section 6): P / S lines without a positive price or shares, dated after their filing, or priced more than 50% away from that day's as-traded close go to `data_quarantine` (provider `sec-form4`) and are not stored.
 
 ---
 
