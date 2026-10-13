@@ -1662,6 +1662,7 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     model: haiku                   # the input is short and already clean, so a cheaper model is enough
     prompt_version: 1
     reports_dir: reports/sentiment # one Markdown report per trading day: reports/sentiment/<date>.md
+
   channels:                        # chosen after S0 (sentiment_proposal.md section 12.1)
     - {handle: "@FinancialEducation", channel_id: UCnMn36GT_H0X-w5_ckLtlgQ, name: "Financial Education", language: en, style: "aggressive growth"}
     - {handle: "@chipstockinvestor", channel_id: UC3aD-gfmHV_MhMmcwyIu1wA, name: "Chip Stock Investor", language: en, style: "semiconductors / AI"}
@@ -1669,6 +1670,15 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     - {handle: "@yttalkjun", channel_id: UCRBrH2qS7yKGMNSmjnj8gcw, name: "投资TALK君", language: zh, style: "macro + sectors"}
     - {handle: "@Zac-Stock-Journal", channel_id: UCawshLsWXrFnYhAlnmn0h2A, name: "Zac美股笔记", language: zh, style: "technical buy points, own holdings"}
     - {handle: "@nick_stockcafe", channel_id: UCjrP2TtSTifuRJ76hW2IW1A, name: "Nick 美股咖啡館", language: zh, style: "own buys, Traditional Chinese"}
+
+altdata:                           # free structured alternative data (altdata_proposal.md); research only, not in run-daily
+  version: 1
+  user_agent: "mini-quant-trader Chenghao Zhang chenghao.zhang@outlook.de"  # sent to the SEC with every request
+  sec:                             # EDGAR: Form 4 insider trades, Schedule 13D activist stakes
+    max_requests_per_second: 5     # the SEC allows 10
+    insider_backfill_from: 2006-01-01   # set from the A0 spike
+    signal_codes: [P, S]           # open-market purchases and sales; grants, exercises, gifts are not decisions
+    exclude_10b5_1_sales: true     # pre-planned sales are not discretionary
 ```
 
 `config/settings.yaml` holds exactly this block. Every section and key is required and unknown keys are rejected at startup, so the two must be changed together.

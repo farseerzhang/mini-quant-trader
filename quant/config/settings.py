@@ -695,6 +695,35 @@ def _as_channels(value: Any) -> tuple[ChannelSettings, ...]:
 
 
 @dataclass(frozen=True)
+class SecSettings:
+    max_requests_per_second: float  # the SEC allows 10; stay well below
+    insider_backfill_from: date
+    signal_codes: tuple[str, ...]  # Form 4 transaction codes that are decisions (P purchase, S sale)
+    exclude_10b5_1_sales: bool  # pre-planned sales are not discretionary
+
+    def __post_init__(self) -> None:
+        if not 0 < self.max_requests_per_second <= 10:
+            raise ConfigError("altdata.sec.max_requests_per_second must be in (0, 10] (the SEC's limit)")
+        if not self.signal_codes:
+            raise ConfigError("altdata.sec.signal_codes must list at least one transaction code")
+
+
+@dataclass(frozen=True)
+class AltdataSettings:
+    """Free structured alternative data (altdata_proposal.md); research only, not part of run-daily."""
+
+    version: int
+    user_agent: str  # sent with every request to the SEC: a name and an email address
+    sec: SecSettings
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ConfigError("altdata.version must be >= 1")
+        if "@" not in self.user_agent or len(self.user_agent.split()) < 3:
+            raise ConfigError("altdata.user_agent must look like 'mini-quant-trader <name> <email>' (SEC rule)")
+
+
+@dataclass(frozen=True)
 class Settings:
     database: DatabaseSettings
     market: MarketSettings
@@ -710,6 +739,7 @@ class Settings:
     logging: LoggingSettings
     forward_test: ForwardTestSettings
     sentiment: SentimentSettings
+    altdata: AltdataSettings
 
     def __post_init__(self) -> None:
         for name, shadow in self.forward_test.shadows.items():
@@ -936,4 +966,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                           "gold": _subsection(GoldSettings, "sentiment.gold"),
                           "extraction": _subsection(ExtractionSettings, "sentiment.extraction"),
                           "summary": _subsection(SummarySettings, "sentiment.summary")}),
+        altdata=_build(AltdataSettings, "altdata", _section(raw, "altdata"),
+                       {"sec": _subsection(SecSettings, "altdata.sec", {"insider_backfill_from": _as_date,
+                                                                         "signal_codes": _as_str_tuple})}),
     )

@@ -1,6 +1,6 @@
 # Free Structured Alternative Data — Proposal (Draft)
 
-Status: approved 2026-10-13 (decisions in section 15). Starts after sentiment S1, with EDGAR only.
+Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) next.
 Date: 2026-10-13
 
 Companion to `sentiment_proposal.md`. That proposal turns **text** (YouTube, Reddit) into opinions with an LLM and mostly has to be logged going forward. This one covers **already-structured records** from free, official sources that have **years of history**, so they can be researched on the existing development folds now.
@@ -274,6 +274,23 @@ No new dependencies: HTTP via `requests` (already installed with yfinance), XML 
 
 A1–A3 are independent and can be built in any order. A4 needs all three.
 
+## 13.1 A0 findings, EDGAR (2026-10-13)
+
+User-Agent `mini-quant-trader Chenghao Zhang chenghao.zhang@outlook.de` (`altdata.user_agent`), at most 4 requests per second in the spike.
+
+| Check | Finding | Consequence |
+|---|---|---|
+| Ticker -> CIK (`company_tickers.json`, 10,445 entries) | All 81 pool stocks map, BRK-B included (via `BRK-B`); no two pool tickers share a CIK | `altdata_entities` can be built from it; recheck on every update |
+| Insider Transactions Data Sets | 83 quarterly zips, **2006 Q1 .. 2026 Q3**, 12-17 MB each (about 1.2 GB for the backfill; only pool rows are kept). The newest quarters moved to `/files/datastandardsinnovation/...`, older ones are under `/files/structureddata/...`: the downloader reads the links from the index page instead of building URLs | `insider_backfill_from: 2006-01-01` confirmed |
+| Files and fields (2026 Q2) | `SUBMISSION`, `REPORTINGOWNER`, `NONDERIV_TRANS` (+ derivative tables, footnotes, signatures). All fields of section 3.1 exist: transaction date, code, shares, price, acquired/disposed, shares owned after, direct/indirect, owner relationship and title | Parser as planned |
+| Filing time | The data sets have only `FILING_DATE` (a date, `30-JUN-2026` format), **no acceptance time**. The submissions API (`data.sec.gov/submissions/CIK##########.json`) has `acceptanceDateTime` (e.g. AAPL Form 4 filed 2026-10-08, accepted 2026-10-09T02:30:32Z, i.e. 22:30 ET, after the close) | **Backfill rows are available from the session after their filing date** (conservative: a filing on day D may be accepted until late evening). Incremental rows use the exact acceptance time (after 16:00 ET -> next session) |
+| 10b5-1 flag | `AFF10B5ONE` on the **filing**, not per transaction line; values mixed (`true`/`false`/`1`/`0`), empty before the 2023 rule | Stored per filing, normalized to 1/0/NULL; before 2023 unknown (NULL), so `exclude_10b5_1_sales` can only apply from 2023 |
+| Volume for the pool (2026 Q2) | 1,695 filings (1,635 Form 4); 4,517 non-derivative lines; codes S 3,039, A 499, M 392, F 365, G 85, **P 12** (NKE 5, LULU 2, BRK-B 2, ADBE, AVGO, CAT 1 each); sales concentrated (DELL 1,170 lines, SE 599). XOM had no filing that quarter | As expected in section 10: **insider purchases are very rare in this pool**, so `insider_buyers_60d` will be 0 almost always; the sale side is dominated by a few holders' programs |
+| Form 4 XML (live) | `ownershipDocument` with `aff10b5One`, owner name, role and title, transaction lines; the raw XML is the primary document without its `xslF345X06/` prefix | Incremental parser works on the raw XML |
+| 13D | A company's submissions list holds both 13Ds **about** it and 13Ds it **filed about others** (e.g. BRK-B, LLY as investors). The recent lists show 1-4 per company for 20 pool stocks since 2014, but which side they are on needs each filing's header (`SUBJECT COMPANY` vs `FILED BY`) | 13D needs the header check in A1; events about pool companies are rare (section 10 holds) |
+
+Decided (section 15, decisions 6 and 7): the conservative availability rule above; A1 builds Form 4 only.
+
 ---
 
 # 14. Risks
@@ -297,3 +314,5 @@ A1–A3 are independent and can be built in any order. A4 needs all three.
 3. **Module name**: `quant/altdata/`.
 4. **Timing**: after sentiment S1.
 5. **Table names**: every table of this module starts with `altdata_` (section 4), so alt data, sentiment (`sentiment_*`) and the core quant tables never mix.
+6. **Availability of backfilled Form 4 rows** (2026-10-13, after A0): the data sets have no acceptance time, so a backfilled filing counts from the **session after its filing date**; incrementally fetched filings use their exact acceptance time (after 16:00 ET -> next session).
+7. **A1 builds Form 4 only** (2026-10-13). Schedule 13D is dropped from A1: too rare in the pool, and it needs a header check to tell filings about a company from filings by it. `activist_13d_120d` leaves the candidate list of section 7.
