@@ -1646,6 +1646,17 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     labels_dir: research/sentiment_ai_reference   # labels (videos.csv, opinions.csv); committed. Now an AI
                                                   # reference (GPT / MAI), not human labels: see SOURCE.md
     transcripts_dir: data/sentiment_gold/transcripts  # reading copies; git-ignored, delete any time
+  extraction:                      # opinions from transcripts (sentiment_proposal.md section 4)
+    backend: claude_code           # claude_code (your Pro subscription, `claude -p`); gemini comes later
+    model: sonnet                  # placeholder until the S2 comparison; `extract --model haiku` overrides
+    prompt_version: 1              # bump when the prompt changes; each version's opinions are kept apart
+    chunk_minutes: 10              # transcripts are sent in pieces of this length ...
+    chunk_overlap_seconds: 30      # ... each starting this much before the previous one ends
+    quote_match_threshold: 0.85    # starting value; set per language in S2
+    max_videos_per_run: 40         # more needs --yes
+    call_timeout_seconds: 300
+    aliases_path: config/sentiment_aliases.yaml        # names per ticker, kept by hand
+    tickers_cache: data/sentiment/us_tickers.json      # US-listed symbols (Nasdaq Trader), refreshed monthly
   channels:                        # chosen after S0 (sentiment_proposal.md section 12.1)
     - {handle: "@FinancialEducation", channel_id: UCnMn36GT_H0X-w5_ckLtlgQ, name: "Financial Education", language: en, style: "aggressive growth"}
     - {handle: "@chipstockinvestor", channel_id: UC3aD-gfmHV_MhMmcwyIu1wA, name: "Chip Stock Investor", language: en, style: "semiconductors / AI"}

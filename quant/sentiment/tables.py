@@ -1,13 +1,26 @@
 """Tables of the opinion factor (sentiment_proposal.md section 6), on the shared metadata.
 
 quant/persistence/tables.py does not change: these tables are registered when this module
-is imported, so `init_db` creates them for the sentiment commands. S1 has the fetch tables;
-opinions, summaries and out-of-pool prices follow with S2 .. S4.
+is imported, so `init_db` creates them for the sentiment commands. S1: the fetch tables;
+S2: extractions and opinions; summaries and out-of-pool prices follow with S3 and S4.
 
 Times are stored as naive UTC.
 """
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    PrimaryKeyConstraint,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
 
 from quant.persistence.tables import metadata
 
@@ -64,4 +77,62 @@ sentiment_transcripts = Table(
     Column("segments_simplified_json", Text),  # Chinese channels: the same in Simplified Chinese
     Column("char_count", Integer, nullable=False),
     Column("fetched_at", DateTime, nullable=False),
+)
+
+
+# One row per video and extractor: done (even with no opinions), or failed (retried next run).
+sentiment_extractions = Table(
+    "sentiment_extractions",
+    metadata,
+    Column("video_id", String, ForeignKey("sentiment_videos.video_id"), nullable=False),
+    Column("backend", String, nullable=False),
+    Column("model", String, nullable=False),  # as configured, e.g. sonnet
+    Column("prompt_version", Integer, nullable=False),
+    Column("status", String, nullable=False),  # OK | FAILED
+    Column("model_resolved", String),  # the model that answered, e.g. claude-sonnet-5-5
+    Column("chunks", Integer, nullable=False),
+    Column("opinions", Integer, nullable=False),
+    Column("input_tokens", Integer, nullable=False),
+    Column("output_tokens", Integer, nullable=False),
+    Column("error", Text),
+    Column("extracted_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("video_id", "backend", "model", "prompt_version", name="pk_sentiment_extractions"),
+    CheckConstraint("status IN ('OK', 'FAILED')", name="ck_sentiment_extractions_status"),
+)
+
+
+VERIFICATIONS = ("VERIFIED", "UNVERIFIED", "UNRESOLVED")
+
+# Section 6: one merged opinion per video, stock and horizon (section 4.5) for each extractor.
+sentiment_opinions = Table(
+    "sentiment_opinions",
+    metadata,
+    Column("opinion_id", Integer, primary_key=True, autoincrement=True),
+    Column("source", String, nullable=False),  # youtube | reddit
+    Column("item_id", String, nullable=False),  # YouTube video_id or Reddit post id
+    Column("channel_id", String, nullable=False),
+    Column("author", String),  # Reddit only
+    Column("published_at", DateTime, nullable=False),
+    Column("effective_date", Date, nullable=False),  # the first NYSE session opening after published_at
+    Column("ticker", String, nullable=False),  # UNKNOWN when the extractor could not tell
+    Column("name_as_said", String),
+    Column("asset_type", String, nullable=False),  # STOCK | ETF
+    Column("stance", String, nullable=False),
+    Column("horizon", String, nullable=False),
+    Column("condition", String),
+    Column("conviction", Integer, nullable=False),
+    Column("action", String, nullable=False),
+    Column("quote", Text, nullable=False),
+    Column("start_seconds", Integer),
+    Column("quote_score", Float),  # best match of the quote against its transcript piece, 0..1
+    Column("reasoning", Text),
+    Column("other_quotes_json", Text),  # earlier statements merged into this opinion (section 4.5)
+    Column("verification", String, nullable=False),
+    Column("backend", String, nullable=False),
+    Column("model", String, nullable=False),
+    Column("prompt_version", Integer, nullable=False),
+    Column("extracted_at", DateTime, nullable=False),
+    UniqueConstraint("source", "item_id", "ticker", "name_as_said", "horizon", "backend", "model",
+                     "prompt_version", name="uq_sentiment_opinions"),
+    CheckConstraint("verification IN ('VERIFIED', 'UNVERIFIED', 'UNRESOLVED')", name="ck_sentiment_opinions_verif"),
 )

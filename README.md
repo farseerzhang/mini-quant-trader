@@ -293,6 +293,15 @@ python -m quant sentiment gold-export
 
 The first run picks `sentiment.gold.videos` (10) videos with stored captions, channels taking turns, and writes `videos.csv`, an empty `opinions.csv` and the rules in `LABELING.md` to `sentiment.gold.labels_dir` (committed: they hold no transcript text), plus readable transcripts in `data/sentiment_gold/transcripts/` (git-ignored; delete them any time). Label every video, then set its `status` to `done` or `done-none`. Later runs never touch the label files; they only write the transcripts again, and `--add N` appends N more videos. The current set in `research/sentiment_ai_reference/` (20 videos) was labeled with an AI tool (GPT or MAI), so it is an **AI reference**: scores against it measure agreement, not accuracy (see its `SOURCE.md`).
 
+Step 2 (S2) extracts opinions from the stored transcripts with `sentiment.extraction.backend`; `claude_code` runs Claude Code (`claude -p`) on your Pro subscription, so it needs no API key, but `ANTHROPIC_API_KEY` must not be set:
+
+```bash
+python -m quant sentiment extract --limit 5
+python -m quant sentiment extract --video khnPevsQ_TE --model haiku
+```
+
+It prints the number of calls and an estimate of the tokens first; more than `max_videos_per_run` videos need `--yes`. Each opinion has a ticker, stance, horizon, conviction, the creator's own action, a verbatim quote and its time. A quote that does not match the transcript makes the opinion UNVERIFIED, and a ticker that is neither in `config/sentiment_aliases.yaml` nor listed on a US exchange makes it UNRESOLVED; the run lists unresolved names so you can add them to the alias table. Every video is extracted once per backend, model and prompt version (`--reextract` does it again); a usage limit stops the run cleanly. Results are in the `sentiment_opinions` table; reports come with S3.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.

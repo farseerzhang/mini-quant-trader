@@ -71,6 +71,20 @@ def next_open_after(session_date: date, calendar_name: str) -> datetime:
     return calendar.session_open(following[0]).to_pydatetime().astimezone(timezone.utc)
 
 
+def first_session_opening_after(moment: datetime, calendar_name: str) -> date:
+    """The first session whose open is after ``moment`` (timezone-aware): something published
+    during a session, or after its close, counts from the next session's open."""
+    if moment.tzinfo is None:
+        raise ValueError("moment must be timezone-aware")
+    calendar = _calendar(calendar_name, moment.date())
+    sessions = calendar.sessions_in_range(pd.Timestamp(moment.date().isoformat()),
+                                          pd.Timestamp((moment.date() + timedelta(days=15)).isoformat()))
+    for session in sessions:
+        if calendar.session_open(session).to_pydatetime() > moment:
+            return session.date()
+    raise ValueError(f"no {calendar_name} session opens within 15 days after {moment}")
+
+
 def sessions_between(first: date, last: date, calendar_name: str) -> list[date]:
     """Every session from ``first`` to ``last``, both included."""
     calendar = _calendar(calendar_name, first)

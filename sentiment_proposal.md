@@ -1,6 +1,6 @@
 # Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
-Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 next.
+Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 steps 1-5 built (section 12.3); S2 steps 6-8 postponed (2026-10-13, your call: not a priority now).
 Date: 2026-10-12
 
 ---
@@ -438,6 +438,21 @@ Decision: replace Joseph Carlson and both Chinese channels with channels that pu
 | 猴哥财经 | `@猴哥财经` | 0 | — | Last video 2026-09-23 |
 
 The selected six publish about 20 long videos a week in total (about 3 a day), which fits the daily limits of either backend.
+
+## 12.3 S2 steps 1-5 as built (2026-10-13)
+
+- `quant sentiment extract [--limit N] [--video ID] [--model M] [--reextract] [--yes]`; code in `quant/sentiment/` (`prompts.py`, `aliases.py`, `backends.py`, `extract.py`); tables `sentiment_extractions` (one row per video and extractor, even with no opinions; OK or FAILED) and `sentiment_opinions` (section 6, plus `name_as_said`, `quote_score` and `other_quotes_json`; the unique key also has `name_as_said`, so different UNKNOWN names stay apart).
+- Prompt version 1 in `prompts.py` (`PROMPTS` keeps every version); the alias table is part of the system prompt. The JSON schema allows asset types STOCK and ETF; a view on the market or an index is recorded on its ETF (SPY, QQQ, DIA, IWM).
+- **Ticker list: Nasdaq Trader symbol directory instead of the SEC list.** The SEC refuses requests without a contact email in the request header. The directory covers every Nasdaq, NYSE and other US-listed stock and ETF, needs no key, is cached in `data/sentiment/us_tickers.json` and refreshed monthly. OTC ADRs (e.g. HESAY, LVMUY) are not in it; they are known only through the alias table.
+- `claude_code`: the system prompt is passed with `--system-prompt-file` (on Windows `claude` is a .CMD wrapper, and cmd.exe cannot pass multi-line text with `&` or quotes, nor more than about 8,000 characters); `--json-schema` with the compact schema. Refuses to run while `ANTHROPIC_API_KEY` is set.
+- Quote check: compared on letters and digits after NFKC and case folding (so punctuation and full-width differences do not count), exact substring first, else the best sliding-window ratio; `start_seconds` is taken from the line where the quote matched, not from the model.
+- Merging (section 4.5): the last stated stance wins among VERIFIED opinions if there are any.
+- Effective date: the first NYSE session whose open is after `published_at` (`quant/data/calendar.py: first_session_opening_after`).
+- Videos of the gold set / AI reference whose `status` is not done are held back.
+- "Win Resorts" (the auto-caption spelling of Wynn) was left out of the alias table and the prompt on purpose: it was found only by checking the AI reference, so it would inflate agreement on that row.
+- Live check: one NaNa video outside the AI reference (`khnPevsQ_TE`, 13 min) with Haiku: 2 calls, about 12k input and 4k output tokens, 5 opinions, all quotes matched exactly.
+- First full run (2026-10-13, Sonnet): all 25 stored videos, 68 calls, about 462k input and 36k output tokens, 129 opinions, all VERIFIED, none UNRESOLVED. Rough agreement with the AI reference on its 20 videos, matched on video and stock: 81 pairs in both (89% of the reference's 91, 85% of Sonnet's 95), same direction on 72 of 81; the largest differences are in NaNa's news wraps (own view or news?).
+- **Postponed (2026-10-13):** S2 steps 6-8: the review file of the about 33 disagreements (10 only in the reference, 14 only from Sonnet, 9 with a different direction) with your verdicts, the Haiku comparison and the Gemini backend. Resume with the review; no extraction result counts as accepted before it.
 
 ## 12.2 S1 as built (2026-10-13)
 

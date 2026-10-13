@@ -1,0 +1,103 @@
+# Names creators use for a stock (sentiment_proposal.md section 4.4), kept by hand.
+#
+# ticker: [names as they are said or captioned]
+#
+# The extractor sees this table in its prompt, and a ticker listed here counts as known even
+# when it is not on a US exchange (e.g. OTC ADRs such as HESAY). Add common caption errors too
+# (e.g. "英伟大" for 英伟达). Unresolved names are listed in the reports, to be added here.
+
+# Indices and market ETFs: a view on "the market" is recorded on these.
+SPY: [S&P 500, 标普, 标普500, 标普指数, 大盘, the market]
+QQQ: [Nasdaq 100, 纳斯达克, 纳指, 纳斯达克100]
+DIA: [Dow, Dow Jones, 道琼斯, 道指]
+IWM: [Russell 2000, 罗素2000, small caps, 小盘股]
+SMH: [semiconductor ETF, 半导体ETF]
+
+# Mega caps
+AAPL: [Apple, 苹果]
+MSFT: [Microsoft, 微软]
+NVDA: [Nvidia, 英伟达, 辉达, 老黄, 英伟大]
+GOOGL: [Google, Alphabet, 谷歌, 谷歌A, 字母表]
+AMZN: [Amazon, 亚马逊, AWS]
+META: [Meta, Facebook, 脸书, 元宇宙公司]
+TSLA: [Tesla, 特斯拉, 马斯克的公司]
+BRK-B: [Berkshire, Berkshire Hathaway, 伯克希尔, 巴菲特的公司]
+AVGO: [Broadcom, 博通]
+TSM: [TSMC, Taiwan Semiconductor, 台积电]
+LLY: [Eli Lilly, Lilly, 礼来]
+JPM: [JPMorgan, JP Morgan, 摩根大通]
+V: [Visa, 维萨]
+MA: [Mastercard, 万事达]
+NFLX: [Netflix, 奈飞, 网飞]
+ORCL: [Oracle, 甲骨文]
+
+# Semiconductors and AI hardware
+AMD: [Advanced Micro Devices, 超微, 超威, AMD]
+INTC: [Intel, 英特尔]
+MU: [Micron, 美光]
+QCOM: [Qualcomm, 高通]
+MRVL: [Marvell, 迈威尔]
+ARM: [Arm Holdings, 安谋]
+ASML: [ASML, 阿斯麦]
+AMAT: [Applied Materials, 应用材料]
+LRCX: [Lam Research, 泛林]
+"ON": [onsemi, ON Semiconductor, 安森美]   # quoted: YAML reads a bare ON as true
+MPWR: [Monolithic Power, MPS]
+SNDK: [SanDisk, 闪迪]
+STX: [Seagate, 希捷]
+WDC: [Western Digital, 西部数据]
+COHR: [Coherent, 相干]
+DELL: [Dell, 戴尔]
+SMCI: [Super Micro, Supermicro, 超微电脑]
+NBIS: [Nebius]
+CRWV: [CoreWeave]
+
+# Software and internet
+PLTR: [Palantir, 帕兰提尔]
+ADBE: [Adobe, 奥多比]
+CRM: [Salesforce, 赛富时]
+NOW: [ServiceNow]
+SHOP: [Shopify]
+UBER: [Uber, 优步]
+GRAB: [Grab]
+DOCN: [DigitalOcean]
+SE: [Sea Limited, 冬海]
+BABA: [Alibaba, 阿里巴巴, 阿里]
+PDD: [PDD, Temu, 拼多多]
+
+# Financials and fintech
+SOFI: [SoFi]
+PYPL: [PayPal, 贝宝]
+XYZ: [Block, Square]
+NU: [Nu Holdings, Nubank]
+AXP: [American Express, Amex, 美国运通, 运通]
+COIN: [Coinbase]
+HOOD: [Robinhood, 罗宾汉]
+CBOE: [Cboe, 芝加哥期权交易所]
+FICO: [FICO, Fair Isaac]
+
+# Energy, power and industrials
+CEG: [Constellation Energy, 星座能源]
+VST: [Vistra]
+GEV: [GE Vernova]
+BE: [Bloom Energy, 布鲁姆能源]
+FCEL: [FuelCell Energy]
+RKLB: [Rocket Lab, 火箭实验室]
+BA: [Boeing, 波音]
+NOC: [Northrop Grumman, 诺斯罗普]
+LMT: [Lockheed Martin, 洛克希德]
+
+# Consumer
+NKE: [Nike, 耐克]
+LULU: [Lululemon, 露露乐蒙]
+MCD: [McDonald's, 麦当劳]
+SBUX: [Starbucks, 星巴克]
+CELH: [Celsius]
+ELF: [e.l.f. Beauty, elf]
+WYNN: [Wynn, Wynn Resorts, 永利]
+CCL: [Carnival, 嘉年华]
+RH: [RH, Restoration Hardware]
+
+# Not on a US exchange (OTC ADRs): known only through this table.
+HESAY: [Hermes, Hermès, 爱马仕]
+LVMUY: [LVMH, 路易威登]

@@ -580,6 +580,40 @@ class GoldSettings:
             raise ConfigError("sentiment.gold.labels_dir and transcripts_dir must differ")
 
 
+EXTRACTION_BACKENDS = ("claude_code",)  # gemini: S2 step 8
+
+
+@dataclass(frozen=True)
+class ExtractionSettings:
+    """Opinion extraction (sentiment_proposal.md section 4)."""
+
+    backend: str
+    model: str  # passed to the backend, e.g. sonnet / haiku for claude_code
+    prompt_version: int  # bump when the prompt changes; opinions of each version are kept apart
+    chunk_minutes: float  # transcripts are sent in pieces of this length ...
+    chunk_overlap_seconds: float  # ... each starting this much before the previous one ends
+    quote_match_threshold: float  # a quote must match its transcript piece at least this well
+    max_videos_per_run: int  # more needs --yes
+    call_timeout_seconds: float
+    aliases_path: str  # hand-kept names per ticker (config/sentiment_aliases.yaml)
+    tickers_cache: str  # US-listed symbols (Nasdaq Trader directory), refreshed monthly
+
+    def __post_init__(self) -> None:
+        if self.backend not in EXTRACTION_BACKENDS:
+            raise ConfigError(f"sentiment.extraction.backend must be one of {', '.join(EXTRACTION_BACKENDS)}")
+        if not str(self.model).strip():
+            raise ConfigError("sentiment.extraction.model must not be empty")
+        if self.prompt_version < 1:
+            raise ConfigError("sentiment.extraction.prompt_version must be >= 1")
+        if self.chunk_minutes <= 0 or not 0 <= self.chunk_overlap_seconds < self.chunk_minutes * 60:
+            raise ConfigError("sentiment.extraction: chunk_minutes must be positive and "
+                              "0 <= chunk_overlap_seconds < chunk length")
+        if not 0 < self.quote_match_threshold <= 1:
+            raise ConfigError("sentiment.extraction.quote_match_threshold must be in (0, 1]")
+        if self.max_videos_per_run < 1 or self.call_timeout_seconds <= 0:
+            raise ConfigError("sentiment.extraction: max_videos_per_run >= 1 and call_timeout_seconds > 0")
+
+
 @dataclass(frozen=True)
 class SentimentSettings:
     """Creator opinion factor (sentiment_proposal.md); research only, never part of run-daily."""
@@ -593,6 +627,7 @@ class SentimentSettings:
     # often appear hours after publishing); after that it stays NO_TRANSCRIPT.
     no_captions_retry_days: int
     gold: GoldSettings
+    extraction: ExtractionSettings
     channels: tuple[ChannelSettings, ...]
 
     def __post_init__(self) -> None:
@@ -879,5 +914,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                             {"shadows": _as_shadows}),
         sentiment=_build(SentimentSettings, "sentiment", _section(raw, "sentiment"),
                          {"request_delay_seconds": _as_delay_range, "channels": _as_channels,
-                          "gold": _subsection(GoldSettings, "sentiment.gold")}),
+                          "gold": _subsection(GoldSettings, "sentiment.gold"),
+                          "extraction": _subsection(ExtractionSettings, "sentiment.extraction")}),
     )

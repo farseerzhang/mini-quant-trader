@@ -11,6 +11,8 @@ import importlib.util
 import logging
 import sys
 
+import pandas as pd
+
 from quant.config.settings import Settings
 from quant.persistence import queries
 from quant.persistence.database import create_db_engine, init_db
@@ -36,6 +38,17 @@ def add_parser(commands, db_help: str) -> None:
     gold.add_argument("--add", type=int, default=0, metavar="N",
                       help="extend the existing gold set by N videos not in it yet (appended to videos.csv)")
     gold.add_argument("--db", help=db_help)
+    extract = sub.add_parser(
+        "extract", help="extract opinions from stored transcripts with sentiment.extraction.backend (S2); "
+        "only videos without opinions for the current backend, model and prompt version")
+    extract.add_argument("--limit", type=int, metavar="N", help="at most N videos this run")
+    extract.add_argument("--video", action="append", metavar="ID", help="only this video (repeatable)")
+    extract.add_argument("--model", help="use this model instead of sentiment.extraction.model (e.g. haiku)")
+    extract.add_argument("--reextract", action="store_true",
+                         help="extract again videos already done with this backend, model and prompt version")
+    extract.add_argument("--yes", action="store_true",
+                         help="go ahead with more than sentiment.extraction.max_videos_per_run videos")
+    extract.add_argument("--db", help=db_help)
 
 
 def _error(message: str) -> None:
@@ -52,6 +65,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_fetch(args, settings)
     if args.sentiment_command == "gold-export":
         return _run_gold_export(args, settings)
+    if args.sentiment_command == "extract":
+        return _run_extract(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
 
 
@@ -61,6 +76,75 @@ def _engine(settings: Settings, db_override: str | None):
     engine = create_db_engine(db_override or settings.database.path, settings.database.busy_timeout_ms)
     init_db(engine)
     return engine
+
+
+def _run_extract(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.sentiment.aliases import AliasError, TickerBook, load_aliases, load_listings
+    from quant.sentiment.backends import BackendError, make_backend
+    from quant.sentiment.extract import held_back_videos, plan, run_extract, videos_to_extract
+    from quant.sentiment.prompts import system_prompt
+
+    config = settings.sentiment.extraction
+    model = args.model or config.model
+    if args.limit is not None and args.limit < 1:
+        _error("--limit must be >= 1")
+        return 1
+    try:
+        book = TickerBook(load_aliases(config.aliases_path), load_listings(config.tickers_cache))
+    except AliasError as exc:
+        _error(f"Alias table: {exc}")
+        return 1
+    except OSError as exc:
+        _error(f"Cannot download the US ticker list (needed once, then cached): {exc}")
+        return 1
+
+    def progress(line: str) -> None:
+        print(line, flush=True)
+        log.info("extract: %s", line.strip())
+
+    engine = _engine(settings, args.db)
+    try:
+        videos = videos_to_extract(engine, config.backend, model, config.prompt_version, args.video, args.reextract)
+        held = held_back_videos(settings.sentiment.gold.labels_dir)
+        held_here = videos["video_id"].isin(held)
+        videos = videos[~held_here]
+        if args.limit:
+            videos = videos.head(args.limit)
+        system = system_prompt(config.prompt_version, book.prompt_table())
+        pieces, tokens = plan(videos, settings, system)
+        print(f"Backend {config.backend}, model {model}, prompt version {config.prompt_version}: "
+              f"{len(videos)} video(s), {pieces} call(s), about {tokens:,} input tokens"
+              + (f"; {int(held_here.sum())} held back until labeled" if held_here.any() else ""))
+        if videos.empty:
+            print("Nothing to extract.")
+            return 0
+        if len(videos) > config.max_videos_per_run and not args.yes:
+            _error(f"That is more than sentiment.extraction.max_videos_per_run ({config.max_videos_per_run}); "
+                   "use --limit N, or --yes to go ahead")
+            return 1
+        try:
+            backend = make_backend(config.backend, model, config.call_timeout_seconds)
+        except BackendError as exc:
+            _error(f"Backend {config.backend}: {exc}")
+            return 1
+        result = run_extract(engine, settings, backend, book, videos, progress)
+        opinions = [o for v in result.done for o in v.opinions]
+        by = pd.Series([o.verification for o in opinions], dtype=object).value_counts().to_dict()
+        print(f"\nSummary: {len(result.done)} of {result.planned} video(s) done, {result.failed} failed; "
+              f"{len(opinions)} opinion(s): " + (", ".join(f"{k.lower()} {v}" for k, v in by.items()) or "none"))
+        unresolved = sorted({o.name_as_said for o in opinions if o.verification == "UNRESOLVED"})
+        if unresolved:
+            print("Unresolved names (add them to the alias table if they are real stocks): " + ", ".join(unresolved))
+        if result.stopped:
+            _error(result.stopped)
+        ok = not result.failed and not result.stopped
+        queries.record_pipeline_run(engine, "sentiment-extract", "extract", "OK" if ok else "FAILED",
+                                    message=f"{config.backend}/{model}/v{config.prompt_version}: "
+                                    f"{len(result.done)} videos, {len(opinions)} opinions, {result.failed} failed"
+                                    + (f"; {result.stopped}" if result.stopped else ""))
+        return 0 if ok else 1
+    finally:
+        engine.dispose()
 
 
 def _run_gold_export(args: argparse.Namespace, settings: Settings) -> int:
