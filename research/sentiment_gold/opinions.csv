@@ -1,48 +1,46 @@
-﻿video_id,ticker,stance,horizon,condition,conviction,action,time,note
-LGUewAMj5H8,AMD,BULLISH,LONG,AI/robotics,3,ACCUMULATE,00:20,top AI pick
-LGUewAMj5H8,NVDA,CAUTIOUS,LONG,growth slowing,2,NONE,00:20,wait for pullback
-LGUewAMj5H8,MU,BEARISH,SHORT,memory peak,2,AVOID,00:20,cycle top
-LGUewAMj5H8,NFLX,BULLISH,LONG,streaming ads,3,BUY,00:20,cheap quality
-LGUewAMj5H8,NKE,BULLISH,MEDIUM,margin recovery,2,BUY,00:20,turnaround
-LGUewAMj5H8,SOFI,BULLISH,LONG,member growth,3,BUY,00:20,long-term winner
-LGUewAMj5H8,ELF,BULLISH,LONG,brand growth,2,BUY,00:20,hold long
-LGUewAMj5H8,CELH,BULLISH,LONG,earnings reset,2,BUY,00:20,undervalued
-LGUewAMj5H8,AMZN,BULLISH,MEDIUM,AI/cloud,2,HOLDING,00:20,good but not top pick
-LGUewAMj5H8,NOW,BULLISH,MEDIUM,enterprise AI,2,HOLDING,00:20,strong business
-2Ci7OynnUqk,BE,BULLISH,SHORT,AI power,2,ACCUMULATE,00:00,AI infra
-2Ci7OynnUqk,CBOE,BULLISH,LONG,options moat,2,ACCUMULATE,00:00,long-term lease
-2Ci7OynnUqk,CCL,BULLISH,MEDIUM,cruise recovery,2,BUY,00:00,cheap rebound
-2Ci7OynnUqk,FICO,BEARISH,MEDIUM,monopoly break,3,AVOID,00:00,pricing shock
-2Ci7OynnUqk,FCEL,BEARISH,SHORT,hype stock,3,AVOID,00:00,delivery risk
-05DvX_xslCA,META,BULLISH,MEDIUM,AI agents,3,BUY,00:00,agent monetization
-05DvX_xslCA,AMZN,NEUTRAL_BULLISH,MEDIUM,AI scare,2,WATCH,00:00,overhyped
-05DvX_xslCA,SHOP,BULLISH,MEDIUM,agent commerce,2,BUY,00:00,merchant upside
-05DvX_xslCA,BOOK,NEUTRAL_BULLISH,LONG,AI travel,2,HOLDING,00:00,adaptation risk
-05DvX_xslCA,NVDA,BULLISH,LONG,AI infra,3,ACCUMULATE,00:00,still leader
-05DvX_xslCA,AMD,BULLISH,LONG,CPU/AI,3,ACCUMULATE,00:00,CPU upside
-05DvX_xslCA,AVGO,BULLISH,LONG,custom silicon,2,ACCUMULATE,00:00,chip ramp
-05DvX_xslCA,INTC,BULLISH,LONG,CPU shortage,2,WATCH,00:00,turnaround play
-05DvX_xslCA,MRVL,BULLISH,LONG,custom silicon,2,WATCH,00:00,high growth
-05DvX_xslCA,MU,BULLISH,LONG,memory demand,2,HOLDING,00:00,cheap cycle
-6Nyqv3XZ-ek,CELH,BEARISH,MEDIUM,brand risk,2,AVOID,00:00,distribution issues
-6Nyqv3XZ-ek,CEG,BULLISH,LONG,nuclear power,3,BUY,00:00,AI electricity
-6Nyqv3XZ-ek,UBER,NEUTRAL_BULLISH,MEDIUM,robotaxi risk,2,HOLDING,00:00,uncertain but okay
-6Nyqv3XZ-ek,SOFI,BULLISH,LONG,fintech value,2,BUY,00:00,cheap compounding
-6Nyqv3XZ-ek,GRAB,BULLISH,MEDIUM,platform growth,2,ACCUMULATE,00:00,cheap quality
-50NHf-JpQxE,MPWR,BULLISH,LONG,power semis,3,ACCUMULATE,00:00,top position
-50NHf-JpQxE,ON,NEUTRAL,MEDIUM,deal risk,2,HOLDING,00:00,range bound
-50NHf-JpQxE,SYNA,NEUTRAL_BULLISH,LONG,chip synergies,2,WATCH,00:00,strategic fit
-EcMX0ub9gSg,MU,BULLISH,LONG,AI memory,3,ACCUMULATE,00:00,tight supply
-EcMX0ub9gSg,COHR,BULLISH,MEDIUM,optical AI,2,ACCUMULATE,00:00,AI optics
-EcMX0ub9gSg,RKLB,BULLISH,LONG,launch backlog,2,ACCUMULATE,00:00,strong backlog
-EcMX0ub9gSg,MCD,BEARISH,MEDIUM,rate stress,2,AVOID,00:00,weak consumer
-EcMX0ub9gSg,ACN,BULLISH,MEDIUM,software AI,2,BUY,00:00,beat + rally
-EcMX0ub9gSg,CTVA,BEARISH,MEDIUM,spin-off risk,2,AVOID,00:00,capital reset
-MALi9KIPg_o,MU,BULLISH,LONG,AI HBM,3,ACCUMULATE,00:00,high margin
-NDNR40EKUAE,SOFI,BULLISH,LONG,member growth,3,BUY,00:00,multi-year winner
-NDNR40EKUAE,WYNN,BULLISH,LONG,Macau/ME,3,BUY,00:00,huge catalyst
-NDNR40EKUAE,NFLX,BULLISH,LONG,streaming ads,3,BUY,00:00,cheap growth
-NDNR40EKUAE,AXP,BULLISH,LONG,credit cards,3,BUY,00:00,quality moat
-NDNR40EKUAE,RH,BULLISH,LONG,turnaround,2,BUY,00:00,housing recovery
-NDNR40EKUAE,ELF,BULLISH,LONG,brand growth,3,BUY,00:00,earnings upcycle
-NDNR40EKUAE,NKE,BULLISH,LONG,turnaround,2,BUY,00:00,margin recovery
+﻿video_id,ticker,stance,horizon,condition,conviction,action,time,note,check
+LGUewAMj5H8,AMD,BULLISH,LONG,,3,ACCUMULATE,00:30,top AI pick; reason: AI/robotics,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,NVDA,CAUTIOUS,LONG,,2,NONE,03:06,wait for pullback; reason: growth slowing,stance CAUTIOUS: pick BULLISH/BEARISH/NEUTRAL/CONDITIONAL
+LGUewAMj5H8,MU,BEARISH,SHORT,,2,AVOID,03:06,cycle top; reason: memory peak,action AVOID: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,NFLX,BULLISH,LONG,,3,BUY,26:03,cheap quality; reason: streaming ads,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,NKE,BULLISH,MEDIUM,,2,BUY,27:06,turnaround; reason: margin recovery,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,SOFI,BULLISH,LONG,,3,BUY,28:09,long-term winner; reason: member growth,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,ELF,BULLISH,LONG,,2,BUY,29:44,hold long; reason: brand growth,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,CELH,BULLISH,LONG,,2,BUY,01:01,undervalued; reason: earnings reset,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+LGUewAMj5H8,AMZN,BULLISH,MEDIUM,,2,HOLDING,00:30,good but not top pick; reason: AI/cloud,
+LGUewAMj5H8,NOW,BULLISH,MEDIUM,,2,HOLDING,00:30,strong business; reason: enterprise AI,
+2Ci7OynnUqk,CBOE,BULLISH,LONG,,2,ACCUMULATE,12:47,long-term lease; reason: options moat,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+2Ci7OynnUqk,CCL,BULLISH,MEDIUM,,2,BUY,13:55,cheap rebound; reason: cruise recovery,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+2Ci7OynnUqk,FICO,BEARISH,MEDIUM,,3,AVOID,14:57,pricing shock; reason: monopoly break,action AVOID: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+2Ci7OynnUqk,FCEL,BEARISH,SHORT,,3,AVOID,10:11,delivery risk; reason: hype stock,action AVOID: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,META,BULLISH,MEDIUM,,3,BUY,00:00,agent monetization; reason: AI agents,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,AMZN,NEUTRAL_BULLISH,MEDIUM,,2,WATCH,00:00,overhyped; reason: AI scare,stance NEUTRAL_BULLISH: pick BULLISH/BEARISH/NEUTRAL/CONDITIONAL | action WATCH: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,SHOP,BULLISH,MEDIUM,,2,BUY,00:34,merchant upside; reason: agent commerce,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,BOOK,NEUTRAL_BULLISH,LONG,,2,HOLDING,01:39,adaptation risk; reason: AI travel,stance NEUTRAL_BULLISH: pick BULLISH/BEARISH/NEUTRAL/CONDITIONAL
+05DvX_xslCA,NVDA,BULLISH,LONG,,3,ACCUMULATE,13:35,still leader; reason: AI infra,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,AMD,BULLISH,LONG,,3,ACCUMULATE,09:42,CPU upside; reason: CPU/AI,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,AVGO,BULLISH,LONG,,2,ACCUMULATE,09:42,chip ramp; reason: custom silicon,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,INTC,BULLISH,LONG,,2,WATCH,09:42,turnaround play; reason: CPU shortage,action WATCH: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,MRVL,BULLISH,LONG,,2,WATCH,14:06,high growth; reason: custom silicon,action WATCH: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+05DvX_xslCA,MU,BULLISH,LONG,,2,HOLDING,15:08,cheap cycle; reason: memory demand,
+6Nyqv3XZ-ek,CELH,BEARISH,MEDIUM,,2,AVOID,03:37,distribution issues; reason: brand risk,action AVOID: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+6Nyqv3XZ-ek,CEG,BULLISH,LONG,,3,BUY,08:15,AI electricity; reason: nuclear power,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+6Nyqv3XZ-ek,UBER,NEUTRAL_BULLISH,MEDIUM,,2,HOLDING,13:59,uncertain but okay; reason: robotaxi risk,stance NEUTRAL_BULLISH: pick BULLISH/BEARISH/NEUTRAL/CONDITIONAL
+6Nyqv3XZ-ek,SOFI,BULLISH,LONG,,2,BUY,24:26,cheap compounding; reason: fintech value,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+6Nyqv3XZ-ek,GRAB,BULLISH,MEDIUM,,2,ACCUMULATE,24:26,cheap quality; reason: platform growth,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+50NHf-JpQxE,MPWR,BULLISH,LONG,,3,ACCUMULATE,00:30,top position; reason: power semis,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+50NHf-JpQxE,ON,NEUTRAL,MEDIUM,,2,HOLDING,03:45,range bound; reason: deal risk,
+50NHf-JpQxE,SYNA,NEUTRAL_BULLISH,LONG,,2,WATCH,00:00,strategic fit; reason: chip synergies,stance NEUTRAL_BULLISH: pick BULLISH/BEARISH/NEUTRAL/CONDITIONAL | action WATCH: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+EcMX0ub9gSg,COHR,BULLISH,MEDIUM,,2,ACCUMULATE,07:11,AI optics; reason: optical AI,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+EcMX0ub9gSg,RKLB,BULLISH,LONG,,2,ACCUMULATE,08:22,strong backlog; reason: launch backlog,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+EcMX0ub9gSg,MCD,BEARISH,MEDIUM,,2,AVOID,08:55,weak consumer; reason: rate stress,action AVOID: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+EcMX0ub9gSg,ACN,BULLISH,MEDIUM,,2,BUY,10:01,beat + rally; reason: software AI,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+EcMX0ub9gSg,CTVA,BEARISH,MEDIUM,,2,AVOID,11:06,capital reset; reason: spin-off risk,action AVOID: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+MALi9KIPg_o,MU,BULLISH,LONG,,3,ACCUMULATE,00:38,high margin; reason: AI HBM,action ACCUMULATE: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,SOFI,BULLISH,LONG,,3,BUY,03:06,multi-year winner; reason: member growth,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,WYNN,BULLISH,LONG,,3,BUY,07:45,huge catalyst; reason: Macau/ME,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,NFLX,BULLISH,LONG,,3,BUY,11:56,cheap growth; reason: streaming ads,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,AXP,BULLISH,LONG,,3,BUY,16:06,quality moat; reason: credit cards,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,RH,BULLISH,LONG,,2,BUY,20:13,housing recovery; reason: turnaround,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,ELF,BULLISH,LONG,,3,BUY,29:27,earnings upcycle; reason: brand growth,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
+NDNR40EKUAE,NKE,BULLISH,LONG,,2,BUY,01:02,margin recovery; reason: turnaround,action BUY: did the creator say they BOUGHT/SOLD/are HOLDING it? else NONE
