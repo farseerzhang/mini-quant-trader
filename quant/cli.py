@@ -19,7 +19,8 @@ from quant.forward.freeze import freeze_session
 from quant.forward.paper import update_paper_equity
 from quant.logs import close_logging, configure_logging
 from quant.models.ml_backtest import BASELINE
-from quant.models.retrain import run_retrain
+from quant.models.compare import comparison_table, format_comparison, write_comparison
+from quant.models.retrain import IMPLEMENTED_MODELS, run_retrain
 from quant.ops.promote import FALLBACK, PromotionError, promote_model, retire_model
 from quant.ops.status import collect_status, format_status
 from quant.persistence import queries
@@ -105,7 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     retrain_command.add_argument("--role", choices=["predictor", "regime"], required=True)
     retrain_command.add_argument(
-        "--model", help="predictor type to train (default: model.type in the settings file); the regime role trains the HMM"
+        "--model",
+        help="predictor type to train: logistic_regression, random_forest, xgboost, or all (each in turn, then a "
+        "comparison table); default model.type in the settings file. The regime role trains the HMM"
     )
     retrain_command.add_argument(
         "--evaluate-holdout",
@@ -427,6 +430,8 @@ def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     model_type = args.model or settings.model.type
     evaluate_holdout = args.evaluate_holdout or not settings.holdout_requires_flag
+    if model_type == "all":
+        return _run_retrain_all(args, settings, evaluate_holdout)
     engine = _engine(settings, args.db)
     try:
         outcome = run_retrain(engine, settings, model_type, evaluate_holdout)
@@ -436,6 +441,35 @@ def _run_retrain(args: argparse.Namespace, settings: Settings) -> int:
     finally:
         engine.dispose()
     _print_retrain(outcome)
+    return 0
+
+
+def _run_retrain_all(args: argparse.Namespace, settings: Settings, evaluate_holdout: bool) -> int:
+    if evaluate_holdout:
+        _error("--model all does not evaluate the holdout: viewing it once per model would use it up. Compare "
+               "with --model all, then check one chosen model with --model <type> --evaluate-holdout")
+        return 1
+    outcomes = []
+    for number, model_type in enumerate(IMPLEMENTED_MODELS, start=1):
+        print(f"\n===== [{number}/{len(IMPLEMENTED_MODELS)}] {model_type} =====")
+        engine = _engine(settings, args.db)
+        try:
+            outcome = run_retrain(engine, settings, model_type, evaluate_holdout=False)
+        except (NotImplementedError, ValueError) as exc:
+            _error(f"Retrain of {model_type} failed: {exc}")
+            return 1
+        finally:
+            engine.dispose()
+        _print_retrain(outcome)
+        outcomes.append(outcome)
+    table = comparison_table(outcomes)
+    folds = outcomes[0].folds
+    print(f"\n===== Comparison: walk-forward {folds[0].validation_start.date()} .. {folds[-1].validation_end.date()}, "
+          "after costs =====")
+    print(format_comparison(table).drop(columns="candidate").to_string())
+    path = write_comparison(outcomes, table, settings.retrain.reports_dir)
+    print(f"\nSaved {path}. Descriptive only: the best of several looks better than it is; the gates are unchanged, "
+          "and nothing was promoted.")
     return 0
 
 

@@ -79,6 +79,33 @@ class RetrainCommandTests(unittest.TestCase):
         self.assertEqual(Path(rows[0]["validation_report_path"]).parent.name, "logistic_regression")
         self.assertEqual(views, 0)
 
+    def test_model_all_retrains_every_type_and_compares_them(self):
+        document = yaml.safe_load(self.config.read_text(encoding="utf-8"))
+        document["retrain"]["search"]["space"].update(
+            random_forest={"max_depth": [3], "min_samples_leaf": [20]},
+            xgboost={"max_depth": [2], "learning_rate": [0.1], "n_estimators": [20], "min_child_weight": [5],
+                     "reg_lambda": [1]})
+        self.config.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        code, output, errors = self.run_cli("retrain", "--role", "predictor", "--model", "all")
+        self.assertEqual(code, 0, errors)
+        for text in ("[1/3] logistic_regression", "[2/3] random_forest", "[3/3] xgboost", "===== Comparison",
+                     "regime_switch", "Descriptive only"):
+            self.assertIn(text, output)
+        rows, views = self.models()
+        self.assertEqual(sorted(r["model_type"] for r in rows), ["logistic_regression", "random_forest", "xgboost"])
+        self.assertEqual(views, 0)  # the holdout is never used
+        reports = list((Path(self.temp.name) / "reports" / "comparison").glob("predictors-*.md"))
+        self.assertEqual(len(reports), 1)
+        text = reports[0].read_text(encoding="utf-8")
+        for name in ("logistic_regression", "random_forest", "xgboost", "regime_switch", "SPY", "candidate"):
+            self.assertIn(name, text)
+
+    def test_model_all_refuses_the_holdout(self):
+        code, _, errors = self.run_cli("retrain", "--role", "predictor", "--model", "all", "--evaluate-holdout")
+        self.assertEqual(code, 1)
+        self.assertIn("--model all does not evaluate the holdout", errors)
+        self.assertEqual(self.models(), ([], 0))
+
     def test_evaluate_holdout_checks_its_gate_and_shares_the_count_with_backtest(self):
         code, output, _ = self.run_cli("retrain", "--role", "predictor", "--model", "logistic_regression", "--evaluate-holdout")
         self.assertEqual(code, 0)

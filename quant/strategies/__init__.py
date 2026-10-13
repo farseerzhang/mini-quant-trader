@@ -18,7 +18,8 @@ Elsewhere (not in ``quant backtest``):
 
     ml_select             the PREDICTOR picks the stocks (quant/strategies/ml.py). Backtested only by
                           ``quant retrain --role predictor --model logistic_regression|random_forest|xgboost``,
-                          walk-forward 2014 .. 2025, against regime_switch (rule-based regime).
+                          walk-forward 2014 .. 2025, against regime_switch (rule-based regime);
+                          ``--model all`` runs the three and prints one comparison table.
     HMM regime            ``quant retrain --role regime`` runs regime_switch and regime_switch_bear50 with the
                           walk-forward HMM regime and with the rule-based one, 2014 .. 2025.
     forward test          live = signals.strategy (regime_switch), plus the shadows in forward_test.shadows
