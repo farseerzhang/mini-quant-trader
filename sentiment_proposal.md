@@ -402,7 +402,7 @@ The `claude_code` backend calls the installed `claude` command, so it adds no Py
 | **S4 Scorecard** | Historical backfill (6 months, spread over runs) + hit rates + permutation test | Report produced; labeled exploratory; conclusions not overstated |
 | **S6 pre-registration** | Write the S6 test (section 9) **before looking at forward hit rates**; forward logging continues | Pre-registration recorded with its date |
 | **S3b Reddit** | Mention counts (ApeWisdom, then Reddit API) + extraction of DD / high-score posts (section 15); deferred until S4 has been read | Daily mention table and Reddit opinions appear in the daily summary; Reddit API access approved |
-| **S5 Whisper** | Local transcription of videos without captions (optional) | Decided by the caption coverage found in S0 |
+| ~~**S5 Whisper**~~ | Dropped (decision 13): no transcription of videos without captions | - |
 | **S6 Factor** | Run the pre-registered test after ≥ 6 months of forward data; if it passes, add to `features` | Separate pre-registration (section 9) |
 
 ## 12.1 S0 findings (2026-10-12, window 2026-09-28 .. 2026-10-12)
@@ -436,6 +436,17 @@ Decision: replace Joseph Carlson and both Chinese channels with channels that pu
 | 老李玩钱 | `@老李玩钱` | 4 | none | Captions disabled |
 | 北美韭菜日记, Money Manta | | 0 | — | Inactive since 2023 / 2022 |
 | 猴哥财经 | `@猴哥财经` | 0 | — | Last video 2026-09-23 |
+
+### Second spike (2026-10-13, window 2026-09-29 .. 2026-10-13)
+
+Caption availability read from each video page with yt-dlp (`subtitles` / `automatic_captions`); the method was checked on a NaNa video with known manual captions (it shows `zh-Hans`, `zh-Hant`).
+
+| Channel | Handle / channel_id | Long videos in 14 days | Captions | Content |
+|---|---|---|---|---|
+| 贝拉聊财金 (often written 贝拉聊财经) | `@bellafinance` / `UCVomjkM_t0EcctTWSE1Jvxg` | 10+ (daily, ~13-20 min) | none (no manual, no auto) on 10/10 | Daily market and macro commentary with sector and single-stock picks (MU, ASML, TSM) |
+| Jefftalkstocks | `@Jefftalkstocks` / `UCsmkTPubhBtCCk1w373ty8w` | 0 public (2 members-only among the 25 newest) | none on the latest public video | Last public video 2026-07-30 (MSFT earnings); inactive publicly |
+
+Consequences: neither can join. 贝拉聊财金 would need audio transcription, like 美投讲美股 and 视野环球财经; with S5 dropped (decision 13), all three stay out.
 
 The selected six publish about 20 long videos a week in total (about 3 a day), which fits the daily limits of either backend.
 
@@ -512,6 +523,7 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 10. **One install**: the sentiment packages are regular dependencies, not an optional group (`pip install -e .` installs everything).
 11. **Gold set of 10 videos**, labeled by you (option B); labels committed under `research/sentiment_gold/`, transcripts deletable.
 12. **No human gold set; an AI reference instead** (2026-10-13). The 20 labeled videos were labeled with an AI tool (GPT or MAI; model not recorded), not by hand. They are kept as an *AI reference* in `research/sentiment_ai_reference/` (provenance in its `SOURCE.md`). Consequences in section 4.6: S2 reports agreement, not accuracy, and the quality gate moves to your review.
+13. **No audio transcription (2026-10-13).** S5 (local Whisper) is dropped: you judged it too costly. The system stays captions-only, so channels without captions (美投讲美股, 视野环球财经, 贝拉聊财金) are not covered; new channels must publish captions.
 
 ---
 
