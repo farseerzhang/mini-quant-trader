@@ -291,7 +291,7 @@ The **gold set** is the hand-labeled answer key that extraction is scored agains
 python -m quant sentiment gold-export
 ```
 
-The first run picks `sentiment.gold.videos` (10) videos with stored captions, channels taking turns, and writes `research/sentiment_gold/videos.csv`, an empty `opinions.csv` and the rules in `LABELING.md` (committed: they hold no transcript text), plus readable transcripts in `data/sentiment_gold/transcripts/` (git-ignored; delete them any time). Label every video, then set its `status` to `done` or `done-none`. Later runs never touch the label files; they only write the transcripts again.
+The first run picks `sentiment.gold.videos` (10) videos with stored captions, channels taking turns, and writes `videos.csv`, an empty `opinions.csv` and the rules in `LABELING.md` to `sentiment.gold.labels_dir` (committed: they hold no transcript text), plus readable transcripts in `data/sentiment_gold/transcripts/` (git-ignored; delete them any time). Label every video, then set its `status` to `done` or `done-none`. Later runs never touch the label files; they only write the transcripts again, and `--add N` appends N more videos. The current set in `research/sentiment_ai_reference/` (20 videos) was labeled with an AI tool (GPT or MAI), so it is an **AI reference**: scores against it measure agreement, not accuracy (see its `SOURCE.md`).
 
 #### Logs
 

@@ -1,5 +1,5 @@
 ﻿video_id,ticker,stance,horizon,condition,conviction,action,time,note
-LGUewAMj5H8,AMD,BULLISH,LONG,,3,BUY,00:30,top AI pick; reason: AI/robotics
+LGUewAMj5H8,AMD,BULLISH,LONG,,3,NONE,00:30,top AI pick; reason: AI/robotics
 LGUewAMj5H8,NVDA,BULLISH,LONG,,2,NONE,03:06,wait for pullback; reason: growth slowing
 LGUewAMj5H8,MU,BEARISH,SHORT,,2,NONE,03:06,cycle top; reason: memory peak
 LGUewAMj5H8,NFLX,BULLISH,LONG,,3,NONE,26:03,cheap quality; reason: streaming ads
@@ -44,7 +44,7 @@ NDNR40EKUAE,AXP,BULLISH,LONG,,3,NONE,16:06,quality moat; reason: credit cards
 NDNR40EKUAE,RH,BULLISH,LONG,,2,NONE,20:13,housing recovery; reason: turnaround
 NDNR40EKUAE,ELF,BULLISH,LONG,,3,NONE,29:27,earnings upcycle; reason: brand growth
 NDNR40EKUAE,NKE,BULLISH,LONG,,2,NONE,01:02,margin recovery; reason: turnaround
-M5UdSFmRF9Y,SPY,BULLISH,LONG,,2,NONE,07:27,broad-market proxy inferred; reason: low participation, fully invested
+M5UdSFmRF9Y,SPY,BULLISH,LONG,,2,NONE,07:27,"broad-market proxy inferred; reason: low participation, fully invested"
 I0dZVUUwiFc,UBER,BULLISH,MEDIUM,,2,NONE,06:43,likely uptrend; reason: higher highs and lows
 I0dZVUUwiFc,NVDA,BULLISH,MEDIUM,,2,NONE,16:39,likely rising trend; reason: range breakout
 Qx3TBj9enjs,MSI,BULLISH,LONG,,2,NONE,10:40,good value compounder; reason: profitable public safety growth
@@ -81,12 +81,12 @@ mkCxTqDVrYc,NBIS,BEARISH,MEDIUM,,2,HOLDING,08:09,trimmed and waiting; reason: ne
 mkCxTqDVrYc,AMZN,BULLISH,LONG,,2,HOLDING,08:40,maintaining allocation; reason: hyperscaler AI infrastructure demand
 mkCxTqDVrYc,GOOGL,BULLISH,LONG,,2,HOLDING,08:40,maintaining allocation; reason: hyperscaler AI infrastructure demand
 mkCxTqDVrYc,DOCN,BULLISH,LONG,,2,HOLDING,08:40,maintaining allocation; reason: disciplined data-center expansion
-chOchL89sw8,SPY,CONDITIONAL,SHORT,"hold 7800 support to target new highs",2,NONE,02:57,breakout follow-through depends on support holding
+chOchL89sw8,SPY,CONDITIONAL,SHORT,hold 7800 support to target new highs,2,NONE,02:57,breakout follow-through depends on support holding
 chOchL89sw8,QQQ,BULLISH,SHORT,,2,NONE,03:31,avoid shorting before trend turns; reason: squeeze momentum
 chOchL89sw8,VST,BULLISH,SHORT,,2,NONE,07:17,expects further short-term rebound; reason: nuclear power demand
 chOchL89sw8,STX,BULLISH,LONG,,2,NONE,08:25,long-term demand remains strong; reason: AI data-center HDD needs
 chOchL89sw8,WDC,BULLISH,LONG,,2,NONE,08:25,long-term demand remains strong; reason: AI data-center HDD needs
-chOchL89sw8,NBIS,CONDITIONAL,SHORT,"buy near close on down days and sell next open",2,NONE,09:28,range-bound trading setup; reason: 230-250 consolidation
+chOchL89sw8,NBIS,CONDITIONAL,SHORT,buy near close on down days and sell next open,2,NONE,09:28,range-bound trading setup; reason: 230-250 consolidation
 chOchL89sw8,AMD,BULLISH,LONG,,2,NONE,11:02,demand exceeds supply; reason: strong multi-year AI demand
-chOchL89sw8,AVGO,CONDITIONAL,SHORT,"hold above 370",2,NONE,11:34,upside toward gap and 390 if support holds
-chOchL89sw8,CEG,BULLISH,LONG,,2,NONE,16:38,rejects bearish retail-power thesis; reason: durable nuclear contracts
+chOchL89sw8,AVGO,CONDITIONAL,SHORT,hold above 370,2,NONE,11:34,upside toward gap and 390 if support holds
+chOchL89sw8,CEG,BULLISH,LONG,,2,NONE,06:12,rejects bearish retail-power thesis; reason: durable nuclear contracts

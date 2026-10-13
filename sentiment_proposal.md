@@ -175,6 +175,12 @@ The labels come from you, not from a model: the `claude_code` extractor is the s
 
 As built (`quant sentiment gold-export`): videos are picked with channels taking turns in config order and, within a channel, in `video_id` order (arbitrary but fixed). `research/sentiment_gold/` holds `videos.csv` (one row per video, `status` done / done-none), `opinions.csv` (ticker, stance, horizon, condition, conviction, action, time, note) and `LABELING.md`; it holds no transcript text and is committed. Readable transcripts go to `data/sentiment_gold/transcripts/` (git-ignored, deletable). Later runs never touch the label files. **No extraction output of the gold videos is shown before they are labeled**; S2's `extract` must hold them back until their status is done / done-none.
 
+**What was actually done (decision 12).** The set grew to 20 videos (`gold-export --add 10`), and all 20 were labeled with an AI tool (GPT or MAI), not by a person. They are therefore an **AI reference** from a third model family, kept in `research/sentiment_ai_reference/` with its provenance in `SOURCE.md`:
+
+- S2 reports precision, recall and stance **agreement** with this reference, never "accuracy". It is not from Claude or Gemini, so it does not simply echo either backend, but where they disagree either side can be wrong.
+- The 85% figure is no longer a pass/fail gate, because agreement with another model is not correctness. Backends are compared on agreement as one input; the quality gate for S2 becomes **your review of the disagreements**: for each opinion where the extractor and the reference differ, you read the quoted passage and say which is right (or neither). That review, not the agreement number, decides whether extraction is good enough.
+- A human-labeled set can still be added later (option A, about 5 videos) if the review leaves doubt.
+
 ---
 
 # 5. Timing convention (no look-ahead)
@@ -391,7 +397,7 @@ The `claude_code` backend calls the installed `claude` command, so it adds no Py
 |---|---|---|
 | **S0 Spike** | Verify the `channel_id` of the 4 candidates; count videos in the last 14 days, caption coverage (manual / auto / none) and average length | A table is handed to you and the final channel list is chosen from it (done, section 12.1) |
 | **S1 Fetch** | `.env` in `.gitignore`; tables, `fetch` command, idempotency, rate limiting, tests | Re-runs write no duplicates; a run after a network failure fills the gaps |
-| **S2 Extract** | Prompts, both backends, JSON validation, quote check, merging, alias table, hand-labeled gold set of 10 videos; check the Gemini free tier's current limits, models and availability | Precision, recall and stance accuracy each ≥ 85% on the gold set (section 4.6); backend, models and quote thresholds chosen |
+| **S2 Extract** | Prompts, both backends, JSON validation, quote check, merging, alias table, AI reference of 20 videos (decision 12); check the Gemini free tier's current limits, models and availability | Agreement with the AI reference reported per backend; you have reviewed the disagreements and accept the extraction quality (section 4.6); backend, models and quote thresholds chosen |
 | **S3 Report** | Summaries (section 8.3) + daily report + appendix with quotes and links | You have reviewed a week of reports and accept the quality |
 | **S4 Scorecard** | Historical backfill (6 months, spread over runs) + hit rates + permutation test | Report produced; labeled exploratory; conclusions not overstated |
 | **S6 pre-registration** | Write the S6 test (section 9) **before looking at forward hit rates**; forward logging continues | Pre-registration recorded with its date |
@@ -489,6 +495,7 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 9. **Reddit (S3b)** deferred until S4 has been read; the Reddit API application can still be submitted early.
 10. **One install**: the sentiment packages are regular dependencies, not an optional group (`pip install -e .` installs everything).
 11. **Gold set of 10 videos**, labeled by you (option B); labels committed under `research/sentiment_gold/`, transcripts deletable.
+12. **No human gold set; an AI reference instead** (2026-10-13). The 20 labeled videos were labeled with an AI tool (GPT or MAI; model not recorded), not by hand. They are kept as an *AI reference* in `research/sentiment_ai_reference/` (provenance in its `SOURCE.md`). Consequences in section 4.6: S2 reports agreement, not accuracy, and the quality gate moves to your review.
 
 ---
 
