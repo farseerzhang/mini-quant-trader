@@ -411,12 +411,12 @@ Selecting posts by score adds a subtle look-ahead: a post's score at fetch time 
 
 ## 15.7 Database
 
-Two new tables; opinions go into the shared `sentiment_opinions` (section 6) with `source = reddit`.
+Two new tables (prefixed `sentiment_` like every table of this module); opinions go into the shared `sentiment_opinions` (section 6) with `source = reddit`.
 
-### reddit_posts
+### sentiment_reddit_posts
 `post_id` (PK), `subreddit`, `author`, `created_utc`, `title`, `body`, `flair`, `score`, `num_comments`, `upvote_ratio`, `url`, `fetched_at`, `extraction_status` (`PENDING` / `SELECTED` / `DONE` / `NOT_SELECTED` / `DELETED`).
 
-### reddit_mentions
+### sentiment_reddit_mentions
 `date`, `ticker`, `subreddit`, `provider` (`apewisdom` / `reddit`), `mentions`, `upvotes` (sum of scores of mentioning posts; ApeWisdom's own figure for that provider), `rank`, `fetched_at`. Primary key: `(date, ticker, subreddit, provider)`.
 
 ## 15.8 Output
@@ -458,7 +458,7 @@ sentiment:
 | Step | Content | Done when |
 |---|---|---|
 | **Now (you)** | Apply for Reddit API access (script app, non-commercial research) | Application submitted |
-| **S3b-1** | ApeWisdom mentions → `reddit_mentions`; Reddit attention section in the daily report | A week of daily mention tables reviewed |
-| **S3b-2** | `praw` fetch → `reddit_posts`; own mention counts; DD/high-score extraction; deletion handling | Extraction accuracy ≥ 85% on a hand-labeled set of ~20 posts; own counts agree broadly with ApeWisdom |
+| **S3b-1** | ApeWisdom mentions → `sentiment_reddit_mentions`; Reddit attention section in the daily report | A week of daily mention tables reviewed |
+| **S3b-2** | `praw` fetch → `sentiment_reddit_posts`; own mention counts; DD/high-score extraction; deletion handling | Extraction accuracy ≥ 85% on a hand-labeled set of ~20 posts; own counts agree broadly with ApeWisdom |
 
 Not in S3b: comments, Stocktwits, X/Twitter, Chinese forums (雪球, 富途). These can be proposed separately later.
