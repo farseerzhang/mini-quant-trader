@@ -8,13 +8,19 @@ import exchange_calendars as xcals
 import pandas as pd
 
 
+# The calendar starts this much before the first date asked for: exchange_calendars rejects a
+# range starting before the calendar's first session, so a calendar starting exactly on a
+# weekend or holiday (e.g. "10 days ago" on a Saturday) would refuse that same date.
+CALENDAR_MARGIN = timedelta(days=14)
+
+
 def _calendar(calendar_name: str, start: date) -> xcals.ExchangeCalendar:
-    """The calendar covering ``start`` onwards.
+    """The calendar covering ``start`` onwards (from a margin before it).
 
     exchange_calendars only builds about 20 years back by default (2006-10 as of
     2026-10), which is shorter than market.initial_history, so ask for the range.
     """
-    return xcals.get_calendar(calendar_name, start=pd.Timestamp(start.isoformat()))
+    return xcals.get_calendar(calendar_name, start=pd.Timestamp((start - CALENDAR_MARGIN).isoformat()))
 
 
 def last_completed_session(now: datetime | None, calendar_name: str) -> date:
