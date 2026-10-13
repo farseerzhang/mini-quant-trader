@@ -1522,6 +1522,10 @@ regime:
     starts: 5                      # random starts (seeds from retrain.search.seed); best log-likelihood kept
     iterations: 200
 
+# Strategies (section 17). `quant backtest` runs: trend (no settings; SMA windows from features.sma),
+# mean_reversion, regime_switch and regime_switch_bear50 (from regime_switch.bear_exposures), all with the
+# rule-based regime. ml_select needs a PREDICTOR and is backtested by `quant retrain --role predictor`.
+# The keys below are settings sections, not a list of strategies.
 strategies:                        # rule-based baselines (section 17); weights at the close of T
   version: 1                       # stays 1 during development; bump on rule/value changes once models are registered (Phase 5)
   mean_reversion:

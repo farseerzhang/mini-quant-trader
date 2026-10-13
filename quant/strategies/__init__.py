@@ -3,6 +3,28 @@
 Each strategy maps a feature panel (one dates x stocks DataFrame per feature)
 and the rule-based regime (one value per date) to target weights per stock.
 These are the baselines that ML strategies must beat after costs.
+
+WHICH STRATEGIES EXIST, AND WHERE EACH ONE IS BACKTESTED
+--------------------------------------------------------
+Rule-based (``build_strategies``; all run by ``quant backtest`` with the rule-based regime,
+2005 .. holdout, against SPY buy-and-hold, equal weight and a random baseline):
+
+    trend                 uptrend rule only (price > SMA200, SMA50 > SMA200, MACD trigger); ignores the regime
+    mean_reversion        dip-buy rule only (RSI entry / exit, max holding days); ignores the regime
+    regime_switch         BULL -> trend, SIDEWAYS -> mean_reversion, BEAR -> cash.  <- the strategy that ships
+    regime_switch_bear50  as regime_switch, BEAR -> trend at 50% (from strategies.regime_switch.bear_exposures)
+
+Elsewhere (not in ``quant backtest``):
+
+    ml_select             the PREDICTOR picks the stocks (quant/strategies/ml.py). Backtested only by
+                          ``quant retrain --role predictor --model logistic_regression|random_forest|xgboost``,
+                          walk-forward 2014 .. 2025, against regime_switch (rule-based regime).
+    HMM regime            ``quant retrain --role regime`` runs regime_switch and regime_switch_bear50 with the
+                          walk-forward HMM regime and with the rule-based one, 2014 .. 2025.
+    forward test          live = signals.strategy (regime_switch), plus the shadows in forward_test.shadows
+                          (regime_switch with the HMM regime, ml_select with the logistic regression).
+
+There is no single run that crosses every strategy with every regime and predictor.
 """
 
 from __future__ import annotations

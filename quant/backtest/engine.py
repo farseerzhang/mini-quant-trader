@@ -193,6 +193,11 @@ def run_backtests(
 ) -> BacktestReport:
     """Backtest the strategies and the configured benchmarks over the stored history.
 
+    By default the strategies are ``build_strategies(settings)``: trend, mean_reversion,
+    regime_switch and regime_switch_bear50, all with the **rule-based** regime. ML strategies
+    (ml_select) and the HMM regime are backtested by ``quant retrain`` instead; see the
+    overview in quant/strategies/__init__.py.
+
     The common start is the first session with a stored regime, which is also the
     first session every strategy input (SMA200-based) is available.
     """
