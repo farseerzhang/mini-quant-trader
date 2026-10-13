@@ -93,6 +93,65 @@ def system_prompt(version: int, alias_table: str) -> str:
     return PROMPTS[version].replace("{aliases}", alias_table)
 
 
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "market": {
+            "type": "object",
+            "properties": {"summary": {"type": "string"},
+                           "opinion_ids": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["summary", "opinion_ids"],
+            "additionalProperties": False,
+        },
+        "stocks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "disagreement": {"type": "boolean"},
+                    "opinion_ids": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["ticker", "summary", "disagreement", "opinion_ids"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["market", "stocks"],
+    "additionalProperties": False,
+}
+
+SUMMARY_PROMPT_V1 = """\
+You write the daily digest of what finance YouTube creators said about US stocks. The input
+lists one trading day's opinions, grouped by ticker; each opinion has an id, the creator, the
+stance, horizon, conviction, the creator's own action, a condition if any, the creator's
+reason and a verbatim quote (English or Chinese).
+
+Return JSON matching the schema, in English:
+
+- stocks: one entry per ticker in the input, in the same order. `summary` is one to three
+  sentences: what the bulls and the bears each argue, and which views are conditional (with
+  the condition). Name the creators. `disagreement` is true when creators take opposite sides.
+  `opinion_ids` lists the ids you used; use only ids listed under that ticker.
+- market: two to four sentences on the overall mood of the day across all opinions (which
+  way most creators lean, recurring themes, views on SPY / QQQ if any), citing ids in
+  `opinion_ids`.
+
+Rules: use ONLY the opinions given; add no facts, prices, targets or news of your own. Do not
+recommend anything and do not give your own view. Keep the creators' uncertainty: a mild or
+conditional view must not read as a firm call.
+"""
+
+SUMMARY_PROMPTS = {1: SUMMARY_PROMPT_V1}
+
+
+def summary_prompt(version: int) -> str:
+    if version not in SUMMARY_PROMPTS:
+        raise ValueError(f"no summary prompt version {version}; known: {', '.join(map(str, SUMMARY_PROMPTS))}")
+    return SUMMARY_PROMPTS[version]
+
+
 def user_message(channel: str, title: str, published: str, part: int, parts: int, lines: list[str]) -> str:
     return (f"Channel: {channel}\nVideo title: {title}\nPublished: {published}\n"
             f"Transcript excerpt {part} of {parts}; each line starts with its [seconds] mark:\n\n" + "\n".join(lines))

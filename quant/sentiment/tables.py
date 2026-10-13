@@ -2,7 +2,7 @@
 
 quant/persistence/tables.py does not change: these tables are registered when this module
 is imported, so `init_db` creates them for the sentiment commands. S1: the fetch tables;
-S2: extractions and opinions; summaries and out-of-pool prices follow with S3 and S4.
+S2: extractions and opinions; S3: summaries; out-of-pool prices follow with S4.
 
 Times are stored as naive UTC.
 """
@@ -135,4 +135,26 @@ sentiment_opinions = Table(
     UniqueConstraint("source", "item_id", "ticker", "name_as_said", "horizon", "backend", "model",
                      "prompt_version", name="uq_sentiment_opinions"),
     CheckConstraint("verification IN ('VERIFIED', 'UNVERIFIED', 'UNRESOLVED')", name="ck_sentiment_opinions_verif"),
+)
+
+
+MARKET = "_MARKET"  # the ticker of the day's market-mood paragraph
+
+# Section 8.3: one summary per trading day and ticker, from that day's VERIFIED opinions only.
+sentiment_summaries = Table(
+    "sentiment_summaries",
+    metadata,
+    Column("date", Date, nullable=False),  # effective date
+    Column("ticker", String, nullable=False),  # or _MARKET
+    Column("summary", Text, nullable=False),
+    Column("disagreement", Integer, nullable=False),
+    Column("opinion_ids_json", Text, nullable=False),
+    # Which opinions and extractor it was written from: when a late video adds opinions to the
+    # day, the hash changes and the day is summarized again.
+    Column("inputs_hash", String, nullable=False),
+    Column("backend", String, nullable=False),
+    Column("model", String, nullable=False),
+    Column("prompt_version", Integer, nullable=False),
+    Column("created_at", DateTime, nullable=False),
+    PrimaryKeyConstraint("date", "ticker", "backend", "model", "prompt_version", name="pk_sentiment_summaries"),
 )

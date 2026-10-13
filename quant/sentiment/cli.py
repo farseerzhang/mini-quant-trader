@@ -10,6 +10,8 @@ import argparse
 import importlib.util
 import logging
 import sys
+from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
@@ -21,6 +23,13 @@ log = logging.getLogger("quant.sentiment")
 
 REQUIRED = {"yt_dlp": "yt-dlp", "youtube_transcript_api": "youtube-transcript-api",
             "opencc": "opencc-python-reimplemented"}
+
+
+def _iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected a date in YYYY-MM-DD format") from exc
 
 
 def add_parser(commands, db_help: str) -> None:
@@ -49,6 +58,17 @@ def add_parser(commands, db_help: str) -> None:
     extract.add_argument("--yes", action="store_true",
                          help="go ahead with more than sentiment.extraction.max_videos_per_run videos")
     extract.add_argument("--db", help=db_help)
+    summarize = sub.add_parser(
+        "summarize", help="write a short summary per stock and trading day from verified opinions (S3); "
+        "only days without up-to-date summaries")
+    summarize.add_argument("--from", dest="start", type=_iso_date, help="first effective date (YYYY-MM-DD)")
+    summarize.add_argument("--to", dest="end", type=_iso_date, help="last effective date")
+    summarize.add_argument("--force", action="store_true", help="summarize these days again")
+    summarize.add_argument("--db", help=db_help)
+    report = sub.add_parser("report", help="write reports/sentiment/<date>.md for each trading day (S3)")
+    report.add_argument("--from", dest="start", type=_iso_date, help="first effective date (YYYY-MM-DD)")
+    report.add_argument("--to", dest="end", type=_iso_date, help="last effective date")
+    report.add_argument("--db", help=db_help)
     review = sub.add_parser(
         "review-export", help="list the disagreements between an extractor and the labels (AI reference) "
         "for your verdicts (S2 step 7)")
@@ -86,6 +106,10 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_all(args, settings)
     if args.sentiment_command == "review-export":
         return _run_review_export(args, settings)
+    if args.sentiment_command == "summarize":
+        return _run_summarize(args, settings)
+    if args.sentiment_command == "report":
+        return _run_report(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
 
 
@@ -95,6 +119,58 @@ def _engine(settings: Settings, db_override: str | None):
     engine = create_db_engine(db_override or settings.database.path, settings.database.busy_timeout_ms)
     init_db(engine)
     return engine
+
+
+def _run_summarize(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.sentiment.backends import BackendError, make_backend
+    from quant.sentiment.summarize import days_to_summarize, load_opinions, run_summarize
+
+    config = settings.sentiment.summary
+
+    def progress(line: str) -> None:
+        print(line, flush=True)
+        log.info("summarize: %s", line.strip())
+
+    engine = _engine(settings, args.db)
+    try:
+        opinions = load_opinions(engine, settings, args.start, args.end, verified_only=True)
+        days = days_to_summarize(engine, settings, opinions, force=args.force)
+        print(f"Summaries with {config.backend}/{config.model}, prompt v{config.prompt_version}: "
+              f"{len(days)} trading day(s) to summarize, one call each")
+        if not days:
+            return 0
+        try:
+            backend = make_backend(config.backend, config.model, settings.sentiment.extraction.call_timeout_seconds)
+        except BackendError as exc:
+            _error(f"Backend {config.backend}: {exc}")
+            return 1
+        result = run_summarize(engine, settings, backend, opinions, days, progress)
+        if result.stopped:
+            _error(result.stopped)
+        ok = not result.failed and not result.stopped
+        queries.record_pipeline_run(engine, "sentiment-summarize", "summarize", "OK" if ok else "FAILED",
+                                    message=f"{config.backend}/{config.model}/v{config.prompt_version}: "
+                                    f"{len(result.done)} of {result.planned} days, {len(result.failed)} failed"
+                                    + (f"; {result.stopped}" if result.stopped else ""))
+        return 0 if ok else 1
+    finally:
+        engine.dispose()
+
+
+def _run_report(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.sentiment.report import write_reports
+
+    engine = _engine(settings, args.db)
+    try:
+        paths = write_reports(engine, settings, args.start, args.end)
+    finally:
+        engine.dispose()
+    if not paths:
+        print("No opinions in that range: no report written.")
+        return 0
+    print(f"Wrote {len(paths)} report(s) to {Path(settings.sentiment.summary.reports_dir)}: "
+          f"{paths[0].name} .. {paths[-1].name}")
+    return 0
 
 
 def _run_review_export(args: argparse.Namespace, settings: Settings) -> int:
@@ -123,16 +199,22 @@ def _run_review_export(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def _run_all(args: argparse.Namespace, settings: Settings) -> int:
-    """`quant sentiment run`: fetch, then extract. Extract runs even when fetch had problems (a
-    YouTube block, a failed listing): the videos already stored still get their opinions."""
-    print("===== [1/2] fetch: new videos and captions =====", flush=True)
+    """`quant sentiment run`: fetch, extract, summarize, report. Each step runs even when an
+    earlier one had problems (a YouTube block, a failed call): what is already stored still
+    moves on."""
+    print("===== [1/4] fetch: new videos and captions =====", flush=True)
     fetched = _run_fetch(argparse.Namespace(days=args.days, channel=args.channel, db=args.db), settings)
-    print("\n===== [2/2] extract: opinions =====", flush=True)
+    print("\n===== [2/4] extract: opinions =====", flush=True)
     extracted = _run_extract(argparse.Namespace(limit=args.limit, video=None, model=args.model, reextract=False,
                                                 yes=args.yes, db=args.db), settings)
+    print("\n===== [3/4] summarize: one summary per stock and day =====", flush=True)
+    summarized = _run_summarize(argparse.Namespace(start=None, end=None, force=False, db=args.db), settings)
+    print("\n===== [4/4] report: reports/sentiment/<date>.md =====", flush=True)
+    reported = _run_report(argparse.Namespace(start=None, end=None, db=args.db), settings)
     words = {0: "OK", 1: "had problems (see above)"}
-    print(f"\nsentiment run: fetch {words[fetched]}, extract {words[extracted]}")
-    return 0 if fetched == 0 and extracted == 0 else 1
+    print(f"\nsentiment run: fetch {words[fetched]}, extract {words[extracted]}, summarize {words[summarized]}, "
+          f"report {words[reported]}")
+    return 0 if fetched == extracted == summarized == reported == 0 else 1
 
 
 def _run_extract(args: argparse.Namespace, settings: Settings) -> int:

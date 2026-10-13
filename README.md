@@ -302,13 +302,22 @@ python -m quant sentiment extract --video khnPevsQ_TE --model haiku
 
 It prints the number of calls and an estimate of the tokens first; more than `max_videos_per_run` videos need `--yes`. Each opinion has a ticker, stance, horizon, conviction, the creator's own action, a verbatim quote and its time. A quote that does not match the transcript makes the opinion UNVERIFIED, and a ticker that is neither in `config/sentiment_aliases.yaml` nor listed on a US exchange makes it UNRESOLVED; the run lists unresolved names so you can add them to the alias table. Every video is extracted once per backend, model and prompt version (`--reextract` does it again); a usage limit stops the run cleanly. Results are in the `sentiment_opinions` table; reports come with S3.
 
-Both steps in one go, e.g. once a day (it is never part of `run-daily`):
+Step 3 (S3) writes the **daily reports** you read, one per trading day, in `reports/sentiment/<date>.md`:
+
+```bash
+python -m quant sentiment summarize
+python -m quant sentiment report
+```
+
+`summarize` writes a short summary per stock and day with `sentiment.summary` (Haiku by default; one call per day), from verified opinions only, and summarizes a day again when its opinions change. `report` writes, per day: the market mood; a table per stock and ETF with bulls, bears, conditional and neutral creators, the net count and who said what (★ marks stocks in your pool); the summaries; every quote with a link to the second in the video; and what was not counted (unmatched quotes, unresolved names). Research only: an opinion is not a signal.
+
+Everything in one go, e.g. once a day (it is never part of `run-daily`):
 
 ```bash
 python -m quant sentiment run
 ```
 
-It runs `fetch`, then `extract` on every stored video without opinions, even when `fetch` was partly blocked by YouTube; `--days` and `--channel` go to the fetch, `--limit`, `--model` and `--yes` to the extract.
+It runs `fetch`, `extract`, `summarize` and `report`; each step runs even when an earlier one had problems (e.g. YouTube blocking the fetch). `--days` and `--channel` go to the fetch, `--limit`, `--model` and `--yes` to the extract.
 
 To review the extraction against the labeled videos (the S2 quality gate):
 

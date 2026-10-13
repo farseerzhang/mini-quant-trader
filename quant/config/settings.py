@@ -615,6 +615,24 @@ class ExtractionSettings:
 
 
 @dataclass(frozen=True)
+class SummarySettings:
+    """Daily summaries per stock, written from verified opinions only (sentiment_proposal.md 8.3)."""
+
+    backend: str
+    model: str
+    prompt_version: int
+    reports_dir: str  # reports/sentiment/<date>.md
+
+    def __post_init__(self) -> None:
+        if self.backend not in EXTRACTION_BACKENDS:
+            raise ConfigError(f"sentiment.summary.backend must be one of {', '.join(EXTRACTION_BACKENDS)}")
+        if not str(self.model).strip() or not str(self.reports_dir).strip():
+            raise ConfigError("sentiment.summary.model and reports_dir must not be empty")
+        if self.prompt_version < 1:
+            raise ConfigError("sentiment.summary.prompt_version must be >= 1")
+
+
+@dataclass(frozen=True)
 class SentimentSettings:
     """Creator opinion factor (sentiment_proposal.md); research only, never part of run-daily."""
 
@@ -628,6 +646,7 @@ class SentimentSettings:
     no_captions_retry_days: int
     gold: GoldSettings
     extraction: ExtractionSettings
+    summary: SummarySettings
     channels: tuple[ChannelSettings, ...]
 
     def __post_init__(self) -> None:
@@ -915,5 +934,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         sentiment=_build(SentimentSettings, "sentiment", _section(raw, "sentiment"),
                          {"request_delay_seconds": _as_delay_range, "channels": _as_channels,
                           "gold": _subsection(GoldSettings, "sentiment.gold"),
-                          "extraction": _subsection(ExtractionSettings, "sentiment.extraction")}),
+                          "extraction": _subsection(ExtractionSettings, "sentiment.extraction"),
+                          "summary": _subsection(SummarySettings, "sentiment.summary")}),
     )

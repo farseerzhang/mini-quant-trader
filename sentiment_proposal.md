@@ -1,6 +1,6 @@
 # Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
-Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 steps 1-5 built (section 12.3); S2 review done quickly and kept as given, so S2 is accepted provisionally with Sonnet (section 12.3); the Haiku comparison and Gemini backend are postponed.
+Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 steps 1-5 built (section 12.3); S2 review done quickly and kept as given, so S2 is accepted provisionally with Sonnet (section 12.3); the Haiku comparison and Gemini backend are postponed. S3 built (section 12.4); it is done once you accept a week of reports.
 Date: 2026-10-12
 
 ---
@@ -449,6 +449,16 @@ Caption availability read from each video page with yt-dlp (`subtitles` / `autom
 Consequences: neither can join. 贝拉聊财金 would need audio transcription, like 美投讲美股 and 视野环球财经; with S5 dropped (decision 13), all three stay out.
 
 The selected six publish about 20 long videos a week in total (about 3 a day), which fits the daily limits of either backend.
+
+## 12.4 S3 as built (2026-10-13)
+
+- `quant sentiment summarize [--from D] [--to D] [--force]` and `quant sentiment report [--from D] [--to D]`; both join `quant sentiment run` (fetch, extract, summarize, report; each step runs even after an earlier one had problems). Code: `quant/sentiment/summarize.py`, `quant/sentiment/report.py`; summary prompt v1 and schema in `prompts.py`; table `sentiment_summaries` (section 6).
+- Settings `sentiment.summary`: backend `claude_code`, model `haiku`, prompt version 1, `reports_dir: reports/sentiment`.
+- One call per trading day for all of its stocks plus the market paragraph. A summary may cite only its own stock's opinion ids; one that cites others is dropped (shown as "no summary"). Each summary stores a hash of its opinion ids and the extractor, so a day whose opinions change is summarized again, and the report shows only summaries written from exactly the current opinions.
+- Report per effective date: market mood; tables for stocks and ETFs (Bull / Bear / Cond / Neutral / Net per creator, each creator once per column, all their marks in one entry; ★ = in the stock pool); the summaries; an appendix with every verified quote, a link to the second and the video title (auto captions flagged); "Not counted": unverified quotes and unresolved names.
+- First run: 9 trading days (2026-09-30 .. 2026-10-12), 9 Haiku calls, 105 stock summaries, none dropped.
+- Seen in the first reports, for prompt version 2 after your week of reading: the summaries repeat "No bearish view was given" for single-creator stocks; the extractor sometimes turns one quote into two opinions with different horizons and stances (MRVL on 2026-10-12: BULLISH LONG and NEUTRAL from the same sentence).
+- Done when (section 12): you have read a week of reports and accept their quality.
 
 ## 12.3 S2 steps 1-5 as built (2026-10-13)
 

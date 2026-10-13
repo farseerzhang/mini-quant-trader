@@ -1657,6 +1657,11 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     call_timeout_seconds: 300
     aliases_path: config/sentiment_aliases.yaml        # names per ticker, kept by hand
     tickers_cache: data/sentiment/us_tickers.json      # US-listed symbols (Nasdaq Trader), refreshed monthly
+  summary:                         # daily report: a short summary per stock from VERIFIED opinions only
+    backend: claude_code
+    model: haiku                   # the input is short and already clean, so a cheaper model is enough
+    prompt_version: 1
+    reports_dir: reports/sentiment # one Markdown report per trading day: reports/sentiment/<date>.md
   channels:                        # chosen after S0 (sentiment_proposal.md section 12.1)
     - {handle: "@FinancialEducation", channel_id: UCnMn36GT_H0X-w5_ckLtlgQ, name: "Financial Education", language: en, style: "aggressive growth"}
     - {handle: "@chipstockinvestor", channel_id: UC3aD-gfmHV_MhMmcwyIu1wA, name: "Chip Stock Investor", language: en, style: "semiconductors / AI"}
