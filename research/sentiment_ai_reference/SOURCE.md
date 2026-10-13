@@ -21,3 +21,9 @@ Mechanical fixes after labeling (2026-10-13):
   (backup of the first version: `data/sentiment_gold/opinions.backup-2026-10-13.csv`);
 - `LGUewAMj5H8` AMD: action BUY -> NONE (a recommendation, not the creator's own trade);
 - `chOchL89sw8` CEG: time 16:38 (after the end of the video) -> 06:12, where CEG is discussed.
+
+Review of claude_code / sonnet / prompt v1 (2026-10-13): `verdicts-claude_code-sonnet-v1.csv`
+(case, kind, stock, both readings and your verdict; no transcript text). 33 disagreements:
+31 `extractor`, 2 `both`, 0 `reference`, 0 `neither`, no comments; filled in about 7.5 minutes.
+Kept as given (your choice, option A). It found no extractor error, which is weak evidence:
+see sentiment_proposal.md section 12.3.

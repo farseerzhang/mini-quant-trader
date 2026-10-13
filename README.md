@@ -310,6 +310,14 @@ python -m quant sentiment run
 
 It runs `fetch`, then `extract` on every stored video without opinions, even when `fetch` was partly blocked by YouTube; `--days` and `--channel` go to the fetch, `--limit`, `--model` and `--yes` to the extract.
 
+To review the extraction against the labeled videos (the S2 quality gate):
+
+```bash
+python -m quant sentiment review-export
+```
+
+It prints the agreement with the labels and writes every disagreement (only in the labels, only from the extractor, or a different direction) with the quote, a link to the second in the video and the transcript lines around it to `data/sentiment_gold/reviews/review-<backend>-<model>-v<prompt>.csv`. Fill in `verdict` (`reference`, `extractor`, `both` or `neither`) and optionally `comment`; the file is never overwritten.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.

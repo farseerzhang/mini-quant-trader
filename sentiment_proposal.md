@@ -1,6 +1,6 @@
 # Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
-Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 steps 1-5 built (section 12.3); S2 steps 6-8 postponed (2026-10-13, your call: not a priority now).
+Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 steps 1-5 built (section 12.3); S2 review done quickly and kept as given, so S2 is accepted provisionally with Sonnet (section 12.3); the Haiku comparison and Gemini backend are postponed.
 Date: 2026-10-12
 
 ---
@@ -463,7 +463,9 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 - "Win Resorts" (the auto-caption spelling of Wynn) was left out of the alias table and the prompt on purpose: it was found only by checking the AI reference, so it would inflate agreement on that row.
 - Live check: one NaNa video outside the AI reference (`khnPevsQ_TE`, 13 min) with Haiku: 2 calls, about 12k input and 4k output tokens, 5 opinions, all quotes matched exactly.
 - First full run (2026-10-13, Sonnet): all 25 stored videos, 68 calls, about 462k input and 36k output tokens, 129 opinions, all VERIFIED, none UNRESOLVED. Rough agreement with the AI reference on its 20 videos, matched on video and stock: 81 pairs in both (89% of the reference's 91, 85% of Sonnet's 95), same direction on 72 of 81; the largest differences are in NaNa's news wraps (own view or news?).
+- `quant sentiment review-export [--model M]` (S2 step 7, built 2026-10-13): matches the extractor's opinions with the labels on video and stock, prints the agreement and writes the disagreements (kinds `only_reference`, `only_extractor`, `direction`) with quote, link and the transcript around it to `data/sentiment_gold/reviews/` (git-ignored: it holds transcript text). Verdict per case: `reference`, `extractor`, `both` or `neither`. Sonnet / prompt v1: 33 cases (10, 14, 9).
 - `quant sentiment run` (section 7) is built for steps 1-3 so far: `fetch`, then `extract`, which runs even when the fetch had problems; the summary and report steps join it with S3.
+- **Review of Sonnet / prompt v1 (2026-10-13), kept as given (option A).** 33 disagreements: 31 judged `extractor`, 2 `both`, 0 `reference`, 0 `neither`, no comments, filled in about 7.5 minutes (about 14 s per case). Verdicts without transcript text: `research/sentiment_ai_reference/verdicts-claude_code-sonnet-v1.csv`. Taken literally, Sonnet made no error on any disputed case, which is not plausible for an extractor; some cases were debatable (e.g. TLT mapped from a bond-yield view the creator never tied to TLT; JBL's "割韭菜" read as bullish). The review is therefore **weak evidence**: S2 is accepted **provisionally** with Sonnet as the extractor, and the quote and ticker checks remain the only hard guards. A careful review (or human labels) should come before any S6 use of the opinions.
 - **Postponed (2026-10-13):** S2 steps 6-8: the review file of the about 33 disagreements (10 only in the reference, 14 only from Sonnet, 9 with a different direction) with your verdicts, the Haiku comparison and the Gemini backend. Resume with the review; no extraction result counts as accepted before it.
 
 ## 12.2 S1 as built (2026-10-13)

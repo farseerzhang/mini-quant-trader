@@ -49,6 +49,11 @@ def add_parser(commands, db_help: str) -> None:
     extract.add_argument("--yes", action="store_true",
                          help="go ahead with more than sentiment.extraction.max_videos_per_run videos")
     extract.add_argument("--db", help=db_help)
+    review = sub.add_parser(
+        "review-export", help="list the disagreements between an extractor and the labels (AI reference) "
+        "for your verdicts (S2 step 7)")
+    review.add_argument("--model", help="the extractor model to review (default: sentiment.extraction.model)")
+    review.add_argument("--db", help=db_help)
     run = sub.add_parser(
         "run", help="fetch, then extract: new videos and captions, then opinions for every video without them "
         "(extract runs even if fetch was partly blocked)")
@@ -79,6 +84,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_extract(args, settings)
     if args.sentiment_command == "run":
         return _run_all(args, settings)
+    if args.sentiment_command == "review-export":
+        return _run_review_export(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
 
 
@@ -88,6 +95,31 @@ def _engine(settings: Settings, db_override: str | None):
     engine = create_db_engine(db_override or settings.database.path, settings.database.busy_timeout_ms)
     init_db(engine)
     return engine
+
+
+def _run_review_export(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.sentiment.review import build_review, write_review
+
+    model = args.model or settings.sentiment.extraction.model
+    engine = _engine(settings, args.db)
+    try:
+        frame, agreement = build_review(engine, settings, model)
+        path = write_review(frame, settings, model)
+    except ValueError as exc:
+        _error(f"Review export refused: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(f"Agreement of {settings.sentiment.extraction.backend}/{model} with the labels (an AI reference, so "
+          f"agreement, not accuracy), matched on video and stock:")
+    print(f"  pairs: reference {agreement.reference_pairs}, extractor {agreement.extractor_pairs}, "
+          f"both {agreement.both}")
+    print(f"  found by both / reference: {agreement.recall:.0%}; found by both / extractor: {agreement.precision:.0%}; "
+          f"same direction where both: {agreement.same_direction}/{agreement.both}")
+    counts = frame["kind"].value_counts().to_dict()
+    print(f"{len(frame)} case(s) for your verdict: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    print(f"  {path}")
+    return 0
 
 
 def _run_all(args: argparse.Namespace, settings: Settings) -> int:
