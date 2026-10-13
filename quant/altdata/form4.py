@@ -221,8 +221,13 @@ def update_form4(engine: Engine, settings: Settings, client: SecClient, progress
     result = UpdateResult()
     pool = list(settings.market.stocks)
     ciks = sync_entities(engine, client, pool)
-    by_cik = {cik: symbol for symbol, cik in ciks.items()}
-    progress(f"Entities: {len(ciks)} pool stocks mapped to SEC CIKs")
+    # Every CIK whose filings belong to a pool stock: today's, plus earlier ones from config.
+    pairs = list(ciks.items()) + [(symbol, cik) for symbol, extra in settings.altdata.sec.extra_ciks.items()
+                                  if symbol in ciks for cik in extra if cik != ciks[symbol]]  # pool stocks only
+    by_cik = {cik: symbol for symbol, cik in pairs}
+    progress(f"Entities: {len(ciks)} pool stocks mapped to SEC CIKs"
+             + (f" (+{len(pairs) - len(ciks)} earlier CIK(s) from altdata.sec.extra_ciks)" if len(pairs) > len(ciks)
+                else ""))
     availability = Availability(settings.market.calendar)
     closes = _closes(engine, pool)
 
@@ -259,10 +264,10 @@ def update_form4(engine: Engine, settings: Settings, client: SecClient, progress
         progress(f"Live: skipped until the backfill is complete ({len(still_missing)} quarter(s) left)")
     elif live and wanted:
         after = quarter_end(wanted[-1])
-        progress(f"Live: Form 4 filings after {after} from {len(ciks)} submissions lists")
+        progress(f"Live: Form 4 filings after {after} from {len(pairs)} submissions lists")
         known = _known_accessions(engine)
         filings = []
-        for symbol, cik in ciks.items():
+        for symbol, cik in pairs:
             try:
                 entries = recent_form4(client.json(SUBMISSIONS_URL.format(cik=cik)), after)
             except SecError as exc:

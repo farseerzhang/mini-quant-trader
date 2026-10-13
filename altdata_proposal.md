@@ -1,6 +1,6 @@
 # Free Structured Alternative Data — Proposal (Draft)
 
-Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) built 2026-10-13 (section 13.2).
+Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) done 2026-10-13 (section 13.2); decision 8 (sale-side features) awaits your confirmation before A4.
 Date: 2026-10-13
 
 Companion to `sentiment_proposal.md`. That proposal turns **text** (YouTube, Reddit) into opinions with an LLM and mostly has to be logged going forward. This one covers **already-structured records** from free, official sources that have **years of history**, so they can be researched on the existing development folds now.
@@ -154,12 +154,22 @@ Computed per symbol at the close of each session T from rows with `available_at`
 |---|---|---|
 | `insider_net_buy_value_60d` | Σ value of P minus Σ value of non-10b5-1 S, by officers and directors, over 60 sessions, ÷ market cap | Insiders trading with discretion |
 | `insider_buyers_60d` | Number of distinct officers/directors with a P transaction in 60 sessions | "Cluster buying", a well-documented pattern |
-| `activist_13d_120d` | 1 if a new 13D (not an amendment) became available in the last 120 sessions, else 0 | Activist involvement |
+| ~~`activist_13d_120d`~~ | Dropped with 13D (decision 7) | - |
+| `opportunistic_sellers_60d` | Number of distinct officers and directors with an **opportunistic** sale in the last 60 sessions (definition below) | Sales that break an insider's own pattern; routine and pre-planned sales carry little information |
+| `insider_sell_fraction_60d` | Largest fraction of their direct holdings that any officer or director sold in the last 60 sessions (definition below); 0 if none sold | A CEO selling 40% stands out against routine 2% trims |
 | `short_volume_ratio_z` | (5-session mean of short ÷ total volume − its 120-session mean) ÷ its 120-session std | Unusual short selling |
 | `short_interest_pct` | Latest published short interest ÷ shares outstanding | Crowded shorts |
 | `short_interest_change` | Change in `short_interest_pct` between the last two publications | Shorts building or covering |
 | `days_to_cover` | Latest short interest ÷ 20-session average daily volume | Squeeze potential / bearish conviction |
 | `pageviews_z` | (log of 5-day mean views − log of 60-day mean) ÷ std of the daily log changes | Attention spike |
+
+**Sale-side definitions** (added 2026-10-13, draft until you confirm it; written before any return was looked at, only filing counts):
+
+- *Qualifying sale*: an `S` line (open-market sale) whose filing is available by the close of session T (`available_on` <= T), reported by an owner who is an officer or a director (10% owners alone do not count), and whose filing is not flagged 10b5-1 (`is_10b5_1 = 1`; the flag exists only from 2023, so before that no sale is excluded by it).
+- *Routine / opportunistic* (after Cohen, Malloy and Pomorski 2012): for a sale in calendar month m of year y, the insider is **classifiable** if they had at least one P or S line in each of the years y-1, y-2 and y-3 (counting only filings available by session T). A classifiable insider is **routine** if they traded in month m in each of those three years, otherwise **opportunistic**. Insiders who are not classifiable count as neither. The classification uses only past filings, so it is free of look-ahead, and it covers the years before the 10b5-1 flag.
+- `opportunistic_sellers_60d`: distinct insiders (owner CIK) with at least one qualifying, opportunistic sale among the filings that became available in the 60 sessions up to T. For a jointly filed Form 4, every officer or director listed on it counts.
+- `insider_sell_fraction_60d`: for each insider with qualifying sales of directly held shares (`direct_indirect = D`) in the 60 sessions up to T, (shares sold) / (shares sold + shares owned after the last of those sales); the feature is the largest value across insiders, 0 if there was no qualifying sale. Lines without a share count are left out.
+- Both are NULL before a stock has three years of Form 4 history in the tables (the routine test needs it), for `insider_sell_fraction_60d` too, so the two start on the same date.
 
 Missing data is missing, not zero. A stock with no Form 4 in the window gets 0 insider buying (no transactions happened), but a stock before its source's history starts gets NULL, and the model's existing missing-value handling applies.
 
@@ -170,7 +180,7 @@ Missing data is missing, not zero. A stock with no Form 4 in the window gets 0 i
 Same principles as the existing feature research (proposal section 11, 15.4):
 
 1. **Pre-registration** (written into this file with a date, before any result): the 8 features above, their definitions, the target (the existing 5-day excess return label), the folds (the existing 11 development folds, 2014-09-26 .. 2025-10-01), and the pass criteria below.
-2. **Stage 1, feature check** (cheap, per feature): rank information coefficient (Spearman correlation between the feature and the next 5-day excess return across stocks on each date), averaged over dates, with a Newey-West t-statistic; reported per fold. **Pass**: mean IC t-stat ≥ 2 over the development period **and** the same sign in at least 7 of 11 folds. With 8 features tested, about one could pass at |t| ≥ 2 by chance alone, so a pass is a candidate, not a finding.
+2. **Stage 1, feature check** (cheap, per feature): rank information coefficient (Spearman correlation between the feature and the next 5-day excess return across stocks on each date), averaged over dates, with a Newey-West t-statistic; reported per fold. **Pass**: mean IC t-stat ≥ 2 over the development period **and** the same sign in at least 7 of 11 folds. With 9 features tested (the 8 original ones without the dropped 13D feature, plus the two sale-side features of section 7), about one could pass at |t| ≥ 2 by chance alone, so a pass is a candidate, not a finding.
 3. **Stage 2, model trial** (only for features that pass stage 1): one retrain of the current best predictor configuration with the passing features added, everything else unchanged, judged by the existing gates in `retrain.gates`. Each trial is added to the trial log.
 4. **No holdout.** The current holdout has already been evaluated twice (proposal 15.4.8 and the HMM holdout check that follows it) and must not be used to choose features. Evidence beyond the development folds comes from forward testing.
 
@@ -197,7 +207,8 @@ Offline, with fixtures saved from real files:
 Honest priors, written down before any data is seen:
 
 - **Insider buying** is the best-documented effect of the four, but most of the evidence comes from small and mid caps. In a pool of 81 large caps, open-market purchases by insiders are rare (executives are mostly paid in stock and sell), so `insider_buyers_60d` will be zero most of the time. A weak or absent result would not be surprising.
-- **13D** events are too rare in this pool to test statistically. The feature is kept for completeness; stage 1 will most likely be inconclusive.
+- **Insider selling** is frequent (about 139,000 sale lines 2006-2026 against 2,700 purchase lines) but mostly routine: diversification, taxes, 10b5-1 programs, founders' steady sales. The literature finds the information in the opportunistic part only, so a small effect at most is expected; a few large holders dominate the raw counts, which is why both features count insiders or fractions, not lines or dollars.
+- **13D** events are too rare in this pool to test statistically (dropped, decision 7). The feature is kept for completeness; stage 1 will most likely be inconclusive.
 - **Short interest** has a documented relationship with lower future returns, again stronger in smaller stocks; large caps rarely have high short interest.
 - **Short-volume ratio** is noisy because of market-maker activity; any signal is expected to be small.
 - **Pageviews** measure attention, which the literature links to short-term moves and later reversals. The sign is not assumed.
@@ -300,6 +311,8 @@ Decided (section 15, decisions 6 and 7): the conservative availability rule abov
 - Amendments (4/A) are stored with `date_of_original`; linking them to the filing they amend (the data sets give only the original's date) is left to the feature step (A4).
 - Live filings are fetched only once every published quarter is loaded, after the newest quarter's end. A first live run with only one quarter loaded reached back to 2006 through the submissions lists and was stopped before it stored anything; the rule above prevents that.
 - A live filing keeps its exact acceptance time when its quarter's data set is loaded later. A filing whose issuer is not the pool company (e.g. a pool company reporting as an owner of another company) is skipped.
+- **Earlier CIKs** (`altdata.sec.extra_ciks`): `company_tickers.json` maps XOM to a new holding company (ExxonMobil Holdings Corp, CIK 2115436), while all of Exxon's insider filings are under Exxon Mobil Corp (CIK 34088). The setting maps earlier CIKs to a pool stock; `XOM: [34088]`. The first backfill missed XOM; a `--reload` brought in 1,603 XOM filings (2006-01-04 .. 2026-07-01).
+- **Result (2026-10-13)**: all 81 stocks, 83 quarters (2006 Q1 .. 2026 Q3) plus the live filings since 2026-09-30: 118,487 filings, 2,699 purchase lines (P), 139,671 sale lines (S), 771 lines quarantined (mostly sales without a price). Short histories because of recent listings: SPCX from 2026-06, SE (as a Form 4 filer) from 2026-03, FIG from 2025-08, SNDK from 2025-02, TEM from 2024-06, GEV from 2024-04. The 10b5-1 flag is present from 2023 (about 1 in 5 filings flagged since 2024). Coverage report: `reports/altdata/coverage-form4.md`. A1 is done.
 - Quality (section 6): P / S lines without a positive price or shares, dated after their filing, or priced more than 50% away from that day's as-traded close go to `data_quarantine` (provider `sec-form4`) and are not stored.
 
 ---
@@ -327,3 +340,4 @@ Decided (section 15, decisions 6 and 7): the conservative availability rule abov
 5. **Table names**: every table of this module starts with `altdata_` (section 4), so alt data, sentiment (`sentiment_*`) and the core quant tables never mix.
 6. **Availability of backfilled Form 4 rows** (2026-10-13, after A0): the data sets have no acceptance time, so a backfilled filing counts from the **session after its filing date**; incrementally fetched filings use their exact acceptance time (after 16:00 ET -> next session).
 7. **A1 builds Form 4 only** (2026-10-13). Schedule 13D is dropped from A1: too rare in the pool, and it needs a header check to tell filings about a company from filings by it. `activist_13d_120d` leaves the candidate list of section 7.
+8. **Sale-side features (draft, 2026-10-13):** `opportunistic_sellers_60d` and `insider_sell_fraction_60d` are added to the candidate list of section 7, with the definitions there, before A4 and before any return was looked at. Pending your confirmation; once confirmed, the list of section 7 is fixed for A4.

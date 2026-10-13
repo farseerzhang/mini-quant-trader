@@ -1679,6 +1679,8 @@ altdata:                           # free structured alternative data (altdata_p
     insider_backfill_from: 2006-01-01   # set from the A0 spike
     signal_codes: [P, S]           # open-market purchases and sales; grants, exercises, gifts are not decisions
     exclude_10b5_1_sales: true     # pre-planned sales are not discretionary
+    extra_ciks:                    # earlier CIKs whose filings belong to a pool stock (A1 finding)
+      XOM: [34088]                 # Exxon Mobil Corp; company_tickers.json now gives the new holding company
 ```
 
 `config/settings.yaml` holds exactly this block. Every section and key is required and unknown keys are rejected at startup, so the two must be changed together.

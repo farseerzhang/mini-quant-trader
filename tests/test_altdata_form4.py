@@ -232,6 +232,15 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(int(table["filings"].sum()), 3)
         self.assertEqual(int(table["P"].sum()), 1)
 
+    def test_extra_ciks_bring_in_earlier_filings(self):
+        import dataclasses
+
+        settings = dataclasses.replace(SETTINGS, altdata=dataclasses.replace(
+            SETTINGS.altdata, sec=dataclasses.replace(SETTINGS.altdata.sec, extra_ciks={"AAPL": (OTHER,)})))
+        update_form4(self.engine, settings, FakeClient(), live=False)
+        filings = {r["accession_no"]: r["symbol"] for r in self.rows(tables.altdata_insider_filings)}
+        self.assertEqual(filings.get("0001-26-000004"), "AAPL")  # filed under the earlier CIK
+
     def test_live_waits_until_the_backfill_is_complete(self):
         global INDEX
         old, INDEX = INDEX, INDEX + '<a href="/files/x/insider-transactions-data-sets/2026q2_form345.zip">y</a>'

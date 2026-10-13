@@ -700,12 +700,28 @@ class SecSettings:
     insider_backfill_from: date
     signal_codes: tuple[str, ...]  # Form 4 transaction codes that are decisions (P purchase, S sale)
     exclude_10b5_1_sales: bool  # pre-planned sales are not discretionary
+    # Earlier SEC CIKs of a pool company, when its filings moved to a new CIK (e.g. a new holding
+    # company): symbol -> CIKs, in addition to the one company_tickers.json gives today.
+    extra_ciks: Mapping[str, tuple[int, ...]]
 
     def __post_init__(self) -> None:
         if not 0 < self.max_requests_per_second <= 10:
             raise ConfigError("altdata.sec.max_requests_per_second must be in (0, 10] (the SEC's limit)")
         if not self.signal_codes:
             raise ConfigError("altdata.sec.signal_codes must list at least one transaction code")
+
+
+def _as_extra_ciks(value: Any) -> dict[str, tuple[int, ...]]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ConfigError("altdata.sec.extra_ciks must map symbols to lists of CIKs, e.g. 'XOM: [34088]'")
+    out = {}
+    for symbol, ciks in value.items():
+        if isinstance(ciks, (str, int)) or not isinstance(ciks, (list, tuple)):
+            raise ConfigError(f"altdata.sec.extra_ciks.{symbol} must be a list of CIKs")
+        out[str(symbol).strip().upper()] = tuple(int(c) for c in ciks)
+    return out
 
 
 @dataclass(frozen=True)
@@ -968,5 +984,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                           "summary": _subsection(SummarySettings, "sentiment.summary")}),
         altdata=_build(AltdataSettings, "altdata", _section(raw, "altdata"),
                        {"sec": _subsection(SecSettings, "altdata.sec", {"insider_backfill_from": _as_date,
-                                                                         "signal_codes": _as_str_tuple})}),
+                                                                         "signal_codes": _as_str_tuple,
+                                                                         "extra_ciks": _as_extra_ciks})}),
     )
