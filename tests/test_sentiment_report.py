@@ -104,6 +104,30 @@ class ReportTest(unittest.TestCase):
         self.assertIn("1 opinion(s) whose quote did not match the transcript: AMD (投资TALK君)", text)
         self.assertIn("Unresolved names (add real stocks to the alias table): 某公司 (x1)", text)
 
+    def test_stock_history(self):
+        from quant.sentiment.report import format_history, resolve_ticker, stock_history
+
+        self.assertEqual(resolve_ticker("英伟达", {"NVDA": ("英伟达", "Nvidia")}), "NVDA")
+        self.assertEqual(resolve_ticker("nvidia", {"NVDA": ("英伟达", "Nvidia")}), "NVDA")
+        self.assertEqual(resolve_ticker("brk.b", {}), "BRK-B")
+        run_summarize(self.engine, self.settings, FakeBackend([self.reply()]), self.verified, [DAY])
+
+        history = stock_history(self.engine, self.settings, "NVDA")
+        self.assertEqual(sorted(history["channel"]), ["NaNa说美股", "投资TALK君"])
+        text = format_history("NVDA", history, self.engine, self.settings, {"NVDA"})
+        self.assertIn("NVDA (in your stock pool): 2 opinion(s) from 2 creator(s)", text)
+        self.assertIn("▲ bullish 1, ▼ bearish 1", text)
+        self.assertIn("== 2026-10-12 (Mon)", text)
+        self.assertIn("Summary: NaNa is bullish long term", text)
+        self.assertIn("▲ NaNa说美股: BULLISH LONG, conviction 2 (bought)", text)
+        self.assertIn("https://youtu.be/v1?t=30", text)
+
+        self.assertTrue(stock_history(self.engine, self.settings, "AMD").empty)  # its only quote did not match
+        everything = stock_history(self.engine, self.settings, "AMD", include_all=True)
+        self.assertIn("unverified", format_history("AMD", everything, self.engine, self.settings, set()))
+        self.assertEqual(format_history("TSLA", stock_history(self.engine, self.settings, "TSLA"), self.engine,
+                                        self.settings, set()), "No opinions on TSLA yet.")
+
     def test_one_entry_per_creator_and_no_double_if(self):
         import pandas as pd
         from quant.sentiment.report import stock_table

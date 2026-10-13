@@ -147,6 +147,56 @@ def render_day(day_date: date, day: pd.DataFrame, summaries: dict[str, dict], se
     return "\n".join(lines)
 
 
+def resolve_ticker(text: str, aliases: dict[str, tuple[str, ...]]) -> str:
+    """A ticker as typed (nvda, BRK.B) or a name from the alias table (英伟达, Nvidia)."""
+    from quant.sentiment.aliases import normalize_ticker
+
+    wanted = text.strip()
+    for ticker, names in aliases.items():
+        if any(wanted.casefold() == name.casefold() for name in names):
+            return ticker
+    return normalize_ticker(wanted)
+
+
+def stock_history(engine: Engine, settings: Settings, ticker: str, start: date | None = None,
+                  end: date | None = None, include_all: bool = False) -> pd.DataFrame:
+    """Every opinion on one ticker, oldest first; VERIFIED only unless include_all."""
+    opinions = load_opinions(engine, settings, start, end, verified_only=not include_all)
+    return opinions[opinions["ticker"] == ticker].sort_values(["effective_date", "published_at", "channel"])
+
+
+def format_history(ticker: str, history: pd.DataFrame, engine: Engine, settings: Settings,
+                   pool: set[str]) -> str:
+    if history.empty:
+        return f"No opinions on {ticker} yet."
+    verified = history[history["verification"] == "VERIFIED"]
+    counts = verified["stance"].value_counts()
+    first, last = history["effective_date"].min(), history["effective_date"].max()
+    lines = [
+        f"{ticker}{' (in your stock pool)' if ticker in pool else ''}: {len(history)} opinion(s) from "
+        f"{history['channel'].nunique()} creator(s), effective {first:%Y-%m-%d} .. {last:%Y-%m-%d}",
+        "  " + ", ".join(f"{MARKS[s]} {s.lower()} {counts.get(s, 0)}" for s in MARKS),
+        "Research only, not advice: a creator's opinion is not a signal.",
+        "",
+    ]
+    for day_date, day in history.groupby("effective_date", sort=True):
+        lines.append(f"== {day_date:%Y-%m-%d (%a)}")
+        everyone = load_opinions(engine, settings, day_date, day_date, verified_only=True)
+        summary = load_summaries(engine, settings, day_date, inputs_hash(everyone, settings)).get(ticker)
+        if summary:
+            lines.append(f"   Summary: {summary['summary']}")
+        for o in day.itertuples(index=False):
+            extras = [e for e in (_condition(o.condition), ACTION[o.action],
+                                  "auto captions" if o.is_generated == 1 else "",
+                                  "" if o.verification == "VERIFIED" else o.verification.lower()) if e]
+            lines.append(f"   {MARKS[o.stance]} {o.channel}: {o.stance} {o.horizon}, conviction {o.conviction}"
+                         + (f" ({'; '.join(extras)})" if extras else ""))
+            lines.append(f"     \"{o.quote}\"")
+            lines.append(f"     {_link(o)}  ({_clock(o.start_seconds)}, {str(o.title)[:60]})")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def write_reports(engine: Engine, settings: Settings, start: date | None = None, end: date | None = None) -> list[Path]:
     opinions = load_opinions(engine, settings, start, end)
     directory = Path(settings.sentiment.summary.reports_dir)

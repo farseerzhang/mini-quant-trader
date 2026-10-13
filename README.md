@@ -311,6 +311,15 @@ python -m quant sentiment report
 
 `summarize` writes a short summary per stock and day with `sentiment.summary` (Haiku by default; one call per day), from verified opinions only, and summarizes a day again when its opinions change. `report` writes, per day: the market mood; a table per stock and ETF with bulls, bears, conditional and neutral creators, the net count and who said what (★ marks stocks in your pool); the summaries; every quote with a link to the second in the video; and what was not counted (unmatched quotes, unresolved names). Research only: an opinion is not a signal.
 
+Every opinion on one stock over time, newest day last, with the day's summary, each quote and a link to the second in the video (read-only; a ticker or a name from the alias table):
+
+```bash
+python -m quant sentiment stock NVDA
+python -m quant sentiment stock 美光 --from 2026-10-01
+```
+
+`--all` also shows opinions whose quote did not match the transcript.
+
 Everything in one go, e.g. once a day (it is never part of `run-daily`):
 
 ```bash

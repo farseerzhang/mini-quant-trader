@@ -69,6 +69,13 @@ def add_parser(commands, db_help: str) -> None:
     report.add_argument("--from", dest="start", type=_iso_date, help="first effective date (YYYY-MM-DD)")
     report.add_argument("--to", dest="end", type=_iso_date, help="last effective date")
     report.add_argument("--db", help=db_help)
+    stock = sub.add_parser("stock", help="every opinion on one stock over time, with quotes and links (read-only)")
+    stock.add_argument("ticker", help="a ticker (NVDA, BRK-B) or a name from the alias table (英伟达, Nvidia)")
+    stock.add_argument("--from", dest="start", type=_iso_date, help="first effective date (YYYY-MM-DD)")
+    stock.add_argument("--to", dest="end", type=_iso_date, help="last effective date")
+    stock.add_argument("--all", action="store_true",
+                       help="also opinions whose quote did not match the transcript (marked unverified)")
+    stock.add_argument("--db", help=db_help)
     review = sub.add_parser(
         "review-export", help="list the disagreements between an extractor and the labels (AI reference) "
         "for your verdicts (S2 step 7)")
@@ -110,6 +117,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_summarize(args, settings)
     if args.sentiment_command == "report":
         return _run_report(args, settings)
+    if args.sentiment_command == "stock":
+        return _run_stock(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
 
 
@@ -170,6 +179,25 @@ def _run_report(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     print(f"Wrote {len(paths)} report(s) to {Path(settings.sentiment.summary.reports_dir)}: "
           f"{paths[0].name} .. {paths[-1].name}")
+    return 0
+
+
+def _run_stock(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.sentiment.aliases import AliasError, load_aliases
+    from quant.sentiment.report import format_history, resolve_ticker, stock_history
+
+    try:
+        aliases = load_aliases(settings.sentiment.extraction.aliases_path)
+    except AliasError as exc:
+        _error(f"Alias table: {exc}")
+        return 1
+    ticker = resolve_ticker(args.ticker, aliases)
+    engine = _engine(settings, args.db)
+    try:
+        history = stock_history(engine, settings, ticker, args.start, args.end, include_all=args.all)
+        print(format_history(ticker, history, engine, settings, set(settings.market.stocks)), end="")
+    finally:
+        engine.dispose()
     return 0
 
 

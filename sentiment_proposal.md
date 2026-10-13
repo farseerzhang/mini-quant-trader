@@ -458,6 +458,8 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 - Report per effective date: market mood; tables for stocks and ETFs (Bull / Bear / Cond / Neutral / Net per creator, each creator once per column, all their marks in one entry; ★ = in the stock pool); the summaries; an appendix with every verified quote, a link to the second and the video title (auto captions flagged); "Not counted": unverified quotes and unresolved names.
 - First run: 9 trading days (2026-09-30 .. 2026-10-12), 9 Haiku calls, 105 stock summaries, none dropped.
 - Seen in the first reports, for prompt version 2 after your week of reading: the summaries repeat "No bearish view was given" for single-creator stocks; the extractor sometimes turns one quote into two opinions with different horizons and stances (MRVL on 2026-10-12: BULLISH LONG and NEUTRAL from the same sentence).
+- `quant sentiment stock TICKER [--from D] [--to D] [--all]` (read-only): every opinion on one stock over time, grouped by effective date, with that day's summary, quotes and links; the ticker may be typed as a name from the alias table (美光 -> MU). Added because one daily report often shows a single creator per stock.
+- Also for prompt version 2: the summaries sometimes write opinion ids into the text ("Financial Education (37)").
 - Done when (section 12): you have read a week of reports and accept their quality.
 
 ## 12.3 S2 steps 1-5 as built (2026-10-13)
