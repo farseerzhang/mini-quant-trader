@@ -85,8 +85,16 @@ All extraction goes through one `Extractor` interface: transcript chunk + alias 
 
 **`claude_code`**
 
-- Locked down: no tools allowed, one turn, output format JSON. The exact flags are fixed in S2 against the installed Claude Code version.
-- The JSON is not enforced by Claude Code, so our code validates it against the opinion schema; one retry on invalid JSON, then the video is marked `FAILED`.
+- Called from Python as a subprocess, with the chunk on stdin, from a neutral working directory (so no project `CLAUDE.md` or memory is loaded):
+
+  ```
+  claude -p --model <model> --tools "" --strict-mcp-config --no-session-persistence
+         --output-format json --system-prompt <extraction prompt> --json-schema <opinion schema>
+  ```
+
+  `--system-prompt` replaces Claude Code's own system prompt, which cuts the overhead per call from about 36k tokens to about 1.3k. `--json-schema` enforces the reply format; the result is in `structured_output`. Our code still validates the values; one retry on an invalid reply, then the video is marked `FAILED`. Verified on 2026-10-13 with Claude Code 2.1.296 (Haiku, a Chinese sentence → `{"ticker": "NVDA", "stance": "BULLISH"}`).
+- Not `--bare`: that mode accepts only an API key and ignores the subscription login.
+- `ANTHROPIC_API_KEY` must **not** be set in the environment; if it is, Claude Code bills the API instead of the subscription. The backend refuses to run when it is set.
 - Needs only the `claude` command on PATH, logged in with the subscription. No API key.
 
 **`gemini`**
@@ -437,7 +445,8 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 | Pro usage limits reached (`claude_code`) | Per-run cap; the run stops cleanly and resumes next run; `gemini` as the alternative backend |
 | Gemini free-tier limits, models or terms change | Checked in S2; model name in config; backend switchable without schema changes |
 | Gemini free tier may use inputs to improve Google's products | Only public transcripts, posts and opinions are sent; never positions, trades, signals or account values |
-| `claude -p` returns invalid JSON | Validated against the schema; one retry; then `FAILED` |
+| `claude -p` returns an invalid reply | `--json-schema` enforces the format; values validated; one retry; then `FAILED` |
+| Claude Code bills the API instead of Pro | The backend refuses to run while `ANTHROPIC_API_KEY` is set |
 | Vague opinions that are hard to classify | `CONDITIONAL` / `NEUTRAL` categories; quotes kept for manual review |
 | High-beta bias: bullish calls on tech look right in rising markets | Excess return vs the pool on the same days; permutation against random pool picks; beta-adjusted column |
 | Repeated calls inflate the sample | One opinion per creator × stock × stance per window |
