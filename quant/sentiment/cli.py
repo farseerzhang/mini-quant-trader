@@ -33,6 +33,8 @@ def add_parser(commands, db_help: str) -> None:
         "gold-export",
         help="pick the gold-set videos and write the label files and readable transcripts (S2); "
         "never overwrites existing labels, only writes the transcripts again")
+    gold.add_argument("--add", type=int, default=0, metavar="N",
+                      help="extend the existing gold set by N videos not in it yet (appended to videos.csv)")
     gold.add_argument("--db", help=db_help)
 
 
@@ -64,10 +66,13 @@ def _engine(settings: Settings, db_override: str | None):
 def _run_gold_export(args: argparse.Namespace, settings: Settings) -> int:
     from quant.sentiment.gold import export_gold
 
+    if args.add < 0:
+        _error("--add must not be negative")
+        return 1
     engine = _engine(settings, args.db)
     try:
         try:
-            result = export_gold(engine, settings)
+            result = export_gold(engine, settings, add=args.add)
         except ValueError as exc:
             _error(f"Gold export refused: {exc}")
             return 1
@@ -77,6 +82,10 @@ def _run_gold_export(args: argparse.Namespace, settings: Settings) -> int:
         print(f"Picked {len(result.video_ids)} videos for the gold set:")
         print(f"  labels:      {result.labels_dir / 'videos.csv'}, {result.labels_dir / 'opinions.csv'} "
               f"(rules: {result.labels_dir / 'LABELING.md'})")
+    elif result.added:
+        print(f"Added {len(result.added)} videos to {result.labels_dir / 'videos.csv'} (your earlier rows unchanged):")
+        for video_id in result.added:
+            print(f"  {video_id}")
     else:
         print(f"Labels already exist in {result.labels_dir} (left unchanged); transcripts written again.")
     print(f"  transcripts: {result.transcripts_dir} ({len(result.video_ids) - len(result.missing)} files)")

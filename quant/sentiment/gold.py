@@ -8,8 +8,10 @@ The first run picks `sentiment.gold.videos` videos with stored captions and writ
 - <transcripts_dir>/<video_id>.txt  readable transcripts (Chinese in Simplified)
 
 The labels hold no transcript text, so labels_dir is committed; the transcripts are reading
-copies in data/ (git-ignored) and can be deleted at any time. Later runs never touch the
+copies in data/ (git-ignored) and can be deleted at any time. Later runs never change the
 label files: they only write the transcripts of the videos already in videos.csv again.
+`--add N` extends the set: N more videos (picked the same way, from those not in it yet) are
+appended to videos.csv; the rows already there are not rewritten.
 
 Picking: channels take turns in config order, so every channel is covered; within a channel
 the videos are taken in video_id order, which is arbitrary but fixed (not chosen by anyone
@@ -85,6 +87,7 @@ class GoldExport:
     created: bool  # False: the labels already existed; only transcripts were written
     video_ids: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)  # in videos.csv but no transcript stored
+    added: list[str] = field(default_factory=list)  # appended by --add
 
 
 def _clock(seconds: float) -> str:
@@ -168,13 +171,36 @@ def read_gold_video_ids(labels_dir: Path) -> list[str]:
         return [row["video_id"] for row in csv.DictReader(source) if row.get("video_id")]
 
 
-def export_gold(engine: Engine, settings: Settings) -> GoldExport:
+def _append_videos(labels_dir: Path, rows: list[dict]) -> None:
+    """Add rows at the end of videos.csv; the rows already there (your labels) are not rewritten."""
+    path = labels_dir / "videos.csv"
+    with path.open(encoding=CSV_ENCODING, newline="") as source:
+        columns = next(csv.reader(source))
+    ends_with_newline = path.read_bytes().endswith(b"\n")
+    with path.open("a", encoding="utf-8", newline="") as target:  # no second byte-order mark
+        if not ends_with_newline:
+            target.write("\r\n")
+        csv.DictWriter(target, fieldnames=columns, extrasaction="ignore").writerows(rows)
+
+
+def export_gold(engine: Engine, settings: Settings, add: int = 0) -> GoldExport:
+    """Write the gold set; with `add`, extend an existing one by that many videos not in it yet."""
     gold = settings.sentiment.gold
     labels_dir, transcripts_dir = Path(gold.labels_dir), Path(gold.transcripts_dir)
     stored = _videos_with_transcripts(engine)
     exists = (labels_dir / "videos.csv").exists()
+    if add and not exists:
+        raise ValueError("there is no gold set to extend yet; run gold-export without --add first")
     if exists:
         wanted = read_gold_video_ids(labels_dir)
+        if add:
+            fresh = stored[~stored["video_id"].isin(wanted)]
+            added = pick_videos(fresh, [c.handle for c in settings.sentiment.channels], add)
+            if len(added) < add:
+                raise ValueError(f"only {len(added)} video(s) with captions are not in the gold set yet, {add} "
+                                 "asked; run `quant sentiment fetch` first")
+            _append_videos(labels_dir, [_video_row(video, transcripts_dir) for video in added.itertuples(index=False)])
+            wanted = wanted + list(added["video_id"])
         chosen = stored[stored["video_id"].isin(wanted)]
     else:
         handles = [c.handle for c in settings.sentiment.channels]
@@ -199,4 +225,5 @@ def export_gold(engine: Engine, settings: Settings) -> GoldExport:
                                                 encoding="utf-8")
     found = set(chosen["video_id"])
     return GoldExport(labels_dir, transcripts_dir, created=not exists, video_ids=wanted,
-                      missing=[video_id for video_id in wanted if video_id not in found])
+                      missing=[video_id for video_id in wanted if video_id not in found],
+                      added=list(added["video_id"]) if add else [])

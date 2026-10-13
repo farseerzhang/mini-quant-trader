@@ -94,6 +94,32 @@ class GoldExportTest(unittest.TestCase):
         self.assertIn("chip0,NVDA,BULLISH", opinions.read_text(encoding=CSV_ENCODING))
         self.assertEqual(sorted(p.stem for p in self.transcripts.glob("*.txt")), ["chip0", "chip1"])
 
+    def test_add_extends_without_rewriting_your_rows(self):
+        for i in range(4):
+            self.add_video("@chipstockinvestor", f"chip{i}")
+        self.add_video("@nick_stockcafe", "nick0", text="我買了", simplified="我买了")
+        export_gold(self.engine, self.settings(videos=2))  # chip0, nick0
+        videos = self.labels / "videos.csv"
+        before = videos.read_bytes().replace(b",\r\n", b",done\r\n", 1)  # you labeled the first video
+        videos.write_bytes(before)
+
+        result = export_gold(self.engine, self.settings(videos=2), add=2)
+        self.assertEqual(result.added, ["chip1", "chip2"])
+        after = videos.read_bytes()
+        self.assertTrue(after.startswith(before))  # earlier rows byte for byte
+        self.assertEqual(after.count(b"\xef\xbb\xbf"), 1)
+        self.assertEqual([r["video_id"] for r in self.read_videos()], ["chip0", "nick0", "chip1", "chip2"])
+        self.assertEqual(self.read_videos()[0]["status"], "done")
+        self.assertEqual(len(list(self.transcripts.glob("*.txt"))), 4)
+
+        with self.assertRaisesRegex(ValueError, "only 1 video"):
+            export_gold(self.engine, self.settings(videos=2), add=2)
+
+    def test_add_needs_an_existing_set(self):
+        self.add_video("@chipstockinvestor", "chip0")
+        with self.assertRaisesRegex(ValueError, "no gold set"):
+            export_gold(self.engine, self.settings(videos=1), add=1)
+
     def test_too_few_videos_is_refused(self):
         self.add_video("@chipstockinvestor", "chip0")
         with self.assertRaisesRegex(ValueError, "only 1 video"):
