@@ -1,6 +1,6 @@
 # Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
-Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 next.
+Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 built 2026-10-13 (section 12.2); S2 next.
 Date: 2026-10-12
 
 ---
@@ -315,14 +315,16 @@ sentiment:
   lookback_days: 14
   min_duration_seconds: 180          # skip Shorts
   include_live: false
-  request_delay_seconds: [2, 5]      # random wait range
-  channels:                          # chosen after S0 (section 12.1)
-    - {handle: "@FinancialEducation",   language: en, style: aggressive growth}
-    - {handle: "@chipstockinvestor",    language: en, style: semiconductors / AI}
-    - {handle: "@NaNaShuoMeiGu",        language: zh, style: daily market wrap}
-    - {handle: "@yttalkjun",            language: zh, style: macro + sectors}
-    - {handle: "@Zac-Stock-Journal",    language: zh, style: technical buy points, own holdings}
-    - {handle: "@nick_stockcafe",       language: zh, style: own buys, Traditional Chinese}
+  request_delay_seconds: [8, 15]     # random wait range (as built; [2, 5] got the IP blocked)
+  max_captions_per_run: 10           # captions per run, oldest first; the rest waits for the next run
+  no_captions_retry_days: 3          # NO_TRANSCRIPT videos are asked again while younger than this
+  channels:                          # chosen after S0 (section 12.1); as built, each also has channel_id and name
+    - {handle: "@FinancialEducation",   language: en, style: "aggressive growth"}
+    - {handle: "@chipstockinvestor",    language: en, style: "semiconductors / AI"}
+    - {handle: "@NaNaShuoMeiGu",        language: zh, style: "daily market wrap"}
+    - {handle: "@yttalkjun",            language: zh, style: "macro + sectors"}
+    - {handle: "@Zac-Stock-Journal",    language: zh, style: "technical buy points, own holdings"}
+    - {handle: "@nick_stockcafe",       language: zh, style: "own buys, Traditional Chinese"}
   extraction:
     backend: claude_code             # claude_code | gemini; decided in S2
     model: sonnet                    # placeholder; decided in S2 (a Gemini model name for gemini)
@@ -372,12 +374,7 @@ tests/sentiment/
   test_*.py         # offline: VideoSource, the claude subprocess and the Gemini client are mocked
 ```
 
-New dependencies go in an optional group, so the main install is unaffected:
-
-```toml
-[project.optional-dependencies]
-sentiment = ["yt-dlp", "youtube-transcript-api", "google-genai", "opencc-python-reimplemented", "python-dotenv"]
-```
+New dependencies are regular dependencies in `pyproject.toml`, so one `pip install -e .` installs everything (decision 10): `yt-dlp`, `youtube-transcript-api`, `opencc-python-reimplemented`, `python-dotenv`, and `google-genai` from S2. The core commands still never import them: the sentiment modules import them only when a `quant sentiment` command runs, so a broken scraper cannot affect `run-daily`.
 
 The `claude_code` backend calls the installed `claude` command, so it adds no Python package.
 
@@ -431,6 +428,16 @@ Decision: replace Joseph Carlson and both Chinese channels with channels that pu
 
 The selected six publish about 20 long videos a week in total (about 3 a day), which fits the daily limits of either backend.
 
+## 12.2 S1 as built (2026-10-13)
+
+- `quant sentiment fetch [--days N] [--channel HANDLE]`; code in `quant/sentiment/` (`tables.py`, `sources.py`, `transcripts.py`, `store.py`, `fetch.py`, `cli.py`), registered in `quant/cli.py` (an import, the parser and the dispatch entry). Tests: `tests/test_sentiment_fetch.py`, offline with fake sources (flat in `tests/` like the other test files).
+- Tables so far: `sentiment_channels`, `sentiment_videos` (plus `live_status`, `availability`, `note` for the skip or failure reason, and `attempts`), `sentiment_transcripts` (plus `segments_simplified_json`). The other three tables come with S2–S4.
+- `sentiment.channels` in `config/settings.yaml` also holds each `channel_id` and `name`. `.env` is in `.gitignore`.
+- Listing: members-only videos and Shorts are SKIPPED from the channel listing alone (no extra request); every other new video's page is read once; the listing stops at the first video older than the lookback. Captions are fetched oldest first; one retry, then FAILED; a block from YouTube stops the run.
+- First full run (all six channels, 14 days): YouTube blocked caption requests (`IpBlocked`) after 19, with waits of 2-5 s. Changed: waits of 8-15 s, and at most 10 captions per run (`sentiment.max_captions_per_run`), oldest first; the run prints its progress line by line. The 6-month backfill in S4 therefore takes many runs over several days.
+- Captions often appear hours after a video is published, so a `NO_TRANSCRIPT` video is asked again on later runs while younger than `sentiment.no_captions_retry_days` (3); these retries come after every video not tried yet.
+- Live check on 2026-10-13: Chip Stock Investor (7 days: 4 captioned, 4 members-only) and Nick 美股咖啡館 (10 days: 3 captioned, `zh-TW`, Simplified copy stored); a second run wrote nothing. Nick's captions are noisy as found in S0 (e.g. "香蕉臺灣", probably "相較台灣").
+
 ---
 
 # 13. Risks
@@ -475,6 +482,7 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 7. **Benchmark**: excess return against the pool on the same days, tested against random pool picks on the same dates (section 8.2).
 8. **Promotion**: S6 uses only forward data after its pre-registration, at least 6 months, one primary test (section 9).
 9. **Reddit (S3b)** deferred until S4 has been read; the Reddit API application can still be submitted early.
+10. **One install**: the sentiment packages are regular dependencies, not an optional group (`pip install -e .` installs everything).
 
 ---
 

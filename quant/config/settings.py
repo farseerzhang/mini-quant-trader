@@ -540,6 +540,88 @@ def _as_shadows(value: Any) -> dict[str, ShadowSettings]:
     return shadows
 
 
+SENTIMENT_LANGUAGES = ("en", "zh")
+
+
+@dataclass(frozen=True)
+class ChannelSettings:
+    """A YouTube creator followed by the opinion factor (sentiment_proposal.md section 10)."""
+
+    handle: str  # e.g. "@chipstockinvestor"
+    channel_id: str  # verified in S0 (sentiment_proposal.md section 12.1)
+    name: str
+    language: str  # en | zh: picks the caption languages
+    style: str
+
+    def __post_init__(self) -> None:
+        if not self.handle.startswith("@") or len(self.handle) < 2:
+            raise ConfigError(f"sentiment.channels: handle must look like '@name', got {self.handle!r}")
+        if not self.channel_id.startswith("UC"):
+            raise ConfigError(f"sentiment.channels.{self.handle}: channel_id must start with 'UC'")
+        if self.language not in SENTIMENT_LANGUAGES:
+            raise ConfigError(f"sentiment.channels.{self.handle}: language must be one of "
+                              f"{', '.join(SENTIMENT_LANGUAGES)}")
+
+
+@dataclass(frozen=True)
+class SentimentSettings:
+    """Creator opinion factor (sentiment_proposal.md); research only, never part of run-daily."""
+
+    lookback_days: int
+    min_duration_seconds: int  # shorter videos (Shorts) are skipped
+    include_live: bool  # live-stream replays
+    request_delay_seconds: tuple[float, float]  # random wait between requests to YouTube
+    max_captions_per_run: int  # the rest waits for the next run, so YouTube is not asked too often
+    # A video without captions is asked again on later runs while younger than this (captions
+    # often appear hours after publishing); after that it stays NO_TRANSCRIPT.
+    no_captions_retry_days: int
+    channels: tuple[ChannelSettings, ...]
+
+    def __post_init__(self) -> None:
+        if self.lookback_days < 1:
+            raise ConfigError("sentiment.lookback_days must be >= 1")
+        if self.no_captions_retry_days < 0:
+            raise ConfigError("sentiment.no_captions_retry_days must not be negative (0: never retry)")
+        if self.max_captions_per_run < 1:
+            raise ConfigError("sentiment.max_captions_per_run must be >= 1")
+        if self.min_duration_seconds < 0:
+            raise ConfigError("sentiment.min_duration_seconds must not be negative")
+        if not isinstance(self.include_live, bool):
+            raise ConfigError("sentiment.include_live must be true or false")
+        low, high = self.request_delay_seconds
+        if not 0 <= low <= high:
+            raise ConfigError("sentiment.request_delay_seconds must be [low, high] with 0 <= low <= high")
+        for attribute in ("handle", "channel_id"):
+            values = [getattr(channel, attribute) for channel in self.channels]
+            if len(set(values)) != len(values):
+                raise ConfigError(f"sentiment.channels: a {attribute} is listed twice")
+
+    def channel(self, handle: str) -> ChannelSettings:
+        for channel in self.channels:
+            if channel.handle.lower() == handle.lower():
+                return channel
+        raise ConfigError(f"unknown sentiment channel {handle!r}; configured: "
+                          f"{', '.join(c.handle for c in self.channels) or '-'}")
+
+
+def _as_delay_range(value: Any) -> tuple[float, float]:
+    if isinstance(value, str) or not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("sentiment.request_delay_seconds must be a list of two numbers")
+    return float(value[0]), float(value[1])
+
+
+def _as_channels(value: Any) -> tuple[ChannelSettings, ...]:
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ConfigError("sentiment.channels must be a list of {handle, channel_id, name, language, style}")
+    channels = []
+    for spec in value:
+        if not isinstance(spec, Mapping):
+            raise ConfigError("sentiment.channels: each channel must be a mapping")
+        channels.append(_build(ChannelSettings, "sentiment.channels",
+                               {k: str(v) for k, v in spec.items()}))
+    return tuple(channels)
+
+
 @dataclass(frozen=True)
 class Settings:
     database: DatabaseSettings
@@ -555,6 +637,7 @@ class Settings:
     signals: SignalSettings
     logging: LoggingSettings
     forward_test: ForwardTestSettings
+    sentiment: SentimentSettings
 
     def __post_init__(self) -> None:
         for name, shadow in self.forward_test.shadows.items():
@@ -776,4 +859,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         logging=_build(LoggingSettings, "logging", _section(raw, "logging")),
         forward_test=_build(ForwardTestSettings, "forward_test", _section(raw, "forward_test"),
                             {"shadows": _as_shadows}),
+        sentiment=_build(SentimentSettings, "sentiment", _section(raw, "sentiment"),
+                         {"request_delay_seconds": _as_delay_range, "channels": _as_channels}),
     )

@@ -272,6 +272,19 @@ python -m quant forward-test --end --reason "started with the wrong positions"
 
 The run is kept, with its end date and reason, and the report lists it (`quant forward-report --run 1`). Then put the account in `positions.csv` and `--start` again after a close; only trades after the new start count. `quant status` shows the run, frozen and missed sessions, and warns when tonight's session is not frozen yet or the trade log has an error. The dashboard's Forward test page shows the same, with the curves.
 
+#### Creator Opinions (research, `sentiment_proposal.md`)
+
+Collects what a few finance YouTube creators say about single stocks. It is research only: not part of `run-daily`, and nothing from it reaches the signals. Its packages (yt-dlp, youtube-transcript-api, opencc) come with the normal `pip install -e .`.
+
+Step 1 (S1) lists new videos of the channels in `sentiment.channels` and stores their captions:
+
+```bash
+python -m quant sentiment fetch
+python -m quant sentiment fetch --channel @chipstockinvestor --days 30
+```
+
+It prints each step as it goes (also in the log). Members-only videos, Shorts and live replays are recorded as skipped. Re-runs only fetch what is missing; failed captions are retried on the next run, and a video without captions is asked again for 3 days (`sentiment.no_captions_retry_days`), because captions often appear hours after a video is published. To avoid being blocked by YouTube, each request waits 8-15 s (`sentiment.request_delay_seconds`) and a run fetches at most 10 captions, oldest first (`sentiment.max_captions_per_run`); the rest waits for the next run. If YouTube blocks the requests anyway, the run stops and the rest waits for a later run (often a few hours). Opinion extraction, summaries and the scorecard come in later steps (section 12 of the proposal).
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.

@@ -1,5 +1,8 @@
-
+
 /.idea/
+
+# Secrets (API keys); never committed
+.env
 
 # Local SQLite database (raw data is regenerated from the provider, not committed)
 /data/

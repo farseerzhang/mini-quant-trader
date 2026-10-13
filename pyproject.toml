@@ -20,6 +20,11 @@ dependencies = [
     "xgboost>=3.0",
     "hmmlearn>=0.3",
     "streamlit>=1.40",
+    # Creator opinion factor (sentiment_proposal.md)
+    "yt-dlp",
+    "youtube-transcript-api>=1.2",
+    "opencc-python-reimplemented",
+    "python-dotenv",
 ]
 
 [tool.setuptools.packages.find]

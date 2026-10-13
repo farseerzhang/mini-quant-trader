@@ -28,6 +28,7 @@ from quant.persistence.database import create_db_engine, init_db
 from quant.regime.active import calculate_and_store_active_regime
 from quant.regime.pipeline import calculate_and_store_regimes
 from quant.regime.retrain import run_regime_retrain
+from quant.sentiment import cli as sentiment_cli
 from quant.signals.pipeline import generate_and_store_signals
 from quant.signals.positions import PositionsError
 from quant.strategies import build_strategies
@@ -185,6 +186,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     daily_command.add_argument("--reasons", action="store_true", help="also print the reason of every signal")
     daily_command.add_argument("--db", help=db_help)
+
+    sentiment_cli.add_parser(commands, db_help)
     return parser
 
 
@@ -718,6 +721,7 @@ COMMANDS = {
     "run-daily": lambda args, settings: _run_daily(args, settings),
     "backtest": lambda args, settings: _run_backtest(args, settings),
     "retrain": lambda args, settings: _run_retrain(args, settings),
+    "sentiment": sentiment_cli.run,
 }
 
 
@@ -743,10 +747,9 @@ def main(argv: list[str] | None = None) -> int:
         code = 1
     except Exception:
         log.exception("command crashed: %s", words)
-        raise
-    else:
-        log.log(logging.INFO if code == 0 else logging.WARNING, "command finished: %s -> exit %d in %.1fs",
-                args.command, code, time.monotonic() - started)
-        return code
-    finally:
         close_logging(handler)
+        raise
+    log.log(logging.INFO if code == 0 else logging.WARNING, "command finished: %s -> exit %d in %.1fs",
+            args.command, code, time.monotonic() - started)
+    close_logging(handler)
+    return code
