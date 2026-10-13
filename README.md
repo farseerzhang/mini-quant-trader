@@ -285,6 +285,14 @@ python -m quant sentiment fetch --channel @chipstockinvestor --days 30
 
 It prints each step as it goes (also in the log). Members-only videos, Shorts and live replays are recorded as skipped. Re-runs only fetch what is missing; failed captions are retried on the next run, and a video without captions is asked again for 3 days (`sentiment.no_captions_retry_days`), because captions often appear hours after a video is published. To avoid being blocked by YouTube, each request waits 8-15 s (`sentiment.request_delay_seconds`) and a run fetches at most 10 captions, oldest first (`sentiment.max_captions_per_run`); the rest waits for the next run. If YouTube blocks the requests anyway, the run stops and the rest waits for a later run (often a few hours). Opinion extraction, summaries and the scorecard come in later steps (section 12 of the proposal).
 
+The **gold set** is the hand-labeled answer key that extraction is scored against (section 4.6 of the proposal):
+
+```bash
+python -m quant sentiment gold-export
+```
+
+The first run picks `sentiment.gold.videos` (10) videos with stored captions, channels taking turns, and writes `research/sentiment_gold/videos.csv`, an empty `opinions.csv` and the rules in `LABELING.md` (committed: they hold no transcript text), plus readable transcripts in `data/sentiment_gold/transcripts/` (git-ignored; delete them any time). Label every video, then set its `status` to `done` or `done-none`. Later runs never touch the label files; they only write the transcripts again.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.

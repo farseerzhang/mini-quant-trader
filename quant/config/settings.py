@@ -564,6 +564,23 @@ class ChannelSettings:
 
 
 @dataclass(frozen=True)
+class GoldSettings:
+    """The hand-labeled answer key for opinion extraction (sentiment_proposal.md section 4.6)."""
+
+    videos: int  # how many videos `quant sentiment gold-export` picks
+    labels_dir: str  # videos.csv + opinions.csv: your labels; committed, never in data/
+    transcripts_dir: str  # reading copies of the transcripts; git-ignored, deletable
+
+    def __post_init__(self) -> None:
+        if self.videos < 1:
+            raise ConfigError("sentiment.gold.videos must be >= 1")
+        if not str(self.labels_dir).strip() or not str(self.transcripts_dir).strip():
+            raise ConfigError("sentiment.gold.labels_dir and transcripts_dir must not be empty")
+        if Path(self.labels_dir).resolve() == Path(self.transcripts_dir).resolve():
+            raise ConfigError("sentiment.gold.labels_dir and transcripts_dir must differ")
+
+
+@dataclass(frozen=True)
 class SentimentSettings:
     """Creator opinion factor (sentiment_proposal.md); research only, never part of run-daily."""
 
@@ -575,6 +592,7 @@ class SentimentSettings:
     # A video without captions is asked again on later runs while younger than this (captions
     # often appear hours after publishing); after that it stays NO_TRANSCRIPT.
     no_captions_retry_days: int
+    gold: GoldSettings
     channels: tuple[ChannelSettings, ...]
 
     def __post_init__(self) -> None:
@@ -860,5 +878,6 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         forward_test=_build(ForwardTestSettings, "forward_test", _section(raw, "forward_test"),
                             {"shadows": _as_shadows}),
         sentiment=_build(SentimentSettings, "sentiment", _section(raw, "sentiment"),
-                         {"request_delay_seconds": _as_delay_range, "channels": _as_channels}),
+                         {"request_delay_seconds": _as_delay_range, "channels": _as_channels,
+                          "gold": _subsection(GoldSettings, "sentiment.gold")}),
     )

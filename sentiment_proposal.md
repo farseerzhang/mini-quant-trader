@@ -163,13 +163,17 @@ Chunks overlap, and a creator can return to a stock later in the same video. Aft
 
 ## 4.6 Gold set and accuracy target (S2)
 
-About 20 videos (both languages, manual and auto captions) are labeled by hand: every opinion with ticker, stance and horizon. Each backend/model is scored on:
+10 videos (decision 11; both languages, manual and auto captions) are labeled by hand: every opinion with ticker, stance and horizon. Each backend/model is scored on:
 
 - **opinion precision**: extracted opinions that are real;
 - **opinion recall**: real opinions that were found (a missed bearish call skews hit rates, so recall matters most);
 - **stance accuracy** on the matched opinions.
 
-Target: precision, recall and stance accuracy each ≥ 85%. With 20 videos the counts are reported next to the percentages, since one video can move them several points.
+Target: precision, recall and stance accuracy each ≥ 85%. With 10 videos the counts are reported next to the percentages, since one video can move them several points (roughly ±10 points); if two backends end up close, 10 more videos are labeled to separate them.
+
+The labels come from you, not from a model: the `claude_code` extractor is the same model family as the assistant, so labels from either would share its blind spots and the score would only measure agreement with itself.
+
+As built (`quant sentiment gold-export`): videos are picked with channels taking turns in config order and, within a channel, in `video_id` order (arbitrary but fixed). `research/sentiment_gold/` holds `videos.csv` (one row per video, `status` done / done-none), `opinions.csv` (ticker, stance, horizon, condition, conviction, action, time, note) and `LABELING.md`; it holds no transcript text and is committed. Readable transcripts go to `data/sentiment_gold/transcripts/` (git-ignored, deletable). Later runs never touch the label files. **No extraction output of the gold videos is shown before they are labeled**; S2's `extract` must hold them back until their status is done / done-none.
 
 ---
 
@@ -332,6 +336,7 @@ sentiment:
     chunk_minutes: 10
     quote_match_threshold: 0.85      # starting value; set per language in S2
     max_videos_per_run: 40
+  # gold: as built, sentiment.gold {videos: 10, labels_dir, transcripts_dir} (section 4.6)
   summary:
     enabled: true
     backend: claude_code             # same choices as extraction
@@ -386,7 +391,7 @@ The `claude_code` backend calls the installed `claude` command, so it adds no Py
 |---|---|---|
 | **S0 Spike** | Verify the `channel_id` of the 4 candidates; count videos in the last 14 days, caption coverage (manual / auto / none) and average length | A table is handed to you and the final channel list is chosen from it (done, section 12.1) |
 | **S1 Fetch** | `.env` in `.gitignore`; tables, `fetch` command, idempotency, rate limiting, tests | Re-runs write no duplicates; a run after a network failure fills the gaps |
-| **S2 Extract** | Prompts, both backends, JSON validation, quote check, merging, alias table, hand-labeled gold set of ~20 videos; check the Gemini free tier's current limits, models and availability | Precision, recall and stance accuracy each ≥ 85% on the gold set (section 4.6); backend, models and quote thresholds chosen |
+| **S2 Extract** | Prompts, both backends, JSON validation, quote check, merging, alias table, hand-labeled gold set of 10 videos; check the Gemini free tier's current limits, models and availability | Precision, recall and stance accuracy each ≥ 85% on the gold set (section 4.6); backend, models and quote thresholds chosen |
 | **S3 Report** | Summaries (section 8.3) + daily report + appendix with quotes and links | You have reviewed a week of reports and accept the quality |
 | **S4 Scorecard** | Historical backfill (6 months, spread over runs) + hit rates + permutation test | Report produced; labeled exploratory; conclusions not overstated |
 | **S6 pre-registration** | Write the S6 test (section 9) **before looking at forward hit rates**; forward logging continues | Pre-registration recorded with its date |
@@ -483,6 +488,7 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 8. **Promotion**: S6 uses only forward data after its pre-registration, at least 6 months, one primary test (section 9).
 9. **Reddit (S3b)** deferred until S4 has been read; the Reddit API application can still be submitted early.
 10. **One install**: the sentiment packages are regular dependencies, not an optional group (`pip install -e .` installs everything).
+11. **Gold set of 10 videos**, labeled by you (option B); labels committed under `research/sentiment_gold/`, transcripts deletable.
 
 ---
 

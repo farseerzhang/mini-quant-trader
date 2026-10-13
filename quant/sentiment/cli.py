@@ -29,6 +29,11 @@ def add_parser(commands, db_help: str) -> None:
     fetch.add_argument("--days", type=int, help="look back this many days (default: sentiment.lookback_days)")
     fetch.add_argument("--channel", metavar="HANDLE", help="only this channel, e.g. @chipstockinvestor")
     fetch.add_argument("--db", help=db_help)
+    gold = sub.add_parser(
+        "gold-export",
+        help="pick the gold-set videos and write the label files and readable transcripts (S2); "
+        "never overwrites existing labels, only writes the transcripts again")
+    gold.add_argument("--db", help=db_help)
 
 
 def _error(message: str) -> None:
@@ -43,6 +48,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return 1
     if args.sentiment_command == "fetch":
         return _run_fetch(args, settings)
+    if args.sentiment_command == "gold-export":
+        return _run_gold_export(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
 
 
@@ -52,6 +59,30 @@ def _engine(settings: Settings, db_override: str | None):
     engine = create_db_engine(db_override or settings.database.path, settings.database.busy_timeout_ms)
     init_db(engine)
     return engine
+
+
+def _run_gold_export(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.sentiment.gold import export_gold
+
+    engine = _engine(settings, args.db)
+    try:
+        try:
+            result = export_gold(engine, settings)
+        except ValueError as exc:
+            _error(f"Gold export refused: {exc}")
+            return 1
+    finally:
+        engine.dispose()
+    if result.created:
+        print(f"Picked {len(result.video_ids)} videos for the gold set:")
+        print(f"  labels:      {result.labels_dir / 'videos.csv'}, {result.labels_dir / 'opinions.csv'} "
+              f"(rules: {result.labels_dir / 'LABELING.md'})")
+    else:
+        print(f"Labels already exist in {result.labels_dir} (left unchanged); transcripts written again.")
+    print(f"  transcripts: {result.transcripts_dir} ({len(result.video_ids) - len(result.missing)} files)")
+    for video_id in result.missing:
+        _error(f"  {video_id} is in videos.csv but has no stored transcript (run `quant sentiment fetch`)")
+    return 0 if not result.missing else 1
 
 
 def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:

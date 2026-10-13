@@ -1,0 +1,48 @@
+﻿video_id,ticker,stance,horizon,condition,conviction,action,time,note
+LGUewAMj5H8,AMD,BULLISH,LONG,AI/robotics,3,ACCUMULATE,00:20,top AI pick
+LGUewAMj5H8,NVDA,CAUTIOUS,LONG,growth slowing,2,NONE,00:20,wait for pullback
+LGUewAMj5H8,MU,BEARISH,SHORT,memory peak,2,AVOID,00:20,cycle top
+LGUewAMj5H8,NFLX,BULLISH,LONG,streaming ads,3,BUY,00:20,cheap quality
+LGUewAMj5H8,NKE,BULLISH,MEDIUM,margin recovery,2,BUY,00:20,turnaround
+LGUewAMj5H8,SOFI,BULLISH,LONG,member growth,3,BUY,00:20,long-term winner
+LGUewAMj5H8,ELF,BULLISH,LONG,brand growth,2,BUY,00:20,hold long
+LGUewAMj5H8,CELH,BULLISH,LONG,earnings reset,2,BUY,00:20,undervalued
+LGUewAMj5H8,AMZN,BULLISH,MEDIUM,AI/cloud,2,HOLDING,00:20,good but not top pick
+LGUewAMj5H8,NOW,BULLISH,MEDIUM,enterprise AI,2,HOLDING,00:20,strong business
+2Ci7OynnUqk,BE,BULLISH,SHORT,AI power,2,ACCUMULATE,00:00,AI infra
+2Ci7OynnUqk,CBOE,BULLISH,LONG,options moat,2,ACCUMULATE,00:00,long-term lease
+2Ci7OynnUqk,CCL,BULLISH,MEDIUM,cruise recovery,2,BUY,00:00,cheap rebound
+2Ci7OynnUqk,FICO,BEARISH,MEDIUM,monopoly break,3,AVOID,00:00,pricing shock
+2Ci7OynnUqk,FCEL,BEARISH,SHORT,hype stock,3,AVOID,00:00,delivery risk
+05DvX_xslCA,META,BULLISH,MEDIUM,AI agents,3,BUY,00:00,agent monetization
+05DvX_xslCA,AMZN,NEUTRAL_BULLISH,MEDIUM,AI scare,2,WATCH,00:00,overhyped
+05DvX_xslCA,SHOP,BULLISH,MEDIUM,agent commerce,2,BUY,00:00,merchant upside
+05DvX_xslCA,BOOK,NEUTRAL_BULLISH,LONG,AI travel,2,HOLDING,00:00,adaptation risk
+05DvX_xslCA,NVDA,BULLISH,LONG,AI infra,3,ACCUMULATE,00:00,still leader
+05DvX_xslCA,AMD,BULLISH,LONG,CPU/AI,3,ACCUMULATE,00:00,CPU upside
+05DvX_xslCA,AVGO,BULLISH,LONG,custom silicon,2,ACCUMULATE,00:00,chip ramp
+05DvX_xslCA,INTC,BULLISH,LONG,CPU shortage,2,WATCH,00:00,turnaround play
+05DvX_xslCA,MRVL,BULLISH,LONG,custom silicon,2,WATCH,00:00,high growth
+05DvX_xslCA,MU,BULLISH,LONG,memory demand,2,HOLDING,00:00,cheap cycle
+6Nyqv3XZ-ek,CELH,BEARISH,MEDIUM,brand risk,2,AVOID,00:00,distribution issues
+6Nyqv3XZ-ek,CEG,BULLISH,LONG,nuclear power,3,BUY,00:00,AI electricity
+6Nyqv3XZ-ek,UBER,NEUTRAL_BULLISH,MEDIUM,robotaxi risk,2,HOLDING,00:00,uncertain but okay
+6Nyqv3XZ-ek,SOFI,BULLISH,LONG,fintech value,2,BUY,00:00,cheap compounding
+6Nyqv3XZ-ek,GRAB,BULLISH,MEDIUM,platform growth,2,ACCUMULATE,00:00,cheap quality
+50NHf-JpQxE,MPWR,BULLISH,LONG,power semis,3,ACCUMULATE,00:00,top position
+50NHf-JpQxE,ON,NEUTRAL,MEDIUM,deal risk,2,HOLDING,00:00,range bound
+50NHf-JpQxE,SYNA,NEUTRAL_BULLISH,LONG,chip synergies,2,WATCH,00:00,strategic fit
+EcMX0ub9gSg,MU,BULLISH,LONG,AI memory,3,ACCUMULATE,00:00,tight supply
+EcMX0ub9gSg,COHR,BULLISH,MEDIUM,optical AI,2,ACCUMULATE,00:00,AI optics
+EcMX0ub9gSg,RKLB,BULLISH,LONG,launch backlog,2,ACCUMULATE,00:00,strong backlog
+EcMX0ub9gSg,MCD,BEARISH,MEDIUM,rate stress,2,AVOID,00:00,weak consumer
+EcMX0ub9gSg,ACN,BULLISH,MEDIUM,software AI,2,BUY,00:00,beat + rally
+EcMX0ub9gSg,CTVA,BEARISH,MEDIUM,spin-off risk,2,AVOID,00:00,capital reset
+MALi9KIPg_o,MU,BULLISH,LONG,AI HBM,3,ACCUMULATE,00:00,high margin
+NDNR40EKUAE,SOFI,BULLISH,LONG,member growth,3,BUY,00:00,multi-year winner
+NDNR40EKUAE,WYNN,BULLISH,LONG,Macau/ME,3,BUY,00:00,huge catalyst
+NDNR40EKUAE,NFLX,BULLISH,LONG,streaming ads,3,BUY,00:00,cheap growth
+NDNR40EKUAE,AXP,BULLISH,LONG,credit cards,3,BUY,00:00,quality moat
+NDNR40EKUAE,RH,BULLISH,LONG,turnaround,2,BUY,00:00,housing recovery
+NDNR40EKUAE,ELF,BULLISH,LONG,brand growth,3,BUY,00:00,earnings upcycle
+NDNR40EKUAE,NKE,BULLISH,LONG,turnaround,2,BUY,00:00,margin recovery

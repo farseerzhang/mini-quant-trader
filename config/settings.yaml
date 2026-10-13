@@ -170,6 +170,10 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
   request_delay_seconds: [8, 15]   # random wait between requests to YouTube (shorter waits got the IP blocked)
   max_captions_per_run: 10         # captions fetched per run, oldest first; the rest waits for the next run
   no_captions_retry_days: 3        # a video without captions is asked again while younger than this
+  gold:                            # hand-labeled answer key for extraction (sentiment_proposal.md 4.6)
+    videos: 10                     # how many videos `quant sentiment gold-export` picks
+    labels_dir: research/sentiment_gold           # your labels (videos.csv, opinions.csv); committed
+    transcripts_dir: data/sentiment_gold/transcripts  # reading copies; git-ignored, delete any time
   channels:                        # chosen after S0 (sentiment_proposal.md section 12.1)
     - {handle: "@FinancialEducation", channel_id: UCnMn36GT_H0X-w5_ckLtlgQ, name: "Financial Education", language: en, style: "aggressive growth"}
     - {handle: "@chipstockinvestor", channel_id: UC3aD-gfmHV_MhMmcwyIu1wA, name: "Chip Stock Investor", language: en, style: "semiconductors / AI"}
