@@ -302,6 +302,14 @@ python -m quant sentiment extract --video khnPevsQ_TE --model haiku
 
 It prints the number of calls and an estimate of the tokens first; more than `max_videos_per_run` videos need `--yes`. Each opinion has a ticker, stance, horizon, conviction, the creator's own action, a verbatim quote and its time. A quote that does not match the transcript makes the opinion UNVERIFIED, and a ticker that is neither in `config/sentiment_aliases.yaml` nor listed on a US exchange makes it UNRESOLVED; the run lists unresolved names so you can add them to the alias table. Every video is extracted once per backend, model and prompt version (`--reextract` does it again); a usage limit stops the run cleanly. Results are in the `sentiment_opinions` table; reports come with S3.
 
+Both steps in one go, e.g. once a day (it is never part of `run-daily`):
+
+```bash
+python -m quant sentiment run
+```
+
+It runs `fetch`, then `extract` on every stored video without opinions, even when `fetch` was partly blocked by YouTube; `--days` and `--channel` go to the fetch, `--limit`, `--model` and `--yes` to the extract.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.

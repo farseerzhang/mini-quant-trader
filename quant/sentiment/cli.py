@@ -49,6 +49,16 @@ def add_parser(commands, db_help: str) -> None:
     extract.add_argument("--yes", action="store_true",
                          help="go ahead with more than sentiment.extraction.max_videos_per_run videos")
     extract.add_argument("--db", help=db_help)
+    run = sub.add_parser(
+        "run", help="fetch, then extract: new videos and captions, then opinions for every video without them "
+        "(extract runs even if fetch was partly blocked)")
+    run.add_argument("--days", type=int, help="fetch: look back this many days (default: sentiment.lookback_days)")
+    run.add_argument("--channel", metavar="HANDLE", help="fetch: only this channel")
+    run.add_argument("--limit", type=int, metavar="N", help="extract: at most N videos this run")
+    run.add_argument("--model", help="extract: use this model instead of sentiment.extraction.model")
+    run.add_argument("--yes", action="store_true",
+                     help="extract: go ahead with more than sentiment.extraction.max_videos_per_run videos")
+    run.add_argument("--db", help=db_help)
 
 
 def _error(message: str) -> None:
@@ -67,6 +77,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_gold_export(args, settings)
     if args.sentiment_command == "extract":
         return _run_extract(args, settings)
+    if args.sentiment_command == "run":
+        return _run_all(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
 
 
@@ -76,6 +88,19 @@ def _engine(settings: Settings, db_override: str | None):
     engine = create_db_engine(db_override or settings.database.path, settings.database.busy_timeout_ms)
     init_db(engine)
     return engine
+
+
+def _run_all(args: argparse.Namespace, settings: Settings) -> int:
+    """`quant sentiment run`: fetch, then extract. Extract runs even when fetch had problems (a
+    YouTube block, a failed listing): the videos already stored still get their opinions."""
+    print("===== [1/2] fetch: new videos and captions =====", flush=True)
+    fetched = _run_fetch(argparse.Namespace(days=args.days, channel=args.channel, db=args.db), settings)
+    print("\n===== [2/2] extract: opinions =====", flush=True)
+    extracted = _run_extract(argparse.Namespace(limit=args.limit, video=None, model=args.model, reextract=False,
+                                                yes=args.yes, db=args.db), settings)
+    words = {0: "OK", 1: "had problems (see above)"}
+    print(f"\nsentiment run: fetch {words[fetched]}, extract {words[extracted]}")
+    return 0 if fetched == 0 and extracted == 0 else 1
 
 
 def _run_extract(args: argparse.Namespace, settings: Settings) -> int:

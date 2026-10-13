@@ -407,6 +407,19 @@ class SentimentCliTest(unittest.TestCase):
             engine.dispose()
         self.assertEqual((run["command"], run["status"]), ("sentiment-fetch", "OK"))
 
+    def test_run_fetches_then_extracts_even_after_a_fetch_problem(self):
+        calls = []
+        with mock.patch("quant.sentiment.cli._run_fetch", side_effect=lambda a, s: calls.append(("fetch", a)) or 1), \
+                mock.patch("quant.sentiment.cli._run_extract",
+                           side_effect=lambda a, s: calls.append(("extract", a)) or 0):
+            code, out, _ = self.run_cli("run", "--channel", CHIP, "--days", "3", "--limit", "2", "--model", "haiku")
+        self.assertEqual(code, 1)  # fetch had a problem
+        self.assertEqual([name for name, _ in calls], ["fetch", "extract"])
+        fetch_args, extract_args = calls[0][1], calls[1][1]
+        self.assertEqual((fetch_args.channel, fetch_args.days), (CHIP, 3))
+        self.assertEqual((extract_args.limit, extract_args.model, extract_args.reextract), (2, "haiku", False))
+        self.assertIn("fetch had problems (see above), extract OK", out)
+
     def test_unknown_channel(self):
         code, _, err = self.run_cli("fetch", "--channel", "@nobody")
         self.assertEqual(code, 1)
