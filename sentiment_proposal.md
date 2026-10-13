@@ -1,6 +1,6 @@
 # Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
-Status: approved 2026-10-12 (decisions in section 14). S0 done (section 12.1); S1 next.
+Status: approved 2026-10-12; revised 2026-10-13 after review (extraction backends, Claude-written summaries, scorecard statistics, forward-only promotion; decisions in section 14). S0 done (section 12.1); S1 next.
 Date: 2026-10-12
 
 ---
@@ -9,14 +9,16 @@ Date: 2026-10-12
 
 Collect commentary on individual US stocks from a few finance YouTube creators (English and Chinese), extract structured opinions from their transcripts, and summarize them by **date × stock** to show who is bullish and who is bearish. Once enough data has been collected, measure each creator's historical hit rate to decide whether their opinions can feed the existing system as a sentiment factor.
 
-As in `proposal.md`, this is a research tool. **A creator's opinion is not a trading signal**, and it does not enter `generate-signals` until it passes the hit-rate test.
+As in `proposal.md`, this is a research tool. **A creator's opinion is not a trading signal**, and it does not enter `generate-signals` until it passes the pre-registered forward test of section 9. Until then its realistic use is as reading material: before acting on a BUY or EXIT, you can see what the creators said about that stock.
 
 ## Out of scope (first version)
 
 - No transcription of videos without captions (Whisper is deferred to S5).
 - No scheduler. Like the main system, the CLI is run on demand.
-- No changes to existing modules or tables in `quant/`, and nothing touches the current uncommitted changes. All new code goes in `quant/sentiment/` and new tables.
+- **Not part of `run-daily`.** Sentiment commands depend on YouTube and an LLM; a failure there must never block the evening forward-test freeze. They run as separate commands.
+- No changes to existing modules or tables in `quant/` beyond the one line in `quant/cli.py` that registers the subcommands. All new code goes in `quant/sentiment/` and new tables.
 - No Streamlit page yet. Output is the command line and Markdown reports.
+- No paid API. Extraction runs on the Claude Code Pro subscription or the free Gemini API (section 4.1).
 
 ---
 
@@ -32,18 +34,22 @@ config/settings.yaml (sentiment.channels)
  ② Fetch captions   youtube-transcript-api           → sentiment_transcripts
         │           (no captions → status = NO_TRANSCRIPT, skipped)
         ▼
- ③ Extract opinions Claude API, structured output    → sentiment_opinions
+ ③ Extract opinions Extractor backend (claude_code or gemini), JSON output
+        │           → sentiment_opinions
         │           (each opinion carries a quote and timestamp, and the quote
         │            is checked against the transcript)
         ▼
- ④ Daily report     date × stock × bullish/bearish   → reports/sentiment/<date>.md
-        │
+ ④ Summarize        the day's VERIFIED opinions → one paragraph per stock
+        │           + one market-mood paragraph  → sentiment_summaries
         ▼
- ⑤ Hit rate         excess return vs SPY 5/20/60 sessions after the opinion
+ ⑤ Daily report     date × stock × bullish/bearish + summaries
+        │           → reports/sentiment/<date>.md
+        ▼
+ ⑥ Hit rate         excess return vs the pool 5/20/60 sessions after the opinion
                     → reports/sentiment/scorecard.md
 ```
 
-Every step is idempotent and keyed by `video_id`. A re-run only processes new or failed videos, matching the main system's convention (proposal section 30).
+Every step is idempotent and keyed by `video_id` (or date × ticker for summaries). A re-run only processes new or failed items, matching the main system's convention (proposal section 30).
 
 ---
 
@@ -60,20 +66,43 @@ Every step is idempotent and keyed by `video_id`. A re-run only processes new or
 
 - Language priority: manual captions before auto-generated ones. English channels use `en`; Chinese channels try `zh-Hans`, then `zh-Hant`, then `zh`.
 - Whether captions are manual or auto-generated is recorded (`is_generated`). Auto-generated captions contain many errors, so reports flag them, and hit rates can be computed separately for them.
-- Traditional Chinese is converted to Simplified (`opencc`) before extraction so one alias table covers both.
-- The raw transcript, with the start second of every segment, is stored in full in the database. This follows "raw data is the source of truth" (proposal 4.3): a new prompt or model can re-extract from the stored transcripts without fetching them again.
-- Rate limiting: a random wait of a few seconds between requests. After one failed retry a video is marked `FAILED` and retried on the next run. Runs only on this machine or a home network.
+- Traditional Chinese is converted to Simplified (`opencc`) before extraction so one alias table covers both. The converted text is stored next to the raw text, and both extraction and the quote check (section 4.3) use the converted text.
+- The raw transcript, with the start second of every segment, is stored in full in the database. This follows "raw data is the source of truth" (proposal 4.3): a new prompt, model or backend can re-extract from the stored transcripts without fetching them again.
+- Rate limiting: a random wait of a few seconds between requests. After one failed retry a video is marked `FAILED` and retried on the next run. Runs only on this machine or a home network. The S4 backfill is spread over several days (a per-run cap) so the IP is not blocked.
 
 ---
 
 # 4. Opinion extraction
 
-## 4.1 Model
+## 4.1 Extractor backends
 
-- The Anthropic Python SDK is used, with the model name set in config (`sentiment.extraction.model`).
-- In S2, about 20 videos are labeled by hand as a small gold set, and Haiku 5.5 (`claude-haiku-5-5`) and Sonnet 5.5 (`claude-sonnet-5-5`) are compared on it for accuracy and cost before one is chosen. No model is assumed before then.
-- Tool use / structured output enforces a JSON result. The fixed system prompt and the stock alias table come first in the request, with prompt caching enabled.
-- Long videos are split into chunks of about 10 minutes with a small overlap. Each chunk is extracted on its own, then the results are merged and deduplicated by stock.
+All extraction goes through one `Extractor` interface: transcript chunk + alias table in, a list of opinions (section 4.2) out. `sentiment.extraction.backend` picks the backend, and every opinion stores the `backend` and `model` that produced it.
+
+| Backend | What it is | Cost | Limits |
+|---|---|---|---|
+| `claude_code` (default until S2 decides) | Runs Claude Code non-interactively (`claude -p`) with the prompt and the chunk on stdin, using your Pro subscription | Included in Pro | Pro usage limits (they reset every few hours, plus a weekly cap) |
+| `gemini` | Google Gemini API with a free API key from Google AI Studio | Free | Requests-per-minute and requests-per-day caps on the free tier |
+
+**`claude_code`**
+
+- Locked down: no tools allowed, one turn, output format JSON. The exact flags are fixed in S2 against the installed Claude Code version.
+- The JSON is not enforced by Claude Code, so our code validates it against the opinion schema; one retry on invalid JSON, then the video is marked `FAILED`.
+- Needs only the `claude` command on PATH, logged in with the subscription. No API key.
+
+**`gemini`**
+
+- Uses the API's response schema, so the reply is valid JSON by construction; our code still validates the values.
+- The key is read only from `GEMINI_API_KEY` in `.env`.
+- On the free tier Google may use prompts and responses to improve its products. The input is public YouTube transcripts and Reddit posts, so this is accepted. **Nothing private is ever sent**: no `positions.csv`, `trades.csv`, signals or account values. The summary step (section 8.3) sends only opinions.
+- The free tier's limits, available models and regional availability change over time. They are checked at the start of S2; the model name lives only in config.
+
+**Both backends**
+
+- Long videos are split into chunks of about 10 minutes with a small overlap. Each chunk is extracted on its own, then the results are merged (section 4.5).
+- When a backend reports a usage or rate limit, the run stops cleanly; the remaining videos stay `PENDING` for the next run.
+- `max_videos_per_run` caps each run, so the 6-month backfill (about 500 videos) is spread over one to two weeks.
+
+**Choosing in S2**: the gold set (section 4.6) compares `claude_code` with Sonnet, `claude_code` with Haiku and `gemini` with a Flash-class model. The default becomes the backend that reaches the accuracy target; if more than one does, `gemini`, so Pro usage stays free for coding.
 
 ## 4.2 Fields of each opinion
 
@@ -98,9 +127,9 @@ Rules (written into the prompt):
 
 ## 4.3 Guarding against fabrication
 
-- **Quote check**: after extraction, the `quote` must be found in its transcript chunk (fuzzy match after normalizing whitespace and punctuation, configurable threshold). Opinions that fail are marked `UNVERIFIED` and excluded from summaries, but kept for inspection.
+- **Quote check**: after extraction, the `quote` must be found in its transcript chunk (fuzzy match after normalizing whitespace, punctuation, and full-width vs half-width characters; Chinese is compared on the Simplified text). Opinions that fail are marked `UNVERIFIED` and excluded from summaries and the scorecard, but kept for inspection. The threshold (`quote_match_threshold`, 0.85 as a starting value) is set per language from the gold set in S2, because character-level similarity in Chinese behaves differently from word-level similarity in English.
 - **Ticker check**: the ticker returned by the model must be in the alias table or the SEC company ticker list (`company_tickers.json`, cached locally).
-- Every opinion records its `prompt_version` and `model`. Re-extracting after a prompt change creates a new version and keeps the old one, so the two can be compared.
+- Every opinion records its `backend`, `model` and `prompt_version`. Re-extracting after a prompt or backend change creates new rows and keeps the old ones, so the two can be compared.
 
 ## 4.4 Stock alias table
 
@@ -116,6 +145,24 @@ BRK-B: [伯克希尔, 巴菲特的公司, Berkshire]
 
 Common misrecognitions in Chinese auto-captions (e.g. "英伟达" transcribed as "英伟大") are added to the alias table too. References the model cannot resolve are output as `UNRESOLVED` and listed at the end of the report, so you can decide whether to add them.
 
+## 4.5 Merging within a video
+
+Chunks overlap, and a creator can return to a stock later in the same video. After all chunks are extracted, opinions on the same ticker and horizon within one video are merged into one:
+
+- the **last** stated stance wins (creators usually conclude at the end), and the earlier quotes are kept in the appendix;
+- `conviction` is the highest stated; `action` is kept if any chunk states one;
+- duplicates from the chunk overlap (same quote) are dropped.
+
+## 4.6 Gold set and accuracy target (S2)
+
+About 20 videos (both languages, manual and auto captions) are labeled by hand: every opinion with ticker, stance and horizon. Each backend/model is scored on:
+
+- **opinion precision**: extracted opinions that are real;
+- **opinion recall**: real opinions that were found (a missed bearish call skews hit rates, so recall matters most);
+- **stance accuracy** on the matched opinions.
+
+Target: precision, recall and stance accuracy each ≥ 85%. With 20 videos the counts are reported next to the percentages, since one video can move them several points.
+
 ---
 
 # 5. Timing convention (no look-ahead)
@@ -129,7 +176,7 @@ Common misrecognitions in Chinese auto-captions (e.g. "英伟达" transcribed as
 
 # 6. Database
 
-Four new tables in the same SQLite file, defined in `quant/sentiment/tables.py` on the shared `metadata`, so `quant/persistence/tables.py` does not change. Every run still writes a `pipeline_runs` row (command = `sentiment-*`).
+Six new tables in the same SQLite file, defined in `quant/sentiment/tables.py` on the shared `metadata`, so `quant/persistence/tables.py` does not change. Every run still writes a `pipeline_runs` row (command = `sentiment-*`).
 
 The dev database is disposable and can be rebuilt, so there are no migrations before S4.
 
@@ -140,14 +187,22 @@ The dev database is disposable and can be rebuilt, so there are no migrations be
 `video_id` (PK), `channel_id`, `title`, `published_at`, `duration_seconds`, `transcript_status` (`PENDING` / `OK` / `NO_TRANSCRIPT` / `FAILED` / `SKIPPED`), `fetched_at`.
 
 ### sentiment_transcripts
-`video_id` (PK), `language`, `is_generated`, `segments_json` (`[{start, duration, text}]`), `char_count`, `fetched_at`.
+`video_id` (PK), `language`, `is_generated`, `segments_json` (`[{start, duration, text}]`), `segments_simplified_json` (Chinese only; null otherwise), `char_count`, `fetched_at`.
 
 ### sentiment_opinions
-`opinion_id` (PK), `source` (`youtube` / `reddit`), `item_id` (YouTube `video_id` or Reddit post id), `channel_id` (YouTube channel or `r/<subreddit>`), `author` (Reddit username; null for YouTube), `published_at`, `effective_date`, `ticker`, `asset_type`, `stance`, `horizon`, `condition`, `conviction`, `action`, `quote`, `start_seconds` (null for Reddit), `reasoning`, `verification` (`VERIFIED` / `UNVERIFIED` / `UNRESOLVED`), `model`, `prompt_version`, `extracted_at`.
+`opinion_id` (PK), `source` (`youtube` / `reddit`), `item_id` (YouTube `video_id` or Reddit post id), `channel_id` (YouTube channel or `r/<subreddit>`), `author` (Reddit username; null for YouTube), `published_at`, `effective_date`, `ticker`, `asset_type`, `stance`, `horizon`, `condition`, `conviction`, `action`, `quote`, `start_seconds` (null for Reddit), `reasoning`, `verification` (`VERIFIED` / `UNVERIFIED` / `UNRESOLVED`), `backend`, `model`, `prompt_version`, `extracted_at`.
 
-Unique constraint: `(source, item_id, ticker, horizon, prompt_version)`.
+Unique constraint: `(source, item_id, ticker, horizon, backend, model, prompt_version)` — one merged opinion per video, stock and horizon (section 4.5) for each extractor, so the S2 comparison and later re-extractions never overwrite each other.
 
 `source`, `item_id` and `author` exist from S1 so that Reddit (section 15) can share this table and the downstream report and scorecard code without a schema change.
+
+Only opinions from the configured backend, model and prompt version (`sentiment.extraction.*`) feed the report, summaries and scorecard.
+
+### sentiment_summaries
+`date` (effective date), `ticker` (or `_MARKET` for the market-mood paragraph), `summary`, `disagreement` (bool), `opinion_ids_json`, `backend`, `model`, `prompt_version`, `created_at`. Primary key: `(date, ticker, backend, model, prompt_version)`. Reports are rebuilt from this table without calling a model again.
+
+### sentiment_prices
+Daily prices of mentioned tickers outside the stock pool, fetched through the same `YFinanceProvider` and stored in the same layout as `daily_prices`, so the main pool is not polluted.
 
 ---
 
@@ -157,13 +212,14 @@ A group of subcommands under the existing `quant` command:
 
 ```bash
 quant sentiment fetch      [--days 14] [--channel <handle>]   # ①②: video list + captions
-quant sentiment extract    [--limit N] [--reextract]          # ③: only videos without opinions for the current prompt_version
-quant sentiment report     [--from 2026-10-01] [--to ...]     # ④: date × stock summary
-quant sentiment scorecard                                     # ⑤: hit rates
-quant sentiment run                                           # ①–④ in order
+quant sentiment extract    [--limit N] [--reextract] [--yes]  # ③: only videos without opinions for the current backend/model/prompt_version
+quant sentiment summarize  [--from 2026-10-01] [--to ...]     # ④: one paragraph per stock and day
+quant sentiment report     [--from 2026-10-01] [--to ...]     # ⑤: date × stock summary
+quant sentiment scorecard                                     # ⑥: hit rates
+quant sentiment run                                           # ①–⑤ in order
 ```
 
-Before running, `extract` prints the number of videos to process and the estimated token count. Above `sentiment.extraction.max_videos_per_run` it stops and needs `--yes` to continue.
+Before running, `extract` prints the backend, the number of videos and chunks to process and the estimated token count. Above `sentiment.extraction.max_videos_per_run` it stops and needs `--yes` to continue (and still respects the backend's limits, section 4.1).
 
 ---
 
@@ -174,41 +230,73 @@ Before running, `extract` prints the number of videos to process and the estimat
 ```
 2026-10-09 (effective 2026-10-10)
 
-| Stock | Bull | Bear | Cond | Net | Creators |
-|-------|------|------|------|-----|----------|
-| NVDA  | 3    | 0    | 1    | +3  | Joseph Carlson ▲, 美投讲美股 ▲, Chip Stock Investor ▲, 视野环球财经 ◆ (buy below 160) |
-| TSLA  | 0    | 2    | 0    | -2  | ...      |
+Market mood: <one paragraph from sentiment_summaries, ticker _MARKET>
+
+| Stock | Pool | Bull | Bear | Cond | Net | Creators |
+|-------|------|------|------|------|-----|----------|
+| NVDA  | yes  | 3    | 0    | 1    | +3  | Chip Stock Investor ▲, NaNa说美股 ▲, Financial Education ▲, 投资TALK君 ◆ (buy below 160) |
+| TSLA  | yes  | 0    | 2    | 0    | -2  | ...      |
+
+NVDA: <summary paragraph> [opinions 812, 815, 820, 823]
+TSLA: <summary paragraph> [opinions ...]
 
 Quotes and video links for every opinion are in the appendix.
 Unresolved references: 英伟大 (×2), "the data-center one" (×1)
 ```
 
-Net = bullish count − bearish count; `CONDITIONAL` and `NEUTRAL` are not counted. A creator counts at most once per stock per day.
+Net = bullish count − bearish count; `CONDITIONAL` and `NEUTRAL` are not counted. A creator counts at most once per stock per day. `Pool` marks stocks in the `settings.yaml` pool.
 
 ## 8.2 Creator scorecard (`reports/sentiment/scorecard.md`)
 
-For each creator × horizon, returns 5 / 20 / 60 sessions after the effective time:
+**Excess return.** For an opinion on stock X with effective date d and window h (5 / 20 / 60 sessions): X's return from the open of d over h sessions, minus the equal-weight return of the stock pool over the same sessions (the expected return of a random pool stock on that day). Returns use split- and dividend-adjusted prices, the same as `daily_prices`. A market-beta-adjusted excess return is reported alongside as a secondary column.
 
-- Bullish opinions: hit if the stock's excess return over SPY is positive.
+- Bullish opinions: hit if the excess return is positive.
 - Bearish opinions: hit if the excess return is negative.
-- Reports the sample size, hit rate, mean excess return, and a permutation-test p-value. The baseline shuffles the bullish/bearish labels within the same creator and the same set of stocks.
-- Cells with fewer than 30 samples show the numbers only, with no conclusion drawn.
 
-Prices come from the existing `daily_prices`. Mentioned tickers outside the stock pool are fetched through the same `YFinanceProvider` into a separate `sentiment_prices` table, so the main pool is not polluted.
+**Counting.** Within one creator, stock and stance, only the first opinion in each h-session window counts; repeats inside the window are dropped. A daily-wrap channel would otherwise contribute the same NVDA call twenty times to one 20-session window.
+
+**Significance.** Permutation test: each counted opinion keeps its creator, date and stance, and its stock is replaced by a random stock from the pool on that date; repeated 10,000 times. This asks "do the creator's picks beat a random pick on the same days", keeps the dates (so days when many opinions cluster stay clustered) and works even for creators who are almost always bullish, where shuffling bullish/bearish labels would have little power.
+
+**Scope.**
+
+- Stocks in the pool are scored as above. Out-of-pool tickers are reported separately and are descriptive only (the pool is not their natural benchmark).
+- Tickers whose prices cannot be fetched (e.g. delisted) are listed, not dropped silently.
+- Each cell reports the sample size, hit rate, mean excess return and the permutation p-value. Cells with fewer than `min_samples` (30) show the numbers only, with no conclusion.
+- Many cells are shown (creators × horizon labels × windows, optionally split by `is_generated`), so the report states that the p-values are not corrected and that only the pre-registered test of section 9 can lead to a decision.
+
+**Expectations.** Telling a 55% hit rate from 50% takes roughly 600 independent samples. Thirty samples are enough to display numbers, not to conclude anything.
+
+## 8.3 Summaries (step ④)
+
+The extractor backend also writes a short readable summary per stock and day, built **from that day's VERIFIED opinions only**, never from the raw transcripts:
+
+- **Input**: per stock, each verified opinion's creator, stance, horizon, condition, quote and link; for the market paragraph, the day's opinion counts and the ETF/index opinions.
+- **Output** (JSON): `{ticker, summary, disagreement, opinion_ids}`. The code rejects a summary that cites an opinion id not in its input.
+- **Content**: what the bulls and the bears each argue, where creators disagree and which views are conditional. No recommendation, no price target and no view of its own.
+- **Display only**: summaries never enter the scorecard or the features.
+- The input is small (a few thousand tokens a day), so a cheap model is enough; S2 checks a handful of summaries by hand.
 
 ---
 
 # 9. Integration with the quant system (S6, later)
 
+**Forward-only evidence.** Everything collected before the S6 pre-registration, including the S4 backfill, is exploration: it may suggest which creators, windows and features to test, but it cannot be the test. The S6 test uses only opinions published **after** the pre-registration date, the same discipline as the holdout in the main system (proposal 13.1 / 18.1).
+
 It becomes a feature only when all of these hold:
 
-1. At least 3 months of opinions have been collected.
-2. In a **pre-registered** test, at least one creator (or group of creators) has a 20-session excess hit rate significantly above chance, following the same pre-registration practice as proposal 13.1 / 18.1.
-3. The opinions cover enough stocks in the pool.
+1. At least **6 months** of opinions have been collected after the pre-registration date (with a 20-session window, 3 months would give only about three non-overlapping periods). This matches the first look of the main forward test.
+2. The pre-registration fixes, before any forward data: one **primary test** (planned: the 20-session window, VERIFIED stock opinions in the pool, all creators pooled, the permutation test of section 8.2), the significance level, and a Holm correction for any secondary tests (single creators, other windows). The primary test must pass.
+3. The opinions cover enough stocks in the pool (threshold set in the pre-registration).
 
 Candidate features then: `sentiment_net_5d` (net bullish count over the last 5 sessions), `sentiment_consensus` (agreement), `sentiment_contrarian` (inverted for creators whose hit rate is significantly negative). They are added as new columns of `features`, which requires bumping `features.version` and re-registering models under the post-Phase-5 rules.
 
-**Limitation**: older YouTube videos can be backfilled, so backtests are possible, but the backfill has survivorship bias: we picked these creators today, and they may still be around precisely because they were right in the past. Backfilled data is therefore for exploration only. The real evidence comes from forward logging starting today, in the same spirit as proposal section 15.5.
+**Forward test.** A sentiment-based model never replaces the live strategy during an open forward-test run (proposal Phase 10). At most it joins the run as a new shadow at the next restart, and earns its place the same way the other shadows do.
+
+**Limitations of the backfill.**
+
+- We picked these creators today, and they may still be around precisely because they were right in the past (survivorship of creators).
+- Creators delete or make private videos whose calls went wrong, and the backfill only sees what is still public (survivorship of videos).
+- Backfilled data is therefore for exploration only. The real evidence comes from forward logging, in the same spirit as proposal section 15.5.
 
 ---
 
@@ -228,20 +316,27 @@ sentiment:
     - {handle: "@Zac-Stock-Journal",    language: zh, style: technical buy points, own holdings}
     - {handle: "@nick_stockcafe",       language: zh, style: own buys, Traditional Chinese}
   extraction:
-    model: claude-sonnet-5-5         # decided after the S2 comparison
+    backend: claude_code             # claude_code | gemini; decided in S2
+    model: sonnet                    # placeholder; decided in S2 (a Gemini model name for gemini)
     prompt_version: 1
     chunk_minutes: 10
-    quote_match_threshold: 0.85
+    quote_match_threshold: 0.85      # starting value; set per language in S2
     max_videos_per_run: 40
+  summary:
+    enabled: true
+    backend: claude_code             # same choices as extraction
+    model: haiku                     # placeholder; decided in S2
+    prompt_version: 1
   evaluation:
     horizons: [5, 20, 60]
-    benchmark: SPY
+    benchmark: pool_equal_weight     # excess return vs a random pool stock on the same day
     min_samples: 30
+    permutations: 10000
 ```
 
 The handles were verified in S0; their `channel_id`s are listed in section 12.1. Members-only videos (Chip Stock Investor posts about half of its videos that way) are recorded as `SKIPPED`.
 
-The API key is read only from the `ANTHROPIC_API_KEY` environment variable (you put it in `.env`; `.env` must be added to `.gitignore` first, as it is not ignored today). The first version needs no YouTube key.
+Secrets are read only from environment variables loaded from `.env`: `GEMINI_API_KEY` (gemini backend) and, later, the Reddit credentials (section 15). **`.env` must be added to `.gitignore` before any key is written**; it is not ignored today. The `claude_code` backend needs no key, only the `claude` command logged in with your subscription. No YouTube key is needed.
 
 ---
 
@@ -250,31 +345,33 @@ The API key is read only from the `ANTHROPIC_API_KEY` environment variable (you 
 ```
 quant/sentiment/
   __init__.py
-  tables.py         # the 4 new tables
+  tables.py         # the 6 new tables
   sources.py        # VideoSource interface + YtDlpSource
   transcripts.py    # caption fetching, Traditional→Simplified, chunking
   aliases.py        # alias table + SEC ticker list check
-  extract.py        # Claude calls, structured output, quote check
-  prompts.py        # system prompt (with prompt_version)
+  backends.py       # Extractor interface + ClaudeCodeBackend (claude -p) + GeminiBackend
+  extract.py        # chunk loop, JSON validation, quote check, merging (section 4.5)
+  prompts.py        # extraction and summary prompts (with prompt_version)
+  summarize.py      # step ④ (section 8.3)
   aggregate.py      # date × stock summary
-  scorecard.py      # hit rates
+  scorecard.py      # hit rates, permutation test
   reddit.py         # S3b: ApeWisdom + praw fetch, mention counting (section 15)
   report.py         # Markdown reports
   cli.py            # subcommands, registered in quant/cli.py (one line)
 config/sentiment_aliases.yaml
 tests/sentiment/
   fixtures/         # saved real caption excerpts (a few in each language)
-  test_*.py         # offline: VideoSource and the Anthropic client are mocked
+  test_*.py         # offline: VideoSource, the claude subprocess and the Gemini client are mocked
 ```
 
 New dependencies go in an optional group, so the main install is unaffected:
 
 ```toml
 [project.optional-dependencies]
-sentiment = ["yt-dlp", "youtube-transcript-api", "anthropic", "opencc-python-reimplemented", "python-dotenv"]
+sentiment = ["yt-dlp", "youtube-transcript-api", "google-genai", "opencc-python-reimplemented", "python-dotenv"]
 ```
 
-`quant/cli.py` currently has uncommitted changes. Registering the subcommands needs one line there, which I will add after you commit.
+The `claude_code` backend calls the installed `claude` command, so it adds no Python package.
 
 ---
 
@@ -282,14 +379,15 @@ sentiment = ["yt-dlp", "youtube-transcript-api", "anthropic", "opencc-python-rei
 
 | Phase | Content | Done when |
 |---|---|---|
-| **S0 Spike** | Verify the `channel_id` of the 4 candidates; count videos in the last 14 days, caption coverage (manual / auto / none) and average length | A table is handed to you and the final channel list is chosen from it |
-| **S1 Fetch** | Tables, `fetch` command, idempotency, rate limiting, tests | Re-runs write no duplicates; a run after a network failure fills the gaps |
-| **S2 Extract** | Prompt, structured output, quote check, alias table, hand-labeled gold set of ~20 videos | Ticker and stance accuracy both ≥ 85% on the gold set; model chosen |
-| **S3 Report** | Daily summary + appendix with quotes and links | You have reviewed a week of reports and accept the quality |
-| **S4 Scorecard** | Historical backfill (e.g. 6 months) + hit rates + permutation test | Report produced; conclusions follow section 9 and are not overstated |
-| **S3b Reddit** | Mention counts (ApeWisdom, then Reddit API) + extraction of DD / high-score posts (section 15) | Daily mention table and Reddit opinions appear in the daily summary; Reddit API access approved |
+| **S0 Spike** | Verify the `channel_id` of the 4 candidates; count videos in the last 14 days, caption coverage (manual / auto / none) and average length | A table is handed to you and the final channel list is chosen from it (done, section 12.1) |
+| **S1 Fetch** | `.env` in `.gitignore`; tables, `fetch` command, idempotency, rate limiting, tests | Re-runs write no duplicates; a run after a network failure fills the gaps |
+| **S2 Extract** | Prompts, both backends, JSON validation, quote check, merging, alias table, hand-labeled gold set of ~20 videos; check the Gemini free tier's current limits, models and availability | Precision, recall and stance accuracy each ≥ 85% on the gold set (section 4.6); backend, models and quote thresholds chosen |
+| **S3 Report** | Summaries (section 8.3) + daily report + appendix with quotes and links | You have reviewed a week of reports and accept the quality |
+| **S4 Scorecard** | Historical backfill (6 months, spread over runs) + hit rates + permutation test | Report produced; labeled exploratory; conclusions not overstated |
+| **S6 pre-registration** | Write the S6 test (section 9) **before looking at forward hit rates**; forward logging continues | Pre-registration recorded with its date |
+| **S3b Reddit** | Mention counts (ApeWisdom, then Reddit API) + extraction of DD / high-score posts (section 15); deferred until S4 has been read | Daily mention table and Reddit opinions appear in the daily summary; Reddit API access approved |
 | **S5 Whisper** | Local transcription of videos without captions (optional) | Decided by the caption coverage found in S0 |
-| **S6 Factor** | Pre-register per section 9, then add to `features` | Separate pre-registration |
+| **S6 Factor** | Run the pre-registered test after ≥ 6 months of forward data; if it passes, add to `features` | Separate pre-registration (section 9) |
 
 ## 12.1 S0 findings (2026-10-12, window 2026-09-28 .. 2026-10-12)
 
@@ -323,35 +421,57 @@ Decision: replace Joseph Carlson and both Chinese channels with channels that pu
 | 北美韭菜日记, Money Manta | | 0 | — | Inactive since 2023 / 2022 |
 | 猴哥财经 | `@猴哥财经` | 0 | — | Last video 2026-09-23 |
 
+The selected six publish about 20 long videos a week in total (about 3 a day), which fits the daily limits of either backend.
+
 ---
 
 # 13. Risks
 
 | Risk | Mitigation |
 |---|---|
-| `yt-dlp` or the caption endpoint breaks, or the IP gets rate-limited | Behind an interface; rate limiting; run locally; failed videos marked `FAILED` and retried next run |
+| `yt-dlp` or the caption endpoint breaks, or the IP gets rate-limited | Behind an interface; rate limiting; backfill spread over days; run locally; failed videos marked `FAILED` and retried next run |
+| A sentiment failure breaks the daily pipeline | Not part of `run-daily`; separate commands only |
 | Gray area under YouTube's terms | Only a few channels, personal research only, transcripts not redistributed |
 | Many errors in Chinese auto-captions | Alias table includes common misrecognitions; `is_generated` recorded; hit rates can be split by it |
-| The model fabricates opinions or tickers | Quote check + ticker check; failures are excluded from summaries |
+| The model fabricates opinions or tickers | Quote check + ticker check; failures are excluded from summaries and the scorecard; summaries built only from verified opinions and must cite them |
+| Pro usage limits reached (`claude_code`) | Per-run cap; the run stops cleanly and resumes next run; `gemini` as the alternative backend |
+| Gemini free-tier limits, models or terms change | Checked in S2; model name in config; backend switchable without schema changes |
+| Gemini free tier may use inputs to improve Google's products | Only public transcripts, posts and opinions are sent; never positions, trades, signals or account values |
+| `claude -p` returns invalid JSON | Validated against the schema; one retry; then `FAILED` |
 | Vague opinions that are hard to classify | `CONDITIONAL` / `NEUTRAL` categories; quotes kept for manual review |
-| Small samples make hit rates unreliable | Minimum sample size and permutation test; backfilled data for exploration only |
-| API cost runs away | Token estimate before each run; per-run cap; transcripts fetched once and re-extractable |
+| High-beta bias: bullish calls on tech look right in rising markets | Excess return vs the pool on the same days; permutation against random pool picks; beta-adjusted column |
+| Repeated calls inflate the sample | One opinion per creator × stock × stance per window |
+| Many cells produce false discoveries | One pre-registered primary test; Holm correction for secondary tests; descriptive cells marked as uncorrected |
+| Small samples make hit rates unreliable | Minimum sample size, permutation test, power stated in the report; backfilled data for exploration only; S6 on forward data only |
+| Survivorship of creators and of their videos | Backfill is exploration only (section 9) |
 | Reddit API approval delayed or refused | Start with ApeWisdom mention counts (no key); apply early so approval overlaps S1–S3 |
 | Reddit history cannot be backfilled | Treat Reddit as forward-only from the day logging starts; no Reddit backtest before enough history exists |
 | WSB sarcasm, memes and pump posts | Extraction only on DD / high-score posts; `stance` from the post body, not the title; mention counts kept separate from opinions |
 
 ---
 
-# 14. Decisions (2026-10-12)
+# 14. Decisions
+
+## 2026-10-12
 
 1. **Channels**: initially Joseph Carlson, Financial Education, 美投讲美股 and 视野环球财经. After S0 (section 12.1): Financial Education, Chip Stock Investor, NaNa说美股, 投资TALK君, Zac美股笔记 and Nick 美股咖啡館.
 2. **Backfill**: 6 months in S4.
 3. **Stock scope**: every US stock mentioned; stocks in the `settings.yaml` pool are marked separately in the summary.
 4. **Report language**: English.
 
+## 2026-10-13 (after review)
+
+5. **No paid API.** Two extractor backends: `claude_code` (Claude Code `claude -p` on the Pro subscription) and `gemini` (free Gemini API). The S2 gold set picks one.
+6. **Summaries**: written by the extractor backend from verified opinions only, display only (section 8.3).
+7. **Benchmark**: excess return against the pool on the same days, tested against random pool picks on the same dates (section 8.2).
+8. **Promotion**: S6 uses only forward data after its pre-registration, at least 6 months, one primary test (section 9).
+9. **Reddit (S3b)** deferred until S4 has been read; the Reddit API application can still be submitted early.
+
 ---
 
 # 15. Phase S3b: Reddit (added 2026-10-12)
+
+Deferred (decision 9): the pool is large caps (S&P 100 and similar), where Reddit attention mostly echoes the news; retail-attention effects in the research literature are strongest in small caps. S3b starts only if S4 gives a reason to. Submitting the Reddit API application early costs nothing.
 
 ## 15.1 Why, and what is different
 
@@ -362,13 +482,13 @@ Reddit is handled in two layers:
 | Layer | What | Cost | Used for |
 |---|---|---|---|
 | **A. Mentions** | Daily mention count per ticker per subreddit | Cheap, no LLM | Attention factor |
-| **B. Opinions** | Claude extraction from DD and high-score posts only | LLM, capped per run | Same opinion table, report and scorecard as YouTube |
+| **B. Opinions** | Extraction (the configured backend, section 4.1) from DD and high-score posts only | LLM, capped per run | Same opinion table, report and scorecard as YouTube |
 
 ## 15.2 Sources
 
 - **Subreddits**: r/wallstreetbets, r/stocks, r/investing, r/ValueInvesting (configurable).
 - **ApeWisdom** (S3b-1): its public feed of ticker mentions and rank changes across subreddits. Needs no key and no Reddit approval, so it can start immediately. Its endpoints, terms and rate limits are verified directly before use; the history it serves is not relied on.
-- **Reddit Data API** via `praw` (S3b-2): a "script" app with OAuth, read-only, at most about 100 requests/min (free non-commercial tier). New apps reportedly need manual approval that can take weeks, so **you submit the application from your Reddit account now**, and it overlaps S1–S3. Credentials are read only from `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` in `.env`.
+- **Reddit Data API** via `praw` (S3b-2): a "script" app with OAuth, read-only, at most about 100 requests/min (free non-commercial tier). New apps reportedly need manual approval that can take weeks, so **you can submit the application from your Reddit account early**. Credentials are read only from `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` in `.env`.
 - Once the Reddit API works, layer A is computed from our own fetched posts as well, so it no longer depends on ApeWisdom alone; both are stored with their `provider` so they can be compared.
 
 ## 15.3 What is fetched
@@ -389,7 +509,7 @@ The same post counts at most once per ticker. Title and body are both scanned.
 
 ## 15.5 Opinion extraction (layer B)
 
-A post is sent to Claude only if one of these holds at fetch time:
+A post is sent to the extractor only if one of these holds at fetch time:
 
 - its flair is DD / Due Diligence / Fundamentals / Technical Analysis, or
 - its score is ≥ `reddit.min_score` and its body is ≥ `reddit.min_chars` characters.
@@ -429,7 +549,7 @@ The scorecard (section 8.2) scores Reddit **per subreddit**, not per user, becau
 
 Candidates for the S6 pre-registration: `reddit_mention_z` (attention spike), `reddit_mention_trend_5d`, `reddit_net_stance_5d`. The research literature on retail attention suggests both short-term momentum and later reversal, so the pre-registration tests both signs rather than assuming one.
 
-**Reddit cannot be backfilled** in practice: listings only reach about the last 1,000 posts, and Pushshift is no longer open to the public. Reddit evidence therefore comes only from forward logging, starting the day S3b-1 runs. It is not eligible for S6 until the same 3-month minimum (section 9) has passed.
+**Reddit cannot be backfilled** in practice: listings only reach about the last 1,000 posts, and Pushshift is no longer open to the public. Reddit evidence therefore comes only from forward logging, starting the day S3b-1 runs. It is not eligible for S6 until the same 6-month minimum (section 9) has passed.
 
 ## 15.10 CLI and configuration
 
@@ -457,8 +577,8 @@ sentiment:
 
 | Step | Content | Done when |
 |---|---|---|
-| **Now (you)** | Apply for Reddit API access (script app, non-commercial research) | Application submitted |
+| **Early (you, optional)** | Apply for Reddit API access (script app, non-commercial research) | Application submitted |
 | **S3b-1** | ApeWisdom mentions → `sentiment_reddit_mentions`; Reddit attention section in the daily report | A week of daily mention tables reviewed |
-| **S3b-2** | `praw` fetch → `sentiment_reddit_posts`; own mention counts; DD/high-score extraction; deletion handling | Extraction accuracy ≥ 85% on a hand-labeled set of ~20 posts; own counts agree broadly with ApeWisdom |
+| **S3b-2** | `praw` fetch → `sentiment_reddit_posts`; own mention counts; DD/high-score extraction; deletion handling | Extraction precision, recall and stance accuracy ≥ 85% on a hand-labeled set of ~20 posts; own counts agree broadly with ApeWisdom |
 
 Not in S3b: comments, Stocktwits, X/Twitter, Chinese forums (雪球, 富途). These can be proposed separately later.
