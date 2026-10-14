@@ -216,6 +216,23 @@ Written before `altdata_features` exists and before any return is joined to Form
 
 The features, target, folds, tests and pass rules above are unchanged.
 
+### 8.1.1 Stage 1 result (2026-10-14, after the pre-registration and its amendment were committed, a2d880c)
+
+`quant altdata research`, report `reports/altdata/a4-round1-20261014T200853Z.md`; 11 folds 2014-09-26 .. 2025-10-01, 2,770 sessions, coverage 84-97% of the pool per fold.
+
+```text
+feature                     mean IC   t      folds same sign   result
+insider_net_buy_value_60d   -0.0178   -2.32  7/11              PASS
+insider_buyers_60d          -0.0041   -0.96  7/11              fail
+opportunistic_sellers_60d   +0.0140   +1.90  7/11              fail
+insider_sell_fraction_60d   +0.0077   +1.04  7/11              fail
+```
+
+- **The sign is the opposite of the informed-insider story**: more net insider *selling* went with *higher* 5-day excess returns, and the two sale features lean the same way. The likely reading is that insiders sell after rises (vesting after good results, sales into rallies), so the feature partly stands for recent price strength, which the 35 inputs already carry. Stage 2 tests whether anything is left.
+- **The effect faded**: every fold of 2014-2020 is negative (-0.016 .. -0.061), folds 7-10 (2020-2024) are positive and fold 11 is about zero. The pass rests on exactly 7 of 11 folds, carried by the early years.
+- One pass among 4 features (about 0.2 expected by chance) at t = -2.32: a candidate, not a finding.
+- Expectation written before stage 2: no improvement over the 35 inputs, for both reasons above.
+
 Coverage limits that apply to the protocol:
 
 - **Wikipedia** starts in July 2015, so `pageviews_z` exists for 10 of the 11 folds (the first fold only from mid-2015). The report states the coverage per fold.
