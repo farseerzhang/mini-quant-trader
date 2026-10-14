@@ -26,6 +26,12 @@ def add_parser(commands, db_help: str) -> None:
     update.add_argument("--db", help=db_help)
     report = sub.add_parser("coverage", help="Form 4 filings and P / S lines per stock and year (read-only)")
     report.add_argument("--db", help=db_help)
+    features = sub.add_parser("features", help="rebuild altdata_features (the four Form 4 candidate features) "
+                              "from the stored filings and shares outstanding")
+    features.add_argument("--db", help=db_help)
+    research = sub.add_parser("research", help="A4 round 1, stage 1: rank IC of the Form 4 features on the "
+                              "development folds (pre-registered, altdata_proposal.md 8.1; no holdout)")
+    research.add_argument("--db", help=db_help)
 
 
 def _error(message: str) -> None:
@@ -46,6 +52,10 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_update(args, settings)
     if args.altdata_command == "coverage":
         return _run_coverage(args, settings)
+    if args.altdata_command == "features":
+        return _run_features(args, settings)
+    if args.altdata_command == "research":
+        return _run_research(args, settings)
     raise ValueError(f"unknown altdata command {args.altdata_command!r}")
 
 
@@ -86,6 +96,52 @@ def _run_update(args: argparse.Namespace, settings: Settings) -> int:
         return 0 if result.ok else 1
     finally:
         engine.dispose()
+
+
+def _run_features(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.altdata.features import FEATURES, compute_features, store_features
+
+    engine = _engine(settings, args.db)
+    try:
+        frame = compute_features(engine, settings)
+        rows = store_features(engine, frame, settings.altdata.version)
+        filled = frame[list(FEATURES)].notna().mean()
+        print(f"altdata_features v{settings.altdata.version}: {rows:,} rows "
+              f"({frame['symbol'].nunique()} stocks, {frame['date'].nunique():,} sessions)")
+        for name in FEATURES:
+            print(f"  {name:28s} value on {filled[name]:.0%} of stock-sessions")
+        queries.record_pipeline_run(engine, "altdata-features", "features", "OK", message=f"{rows} rows")
+        return 0
+    finally:
+        engine.dispose()
+
+
+def _run_research(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.altdata.features import load_features
+    from quant.altdata.research import development_folds, stage1, write_report
+    from quant.models.dataset import load_dataset
+
+    engine = _engine(settings, args.db)
+    try:
+        features = load_features(engine, settings.altdata.version)
+        if all(f.empty for f in features.values()):
+            _error("altdata_features is empty; run `quant altdata features` first")
+            return 1
+        dataset = load_dataset(engine, settings)
+        labelled = dataset.labelled()
+        target = labelled.frame["excess"].unstack("symbol")
+        folds = development_folds(labelled.sessions, settings)
+        results = stage1(features, target, folds, settings.model.target.horizon_days)
+        path = write_report(results, folds, settings.retrain.reports_dir)
+    finally:
+        engine.dispose()
+    print(f"A4 round 1, stage 1 ({len(folds)} folds, {folds[0].validation_start.date()} .. "
+          f"{folds[-1].validation_end.date()}; pass = |t| >= 2 and >= 7 folds same sign):")
+    for r in results:
+        print(f"  {r.name:28s} mean IC {r.mean_ic:+.4f}  t {r.t_stat:+.2f}  folds {r.folds_same_sign}/{r.folds}  "
+              f"{'PASS' if r.passed else 'fail'}")
+    print(f"\n{path}")
+    return 0
 
 
 def _run_coverage(args: argparse.Namespace, settings: Settings) -> int:

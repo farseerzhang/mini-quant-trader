@@ -1,6 +1,6 @@
 # Free Structured Alternative Data — Proposal (Draft)
 
-Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) done 2026-10-13 (section 13.2); decision 8 (sale-side features) awaits your confirmation before A4.
+Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) done 2026-10-13 (section 13.2); decision 8 confirmed; A2 and A3 deferred (decision 10); A4 round 1 pre-registered 2026-10-14 (section 8.1).
 Date: 2026-10-13
 
 Companion to `sentiment_proposal.md`. That proposal turns **text** (YouTube, Reddit) into opinions with an LLM and mostly has to be logged going forward. This one covers **already-structured records** from free, official sources that have **years of history**, so they can be researched on the existing development folds now.
@@ -163,7 +163,7 @@ Computed per symbol at the close of each session T from rows with `available_at`
 | `days_to_cover` | Latest short interest ÷ 20-session average daily volume | Squeeze potential / bearish conviction |
 | `pageviews_z` | (log of 5-day mean views − log of 60-day mean) ÷ std of the daily log changes | Attention spike |
 
-**Sale-side definitions** (added 2026-10-13, draft until you confirm it; written before any return was looked at, only filing counts):
+**Sale-side definitions** (added 2026-10-13, confirmed 2026-10-14 as decision 8; written before any return was looked at, only filing counts):
 
 - *Qualifying sale*: an `S` line (open-market sale) whose filing is available by the close of session T (`available_on` <= T), reported by an owner who is an officer or a director (10% owners alone do not count), and whose filing is not flagged 10b5-1 (`is_10b5_1 = 1`; the flag exists only from 2023, so before that no sale is excluded by it).
 - *Routine / opportunistic* (after Cohen, Malloy and Pomorski 2012): for a sale in calendar month m of year y, the insider is **classifiable** if they had at least one P or S line in each of the years y-1, y-2 and y-3 (counting only filings available by session T). A classifiable insider is **routine** if they traded in month m in each of those three years, otherwise **opportunistic**. Insiders who are not classifiable count as neither. The classification uses only past filings, so it is free of look-ahead, and it covers the years before the 10b5-1 flag.
@@ -183,6 +183,38 @@ Same principles as the existing feature research (proposal section 11, 15.4):
 2. **Stage 1, feature check** (cheap, per feature): rank information coefficient (Spearman correlation between the feature and the next 5-day excess return across stocks on each date), averaged over dates, with a Newey-West t-statistic; reported per fold. **Pass**: mean IC t-stat ≥ 2 over the development period **and** the same sign in at least 7 of 11 folds. With 9 features tested (the 8 original ones without the dropped 13D feature, plus the two sale-side features of section 7), about one could pass at |t| ≥ 2 by chance alone, so a pass is a candidate, not a finding.
 3. **Stage 2, model trial** (only for features that pass stage 1): one retrain of the current best predictor configuration with the passing features added, everything else unchanged, judged by the existing gates in `retrain.gates`. Each trial is added to the trial log.
 4. **No holdout.** The current holdout has already been evaluated twice (proposal 15.4.8 and the HMM holdout check that follows it) and must not be used to choose features. Evidence beyond the development folds comes from forward testing.
+
+## 8.1 Pre-registration, A4 round 1: the Form 4 features (registered 2026-10-14, before any feature value or result is computed)
+
+Written before `altdata_features` exists and before any return is joined to Form 4 data; only filing counts (section 13.2) have been looked at.
+
+**Features (4, decision 10)**, computed for every pool stock on every NYSE session from 2006 on, from filings with `available_on` <= T only:
+
+1. `insider_net_buy_value_60d` = (sum of shares x price of `P` lines) minus (sum of shares x price of `S` lines in filings not flagged 10b5-1), over lines in filings that became available in the 60 sessions up to and including T and that list at least one officer or director as a reporting owner, divided by the market capitalization at the close of T. Market capitalization = the close of T (as traded) x the latest shares outstanding available at T, where shares outstanding is the SEC XBRL company-facts value `dei:EntityCommonStockSharesOutstanding`, available from the session after the date it was filed; if a filing reports several share classes for the same date, they are summed (for BRK-B this understates the economic value of the A shares; accepted as a known approximation). A transaction line counts once even when several owners filed it jointly. NULL when no shares outstanding is available yet.
+2. `insider_buyers_60d` = the number of distinct officers or directors (owner CIK) listed on filings with at least one `P` line that became available in the 60 sessions up to T.
+3. `opportunistic_sellers_60d` and 4. `insider_sell_fraction_60d`: as defined in section 7 (decision 8).
+
+"Officer or director" = an owner with `is_officer = 1` or `is_director = 1` (10% owners alone do not count). Quarantined lines (section 13.2) are not used. A 4/A is used like any filing (its lines as reported); duplicates between an amendment and its original are not removed in this round. Before a stock's first Form 4, features 1-2 are 0 once its first filing exists in the tables and NULL before; features 3-4 follow section 7 (NULL until three years of history).
+
+**Target**: the existing label's `excess` column (open T+1 -> open T+1+5 return of the stock minus SPY's, as in `quant/models/labels.py`), the same target as every earlier feature study.
+
+**Folds and period**: the existing 11 development folds (`walk_forward_folds`, expanding, 2014-09-26 .. 2025-10-01), built with the holdout start **fixed at 2025-10-10**, the boundary of both earlier holdout checks (`proposal.md` 15.4.8): `quant retrain` derives the holdout from the last 12 months of stored sessions, so its boundary moves forward every day and would otherwise move already-viewed holdout days into development. **No holdout** (section 8, point 4).
+
+**Stage 1 (per feature)**: the daily cross-sectional rank IC (`rank_ic`, sessions with at least 10 stocks with both values) over the sessions of the 11 validation windows; the t-statistic of `ic_summary` (mean over every 5th session, i.e. non-overlapping 5-day labels; not Newey-West as section 8 first said, for consistency with the earlier feature studies of `proposal.md` 15.4.5 and 15.4.7). **Pass** = |t| >= 2 **and** the mean IC of at least 7 of the 11 folds has the sign of the overall mean IC. 4 features are tested, so with |t| >= 2 about 0.2 passes are expected by chance; a pass is a candidate, not a finding. Reported per feature: mean IC, t, folds with the same sign, coverage (sessions and stocks with a value) per fold.
+
+**Stage 2 (only if at least one feature passes)**: one trial with all passing features added to the 35 configured inputs, otherwise the 15.4.6 / 15.4.7 configuration unchanged (logistic regression C = 1.0, sigmoid calibration, 5-day label, `ml_select` top 10 / keep 10 / every 5 sessions, 81 stocks, the same folds, embargo and gates in `retrain.gates`); rows without a value for a passing feature are dropped (as `with_candidates` does). Judged by the gates against `regime_switch` with the rule-based regime. One trial, added to the trial log; nothing is registered or promoted by it. A passing trial would lead to A5 (into `features`, a `quant retrain`, a shadow in the next forward-test run).
+
+**If no feature passes**: the result is recorded here and round 1 ends; no redefinition or re-test of these four features on the same data.
+
+**Report**: `reports/altdata/a4-round1-<timestamp>.md`, and the outcome written below, whatever it is.
+
+**Amendment (2026-10-14, data fixes found while computing the features, before any return was joined to them).** A first computation of `altdata_features` showed values of `insider_net_buy_value_60d` up to 224 times the market cap and late insider histories for several stocks. Causes and fixes:
+
+1. *Earlier CIKs.* Six more pool stocks moved to a new CIK at a reorganization, so their earlier filings were missing: GOOGL (Google Inc. 1288776), AVGO (Avago 1441634, Broadcom Ltd 1649338), DIS (old Walt Disney Co 1001039), LIN (Praxair 884905; LIN's price history also goes back through Praxair), BLK (old BlackRock 1364742), PSA (Public Storage Inc 318380). Each was verified through its submissions list and added to `altdata.sec.extra_ciks`; the quarters are reloaded. SE is not a CIK problem: as a foreign issuer its insiders filed no Form 4 before 2026.
+2. *Wrong share counts.* Some XBRL values are off by orders of magnitude (PSA: 173 and 171,858 shares instead of about 175 million). A share count is not used if it is below 50% or above 200% of the median of the stock's counts with an as-of date within two years of it, itself included (excluding itself let two wrong values pull the median far enough to drop a correct count).
+3. *The same trade in several filings.* Related entities file separate Form 4s for one transaction (META 2012: one sale in three filings). For `insider_net_buy_value_60d`, `P` / `S` lines with the same stock, transaction date, code, shares and price in filings that became available on the same session count once. The insider-counting features are unaffected (they count distinct owners).
+
+The features, target, folds, tests and pass rules above are unchanged.
 
 Coverage limits that apply to the protocol:
 
@@ -340,4 +372,6 @@ Decided (section 15, decisions 6 and 7): the conservative availability rule abov
 5. **Table names**: every table of this module starts with `altdata_` (section 4), so alt data, sentiment (`sentiment_*`) and the core quant tables never mix.
 6. **Availability of backfilled Form 4 rows** (2026-10-13, after A0): the data sets have no acceptance time, so a backfilled filing counts from the **session after its filing date**; incrementally fetched filings use their exact acceptance time (after 16:00 ET -> next session).
 7. **A1 builds Form 4 only** (2026-10-13). Schedule 13D is dropped from A1: too rare in the pool, and it needs a header check to tell filings about a company from filings by it. `activist_13d_120d` leaves the candidate list of section 7.
-8. **Sale-side features (draft, 2026-10-13):** `opportunistic_sellers_60d` and `insider_sell_fraction_60d` are added to the candidate list of section 7, with the definitions there, before A4 and before any return was looked at. Pending your confirmation; once confirmed, the list of section 7 is fixed for A4.
+8. **Sale-side features (confirmed 2026-10-14):** `opportunistic_sellers_60d` and `insider_sell_fraction_60d` are added to the candidate list of section 7, with the definitions there, before A4 and before any return was looked at. The list of section 7 is now fixed for A4: 9 features (8 original without `activist_13d_120d`, plus these two).
+9. **Order (2026-10-14):** the phases run one after another, A2 (FINRA) and A3 (Wikipedia) before A4, so A4 tests all 9 features at once. This revises decision 1, which had deferred A2 and A3. A2 starts with its own A0 spike (FINRA history start dates), as A0 so far covered EDGAR only.
+10. **A2 and A3 deferred again (2026-10-14, replaces decision 9).** FINRA and Wikipedia stay deferred, each started only on your go-ahead. **A4 (round 1) tests the four Form 4 features only**: `insider_net_buy_value_60d`, `insider_buyers_60d`, `opportunistic_sellers_60d`, `insider_sell_fraction_60d`, with the definitions of section 7, so the multiple-testing count of section 8 is 4 for this round. The five FINRA / Wikipedia features stay on the list; if those sources are built later, they get their own pre-registered round.

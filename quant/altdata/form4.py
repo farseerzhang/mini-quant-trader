@@ -208,6 +208,7 @@ class UpdateResult:
     live_filings: int = 0
     live_skipped: int = 0  # not about a pool issuer
     quarantined: int = 0
+    shares_rows: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -299,6 +300,13 @@ def update_form4(engine: Engine, settings: Settings, client: SecClient, progress
         progress(f"  live: {len(filings)} new filings ({result.live_skipped} skipped: issuer not the pool company)"
                  + (f", {bad} lines quarantined" if bad else "") + (f", {len(result.errors)} error(s)"
                                                                      if result.errors else ""))
+    if live:
+        from quant.altdata.shares import update_shares
+
+        result.shares_rows, errors = update_shares(engine, client, pairs)
+        result.errors.extend(errors)
+        progress(f"Shares outstanding (XBRL company facts): {result.shares_rows} values for {len(ciks)} stocks"
+                 + (f", {len(errors)} error(s)" if errors else ""))
     return result
 
 

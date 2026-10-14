@@ -71,6 +71,38 @@ altdata_insider_transactions = Table(
     PrimaryKeyConstraint("accession_no", "line_no", name="pk_altdata_insider_transactions"),
 )
 
+# Shares outstanding from SEC XBRL company facts (dei:EntityCommonStockSharesOutstanding), for
+# market capitalization (section 8.1). One row per reported value; several share classes of the
+# same filing and date are summed when used.
+altdata_shares_outstanding = Table(
+    "altdata_shares_outstanding",
+    metadata,
+    Column("symbol", String, nullable=False),
+    Column("cik", Integer, nullable=False),
+    Column("accession_no", String, nullable=False),
+    Column("as_of", Date, nullable=False),  # the date the count refers to ("end")
+    Column("filed", Date, nullable=False),
+    Column("seq", Integer, nullable=False),  # several values for one filing and date: one per class
+    Column("shares", Float, nullable=False),
+    Column("form", String),
+    PrimaryKeyConstraint("symbol", "accession_no", "as_of", "seq", name="pk_altdata_shares_outstanding"),
+)
+
+# Candidate features (section 7, pre-registration 8.1), per stock and session, kept apart from
+# `features`; only a feature that passes section 8 moves there (A5).
+altdata_features = Table(
+    "altdata_features",
+    metadata,
+    Column("symbol", String, nullable=False),
+    Column("date", Date, nullable=False),
+    Column("altdata_version", Integer, nullable=False),
+    Column("insider_net_buy_value_60d", Float),
+    Column("insider_buyers_60d", Float),
+    Column("opportunistic_sellers_60d", Float),
+    Column("insider_sell_fraction_60d", Float),
+    PrimaryKeyConstraint("symbol", "date", "altdata_version", name="pk_altdata_features"),
+)
+
 # What has been loaded: one row per quarterly data set, and one for the live updates.
 altdata_sync = Table(
     "altdata_sync",

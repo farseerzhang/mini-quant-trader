@@ -210,3 +210,9 @@ altdata:                           # free structured alternative data (altdata_p
     exclude_10b5_1_sales: true     # pre-planned sales are not discretionary
     extra_ciks:                    # earlier CIKs whose filings belong to a pool stock (A1 finding)
       XOM: [34088]                 # Exxon Mobil Corp; company_tickers.json now gives the new holding company
+      GOOGL: [1288776]             # Google Inc. (before Alphabet, 2015)
+      AVGO: [1441634, 1649338]     # Avago Technologies, Broadcom Ltd (before Broadcom Inc., 2018)
+      DIS: [1001039]               # the old Walt Disney Co (before the 2019 holding company)
+      LIN: [884905]                # Praxair (before the 2018 Linde merger; LIN's prices go back through it)
+      BLK: [1364742]               # the old BlackRock, Inc. (before the 2024 holding company)
+      PSA: [318380]                # Public Storage Inc (before the 2007 reorganization)
