@@ -31,6 +31,9 @@ def add_parser(commands, db_help: str) -> None:
     features.add_argument("--db", help=db_help)
     research = sub.add_parser("research", help="A4 round 1, stage 1: rank IC of the Form 4 features on the "
                               "development folds (pre-registered, altdata_proposal.md 8.1; no holdout)")
+    research.add_argument("--stage", type=int, choices=[1, 2], default=1,
+                          help="1: rank IC per feature; 2: the pre-registered model trial with the features "
+                          "that passed stage 1")
     research.add_argument("--db", help=db_help)
 
 
@@ -132,6 +135,30 @@ def _run_research(args: argparse.Namespace, settings: Settings) -> int:
         target = labelled.frame["excess"].unstack("symbol")
         folds = development_folds(labelled.sessions, settings)
         results = stage1(features, target, folds, settings.model.target.horizon_days)
+        if args.stage == 2:
+            from quant.altdata.research import stage2, write_stage2_report
+
+            passing = [r.name for r in results if r.passed]
+            if not passing:
+                print("No feature passes stage 1, so there is no stage 2 (pre-registration 8.1).")
+                return 0
+            print(f"Stage 2 with {', '.join(passing)}: two walk-forward runs and their backtest (several minutes)",
+                  flush=True)
+            outcome = stage2(engine, settings, features, passing)
+            report = write_stage2_report(outcome, settings.retrain.reports_dir)
+            e = outcome.evidence
+            print(f"  trial: Sharpe {e.sharpe:.2f} vs regime_switch {e.baseline_sharpe:.2f}, max DD "
+                  f"{e.max_drawdown:.1%} vs {e.baseline_max_drawdown:.1%}, years higher {e.folds_higher_sharpe}/"
+                  f"{e.folds}; gates {'PASSED' if outcome.gates.passed else 'FAILED'}")
+            r = outcome.reference_evidence
+            print(f"  same rows without the feature (descriptive): Sharpe {r.sharpe:.2f}, max DD "
+                  f"{r.max_drawdown:.1%}, years higher {r.folds_higher_sharpe}/{r.folds}")
+            print(f"  AUC {outcome.trial_auc:.4f} with the feature, {outcome.reference_auc:.4f} without")
+            print(f"\n{report}")
+            queries.record_pipeline_run(engine, "altdata-research", "stage2",
+                                        "OK", message=f"{','.join(passing)}: gates "
+                                        f"{'PASSED' if outcome.gates.passed else 'FAILED'}")
+            return 0
         path = write_report(results, folds, settings.retrain.reports_dir)
     finally:
         engine.dispose()

@@ -149,6 +149,35 @@ class WrongCountsTest(unittest.TestCase):
         self.assertEqual(sorted(kept["accession_no"]), ["a", "b", "d", "f"])  # a lone value has nothing to compare
 
 
+class TrialDatasetTest(unittest.TestCase):
+    def test_feature_added_and_rows_without_it_dropped(self):
+        from quant.altdata.research import trial_dataset
+        from quant.models.dataset import Dataset
+
+        index = pd.MultiIndex.from_product([pd.to_datetime(["2010-01-04", "2010-01-05"]), ["A", "B"]],
+                                           names=["date", "symbol"])
+        dataset = Dataset(pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "label": [1, 0, 1, 0]}, index=index))
+        feature = pd.DataFrame({"A": [np.nan, 0.1], "B": [0.2, 0.3]}, index=pd.to_datetime(["2010-01-04",
+                                                                                             "2010-01-05"]))
+        trial = trial_dataset(dataset, {"f": feature}, ["f"])
+        self.assertEqual(len(trial.frame), 3)  # A on the first day has no value
+        self.assertEqual(trial.frame.loc[(pd.Timestamp("2010-01-05"), "B"), "f"], 0.3)
+
+
+class TrialFoldsTest(unittest.TestCase):
+    def test_training_cut_validation_kept(self):
+        from quant.altdata.research import trial_folds
+
+        sessions = pd.bdate_range("2006-01-02", "2016-12-30")
+        fold = Fold(1, sessions[sessions < "2014-01-01"], sessions[(sessions >= "2014-01-01") & (sessions < "2015-01-01")])
+        trial_sessions = sessions[sessions >= "2009-05-01"]
+        [cut] = trial_folds([fold], trial_sessions)
+        self.assertEqual(cut.train[0], pd.Timestamp("2009-05-01"))
+        self.assertTrue(cut.validation.equals(fold.validation))
+        with self.assertRaises(ValueError):  # a validation session without trial rows
+            trial_folds([fold], sessions[sessions >= "2014-06-01"])
+
+
 class Stage1Test(unittest.TestCase):
     def test_pass_and_fail(self):
         sessions = pd.bdate_range("2014-01-01", periods=400)

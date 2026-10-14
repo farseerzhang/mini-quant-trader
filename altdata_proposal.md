@@ -1,6 +1,6 @@
 # Free Structured Alternative Data — Proposal (Draft)
 
-Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) done 2026-10-13 (section 13.2); decision 8 confirmed; A2 and A3 deferred (decision 10); A4 round 1 pre-registered 2026-10-14 (section 8.1).
+Status: approved 2026-10-13 (decisions in section 15). A0 for EDGAR done 2026-10-13 (section 13.1); A1 (Form 4 only) done 2026-10-13 (section 13.2); decision 8 confirmed; A2 and A3 deferred (decision 10); A4 round 1 done 2026-10-14: no feature promoted (section 8.1.2).
 Date: 2026-10-13
 
 Companion to `sentiment_proposal.md`. That proposal turns **text** (YouTube, Reddit) into opinions with an LLM and mostly has to be logged going forward. This one covers **already-structured records** from free, official sources that have **years of history**, so they can be researched on the existing development folds now.
@@ -232,6 +232,23 @@ insider_sell_fraction_60d   +0.0077   +1.04  7/11              fail
 - **The effect faded**: every fold of 2014-2020 is negative (-0.016 .. -0.061), folds 7-10 (2020-2024) are positive and fold 11 is about zero. The pass rests on exactly 7 of 11 folds, carried by the early years.
 - One pass among 4 features (about 0.2 expected by chance) at t = -2.32: a candidate, not a finding.
 - Expectation written before stage 2: no improvement over the 35 inputs, for both reasons above.
+
+### 8.1.2 Stage 2 result and outcome of round 1 (2026-10-14)
+
+`quant altdata research --stage 2`, report `reports/altdata/a4-round1-stage2-20261014T202350Z.md`. Logistic regression C = 1.0 with the 35 inputs plus `insider_net_buy_value_60d`; the 11 folds' validation windows unchanged, their training windows cut to the trial rows (299,107 of 369,391 rows, from 2009-04-30, when the XBRL share counts start); alongside, the same model without the feature on the same rows (descriptive).
+
+```text
+portfolio              CAGR   Sharpe  max DD   turnover  years > regime_switch  AUC     gates
+with the feature       13.8%  0.94    -22.1%   17.3x     7/11                   0.5330  FAILED (Sharpe)
+same rows, no feature  13.8%  0.94    -22.0%   17.4x     7/11                   0.5329  (descriptive)
+regime_switch          13.2%  0.97    -25.0%    4.1x     -                      -       baseline
+```
+
+- **The feature adds nothing**: with and without it the model is the same to the fourth decimal of AUC (0.5330 vs 0.5329) and in every trading figure. What stage 1 found is already in the 35 inputs, as expected (insiders sell after rises, which the price features carry).
+- The trial fails `beats_baseline_after_costs` (Sharpe 0.94 vs 0.97); the other gates pass, but the failure is the model's, not the feature's: it fails the same way without the feature.
+- (The lower Sharpe than the 81-stock retrain of `proposal.md` 15.4.6, 1.04, comes from the training windows starting in 2009 instead of 2006, not from the feature.)
+
+**Outcome of A4 round 1: no Form 4 feature is promoted; no A5.** Per the pre-registration, these four features are not redefined or re-tested on the same data. The data (`altdata_insider_*`, `altdata_features`) stays for reading and for any later, separately pre-registered question.
 
 Coverage limits that apply to the protocol:
 

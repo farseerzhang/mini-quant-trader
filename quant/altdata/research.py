@@ -65,6 +65,135 @@ def stage1(features: dict[str, pd.DataFrame], target: pd.DataFrame, folds: list[
     return results
 
 
+STAGE2_MODEL = "logistic_regression"
+STAGE2_PARAMETERS = {"C": 1.0}  # the 15.4.6 / 15.4.7 configuration (8.1); no new search
+
+
+@dataclass
+class Stage2Result:
+    passing: list[str]
+    folds: list[Fold]
+    rows_trial: int
+    rows_full: int
+    first_session: pd.Timestamp
+    overall: pd.DataFrame  # the backtest's overall table (trial, reference, baseline, benchmarks)
+    gates: object  # GateReport of the trial
+    reference_gates: object  # GateReport of the same model without the features (descriptive)
+    evidence: object
+    reference_evidence: object
+    trial_auc: float
+    reference_auc: float
+
+
+def trial_dataset(dataset, features: dict[str, pd.DataFrame], passing: list[str]):
+    """The dataset with the passing features as extra columns; rows without them dropped (8.1)."""
+    from quant.models.feature_research import with_candidates
+
+    return with_candidates(dataset, {name: features[name] for name in passing})
+
+
+def trial_folds(folds: list[Fold], sessions: pd.DatetimeIndex) -> list[Fold]:
+    """The same folds with their training windows cut to the sessions the trial rows have (the
+    validation windows are unchanged; the trial's rows start later, see 8.1)."""
+    out = []
+    for fold in folds:
+        missing = fold.validation.difference(sessions)
+        if len(missing):
+            raise ValueError(f"fold {fold.number}: {len(missing)} validation session(s) have no trial rows")
+        out.append(Fold(fold.number, fold.train.intersection(sessions), fold.validation))
+    return out
+
+
+def stage2(engine, settings, features: dict[str, pd.DataFrame], passing: list[str]) -> Stage2Result:
+    """One trial (8.1): the 35 inputs plus the passing features, everything else unchanged, judged by
+    the gates against regime_switch. The same model without the features on the same rows is run
+    alongside as a descriptive reference; it decides nothing."""
+    from quant.backtest.data import load_prices
+    from quant.models.dataset import INPUT_COLUMNS, load_dataset
+    from quant.models.gates import collect_evidence, evaluate_predictor_gates
+    from quant.models.ml_backtest import run_ml_backtest
+    from quant.models.walk_forward import run_walk_forward
+    from quant.persistence import queries
+    from quant.regime.pipeline import RULE_METHOD
+    from quant.strategies import PANEL_COLUMNS
+
+    stocks = list(settings.market.stocks)
+    embargo = settings.model.embargo_days
+    dataset = load_dataset(engine, settings)
+    # The 11 folds come from the full dataset (min_train_years would cut folds if they were built
+    # from the shorter trial rows); dropping rows only shortens the training windows.
+    trial = trial_dataset(dataset, features, passing)
+    folds = trial_folds(development_folds(dataset.labelled().sessions, settings), trial.sessions)
+    columns = [*INPUT_COLUMNS, *passing]
+    trial_name, reference_name = "ml_lr_insider", "ml_lr_same_rows"
+    trial_result = run_walk_forward(trial, folds, STAGE2_MODEL, STAGE2_PARAMETERS, settings, input_columns=columns)
+    reference = run_walk_forward(trial, folds, STAGE2_MODEL, STAGE2_PARAMETERS, settings)
+    prices = load_prices(engine, [*stocks, "SPY"])
+    panel = queries.load_feature_panel(engine, settings.features.feature_version, stocks, PANEL_COLUMNS)
+    regimes = queries.load_regimes(engine, RULE_METHOD, settings.regime.rule_version)
+    backtest = run_ml_backtest({trial_name: trial_result, reference_name: reference}, folds, prices, panel,
+                               regimes, settings)
+    evidence = collect_evidence(trial_name, trial_result, backtest, folds, prices.close.index, HOLDOUT_START, embargo)
+    reference_evidence = collect_evidence(reference_name, reference, backtest, folds, prices.close.index,
+                                          HOLDOUT_START, embargo)
+    gate_settings = settings.retrain.gates["predictor"]
+    return Stage2Result(
+        passing=passing, folds=folds, rows_trial=len(trial.frame), rows_full=len(dataset.frame),
+        first_session=trial.sessions[0], overall=backtest.overall,
+        gates=evaluate_predictor_gates(gate_settings, evidence),
+        reference_gates=evaluate_predictor_gates(gate_settings, reference_evidence),
+        evidence=evidence, reference_evidence=reference_evidence,
+        trial_auc=float(trial_result.folds["auc"].mean()), reference_auc=float(reference.folds["auc"].mean()))
+
+
+def write_stage2_report(result: Stage2Result, reports_dir: str | Path) -> Path:
+    now = datetime.now(timezone.utc)
+    path = Path(reports_dir) / "altdata" / f"a4-round1-stage2-{now:%Y%m%dT%H%M%SZ}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    e, r = result.evidence, result.reference_evidence
+    lines = [
+        f"# A4 round 1, stage 2: {', '.join(result.passing)} ({now:%Y-%m-%d %H:%M} UTC)",
+        "",
+        f"Pre-registration: altdata_proposal.md section 8.1. Logistic regression C = 1.0, the 35 inputs plus "
+        f"{', '.join(result.passing)}; {len(result.folds)} folds {result.folds[0].validation_start.date()} .. "
+        f"{result.folds[-1].validation_end.date()} (holdout start fixed at {HOLDOUT_START.date()}; no holdout); "
+        f"`ml_select` as configured; after costs. Rows without the feature are dropped: {result.rows_trial:,} of "
+        f"{result.rows_full:,} rows, from {result.first_session.date()}.",
+        "",
+        "| Portfolio | CAGR | Sharpe | Max drawdown | Turnover/yr |",
+        "|---|---|---|---|---|",
+    ]
+    for name, row in result.overall.iterrows():
+        lines.append(f"| {name} | {row['cagr']:.1%} | {row['sharpe']:.2f} | {row['max_drawdown']:.1%} | "
+                     f"{row['turnover']:.1f}x |")
+    lines += [
+        "",
+        "`ml_lr_insider` is the trial; `ml_lr_same_rows` is the same model without the feature on the same rows "
+        "(descriptive only: it isolates what the feature adds and decides nothing).",
+        "",
+        "| | Trial | Same rows, no feature |",
+        "|---|---|---|",
+        f"| Mean AUC | {result.trial_auc:.4f} | {result.reference_auc:.4f} |",
+        f"| Sharpe vs regime_switch | {e.sharpe:.2f} vs {e.baseline_sharpe:.2f} | {r.sharpe:.2f} vs {r.baseline_sharpe:.2f} |",
+        f"| Max drawdown vs regime_switch | {e.max_drawdown:.1%} vs {e.baseline_max_drawdown:.1%} | "
+        f"{r.max_drawdown:.1%} vs {r.baseline_max_drawdown:.1%} |",
+        f"| Years with a higher Sharpe | {e.folds_higher_sharpe}/{e.folds} | {r.folds_higher_sharpe}/{r.folds} |",
+        f"| Gates | {'PASSED' if result.gates.passed else 'FAILED'} | "
+        f"{'PASSED' if result.reference_gates.passed else 'FAILED'} |",
+        "",
+        "## Gates of the trial",
+        "",
+        "| Gate | Status | Observed | Required |",
+        "|---|---|---|---|",
+    ]
+    for gate in result.gates.results:
+        lines.append(f"| {gate.name} | {gate.status} | {gate.observed} | {gate.required} |")
+    lines += ["", f"**Stage 2 outcome:** gates {'PASSED: candidate for A5' if result.gates.passed else 'FAILED'}.",
+              ""]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def write_report(results: list[FeatureResult], folds: list[Fold], reports_dir: str | Path) -> Path:
     now = datetime.now(timezone.utc)
     path = Path(reports_dir) / "altdata" / f"a4-round1-{now:%Y%m%dT%H%M%SZ}.md"
