@@ -1474,7 +1474,7 @@ Implementation (`quant/logs.py`, Phase 9): every command logs to `<database dire
 ```yaml
 database:
   url: sqlite:///data/quant.db
-  busy_timeout_ms: 5000
+  busy_timeout_ms: 30000
 
 market:
   provider: yfinance
