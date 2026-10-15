@@ -710,6 +710,47 @@ regime_switch                  CAGR    Sharpe   max DD   invested   turnover   y
 - The trial is not repeated with other definitions on this data.
 - Possible next step, only if you decide on it, and pre-registered before the holdout is viewed: a holdout check of v2 against v1 (as section 13.2). Only if that holds, v2 as a forward-test shadow.
 
+### 12.5.3 Holdout check of rule_based-v2 (DRAFT 2026-10-15; not registered, nothing run)
+
+Decided by you on 2026-10-15 (option A): the holdout check first, the shadow only after it. This will be **holdout evaluation #3** (#1: section 15.4.8, #2: section 13.2).
+
+**What is already known about the holdout**, so the check is not blind on every side:
+- `regime_switch` with `rule_based-v1`: +26.4%, Sharpe 1.39, max DD -10.7% with holdings carried in (section 13.2).
+- v1's regimes there: BULL 228, SIDEWAYS 10, BEAR 7 sessions.
+- v2's regimes, scores and results on the holdout have **not** been looked at.
+
+**Compared.**
+- `regime_switch` (bear exposure 0) with `rule_based-v2` vs with `rule_based-v1`, exactly as defined in section 12.5. Both recursions start 2007-05-09 and run forward through the holdout; nothing is refit or changed.
+- The same 81 stocks, sizing, costs and minimum trade size as `quant backtest`.
+- Simulated over the full history so that holdings carry into the window, as in section 13.2. Metrics are on the holdout sessions only.
+
+**Window:** 2025-10-10 (the fixed holdout start) .. **2026-10-09**, the last session before forward-test run 1 started. Holdout and forward evidence therefore do not overlap.
+
+**Decided before looking:**
+
+| Holdout result (v2 vs v1, `regime_switch`) | Action |
+|---|---|
+| Sharpe at least as high **and** max drawdown no deeper | Add v2 to forward-test run 1 as shadow `shadow_v2` |
+| One better, one worse | Add `shadow_v2` as well: one year cannot settle it, and the forward test is the stronger test |
+| Both worse | No shadow. v2 is closed: not changed and not tested again on this data |
+
+**Descriptive only:**
+- The same comparison started from cash on 2025-10-10.
+- v2's regime days in the window, and the sessions where v1 and v2 differ.
+- `regime_switch_bear50` with each.
+
+**Limits, stated now:**
+- One year is a short test: one year's Sharpe has an uncertainty of about +/-1.
+- v1 had only 7 BEAR sessions in the window, so the result will turn on a few sessions where the regimes differ.
+- The check can stop v2, but it cannot confirm it.
+
+**If a shadow follows:** a new shadow type that computes `rule_based-v2` each evening from the stored inputs and the TLT / IEF / HYG closes (the code of section 12.5), with tests. It is recorded as a design change of run 1 (Phase 10), frozen from the first evening after it is added, with no backfill; its missed sessions are counted.
+
+**To confirm before registering:**
+- (a) the decision table, in particular "one better, one worse -> shadow";
+- (b) the window ends 2026-10-09, before the forward test;
+- (c) holdings carried in (as section 13.2), with the fresh start descriptive only.
+
 ---
 
 # 13. Market Regime Detection — HMM
