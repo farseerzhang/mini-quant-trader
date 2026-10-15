@@ -160,7 +160,7 @@ forward_test:                      # Phase 10 pre-registration (section 29); fro
   shadows:                         # portfolio name -> strategy, and the regime model or predictor it uses
     shadow_hmm: {strategy: regime_switch, regime_model: hmm-20261012T174554Z-5f979a}
     shadow_lr: {strategy: ml_select, predictor: logistic_regression-20261012T183319Z-cf2d50}
-    shadow_rule_v2: {strategy: regime_switch, regime_rule: rule_based-v2}   # added 2026-10-15 (section 12.5.3)
+    shadow_rule_bonds: {strategy: regime_switch, regime_rule: rule_bonds-v1}   # added 2026-10-15 (section 12.5.3)
 
 sentiment:                         # creator opinion factor (sentiment_proposal.md); research only, not in run-daily
   lookback_days: 14                # `quant sentiment fetch` looks this far back (--days overrides)

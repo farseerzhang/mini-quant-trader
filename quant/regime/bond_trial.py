@@ -5,7 +5,8 @@ Research only: nothing here is stored or used by run-daily, and rule_based-v1 st
 - Inputs 6 and 7, at the close of T from total-return closes over 20 sessions:
   credit_appetite_20d = HYG's return minus IEF's; stock_vs_bond_20d = SPY's minus TLT's.
   Each scores its sign, risk-on +1 (the direction of inputs 1-5).
-- Candidate rule_based-v2: the seven inputs (-7 .. +7) with E = 4, X = 1; dwell and VIX
+- Candidate (tested as rule_based-v2, now rule_bonds-v1; the rule itself is in
+  rule_bonds.py): the seven inputs (-7 .. +7) with E = 4, X = 1; dwell and VIX
   thresholds unchanged. Descriptive: each bond input alone (six inputs, E = 4, X = 1).
 - v1 and every candidate start their recursion on the same first session with all seven inputs.
 - One trial on the walk-forward validation window; the holdout is not used.
@@ -16,7 +17,6 @@ columns, so the table the running forward test reads is left unchanged.
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,34 +36,25 @@ from quant.regime.comparison import RegimeComparison, compare_regimes, portfolio
 from quant.regime.gates import default_cuts
 from quant.regime.report import sell_off_reactions
 from quant.regime.rule_based import BEAR, BULL, SIDEWAYS, average_dwell, classify_regimes, score_inputs
+from quant.regime.rule_bonds import (  # noqa: F401  (bond_inputs etc. are also used by the tests)
+    BOND_INPUTS,
+    BOND_SYMBOLS,
+    CREDIT,
+    ENTER,
+    EXIT,
+    NAME,
+    SAFE_HAVEN,
+    WINDOW,
+    bond_inputs,
+    bond_scores,
+    bond_settings,
+    load_bond_inputs,
+)
 
-WINDOW = 20  # sessions, as in CNN's components
-BOND_SYMBOLS = ("TLT", "IEF", "HYG")
-CREDIT, SAFE_HAVEN = "credit_appetite_20d", "stock_vs_bond_20d"
-BOND_INPUTS = (CREDIT, SAFE_HAVEN)
-ENTER, EXIT = 4, 1  # fixed in section 12.5 for both the seven- and the six-input scores
-V1, V2 = "rule_based-v1", "rule_based-v2"
+V1, V2 = "rule_based-v1", NAME  # V2: tested as "rule_based-v2" (renamed, rule_bonds.py)
 SINGLES = {f"v1 + {CREDIT}": (CREDIT,), f"v1 + {SAFE_HAVEN}": (SAFE_HAVEN,)}  # descriptive
 MIN_DWELL = 10  # retrain.gates.regime.min_avg_regime_dwell_days at registration
 FORWARD = 21  # sessions: SPY's next-month return for the descriptive rank correlation
-
-
-def bond_inputs(close: pd.DataFrame) -> pd.DataFrame:
-    """Inputs 6 and 7 per session from total-return closes (SPY, TLT, IEF, HYG) up to T."""
-    change = close / close.shift(WINDOW) - 1.0
-    return pd.DataFrame({CREDIT: change["HYG"] - change["IEF"], SAFE_HAVEN: change["SPY"] - change["TLT"]},
-                        index=close.index)
-
-
-def candidate_scores(inputs: pd.DataFrame, settings: RegimeSettings, extra: tuple[str, ...]) -> pd.Series:
-    """The five-input score plus the sign of each `extra` input; NaN where any input is missing."""
-    score = score_inputs(inputs, settings)
-    values = inputs.loc[:, list(extra)].astype(float)
-    return (score + np.sign(values).sum(axis=1)).where(values.notna().all(axis=1))
-
-
-def candidate_settings(settings: RegimeSettings) -> RegimeSettings:
-    return dataclasses.replace(settings, enter_threshold=ENTER, exit_threshold=EXIT)
 
 
 def trial_regimes(inputs: pd.DataFrame, settings: RegimeSettings) -> dict[str, pd.Series]:
@@ -76,35 +67,12 @@ def trial_regimes(inputs: pd.DataFrame, settings: RegimeSettings) -> dict[str, p
         raise ValueError("no session has all seven inputs")
     start = complete.index[0]
     inputs = inputs.loc[start:]
-    candidate = candidate_settings(settings)
+    candidate = bond_settings(settings)
     regimes = {V1: classify_regimes(score_inputs(inputs, settings), settings)["regime"],
-               V2: classify_regimes(candidate_scores(inputs, settings, BOND_INPUTS), candidate)["regime"]}
+               V2: classify_regimes(bond_scores(inputs, settings, BOND_INPUTS), candidate)["regime"]}
     for name, extra in SINGLES.items():
-        regimes[name] = classify_regimes(candidate_scores(inputs, settings, extra), candidate)["regime"]
+        regimes[name] = classify_regimes(bond_scores(inputs, settings, extra), candidate)["regime"]
     return regimes
-
-
-def rule_v2_regime(engine: Engine, settings: Settings) -> pd.Series:
-    """rule_based-v2 per session up to the latest stored one, from the same first session as in the
-    trial (the first with all seven inputs): the forward-test shadow's regime (section 12.5.3)."""
-    inputs, _ = load_trial_inputs(engine, settings)
-    complete = inputs.dropna()
-    if complete.empty:
-        raise ValueError("no session has all seven rule_based-v2 inputs")
-    inputs = inputs.loc[complete.index[0]:]
-    return classify_regimes(candidate_scores(inputs, settings.regime, BOND_INPUTS),
-                            candidate_settings(settings.regime))["regime"]
-
-
-def load_trial_inputs(engine: Engine, settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """(the seven inputs per session, the total-return closes of SPY / TLT / IEF / HYG)."""
-    missing = [s for s in BOND_SYMBOLS if s not in settings.market.market_symbols]
-    if missing:
-        raise ValueError(f"add {', '.join(missing)} to market.market_symbols and run update-market-data")
-    v1 = queries.load_regime_inputs(engine, settings.features.feature_version, settings.features.market_feature_version)
-    close = load_prices(engine, ["SPY", *BOND_SYMBOLS]).close
-    bonds = bond_inputs(close.reindex(v1.index))
-    return v1.join(bonds), close
 
 
 @dataclass(frozen=True)
@@ -169,7 +137,7 @@ def run_bond_trial(engine: Engine, settings: Settings) -> BondTrialOutcome:
     holdout_start = split_periods(dataset.sessions, settings.holdout_months).holdout_start
     folds = walk_forward_folds(dataset.labelled().sessions, holdout_start, settings.retrain.validation,
                                settings.model.embargo_days)
-    inputs, close = load_trial_inputs(engine, settings)
+    inputs, close = load_bond_inputs(engine, settings)
     regimes = trial_regimes(inputs, settings.regime)
     prices = load_prices(engine, [*stocks, "SPY"])
     panel = queries.load_feature_panel(engine, settings.features.feature_version, stocks, PANEL_COLUMNS)
@@ -212,11 +180,11 @@ def input_correlations(inputs: pd.DataFrame, spy: pd.Series, start, end) -> pd.D
     return pd.DataFrame(rows).T.rename_axis("input")
 
 
-# Holdout check of rule_based-v2 (section 12.5.3; holdout evaluation #3).
+# Holdout check of rule_bonds-v1, tested as rule_based-v2 (section 12.5.3; holdout evaluation #3).
 
 HOLDOUT_START = pd.Timestamp("2025-10-10")  # the fixed holdout start
 HOLDOUT_END = pd.Timestamp("2026-10-09")  # the last session before forward-test run 1 started
-SHADOW, NO_SHADOW = "add shadow_rule_v2", "no shadow; v2 is closed"
+SHADOW, NO_SHADOW = "add shadow_rule_bonds", "no shadow; v2 is closed"
 
 
 @dataclass(frozen=True)
@@ -245,7 +213,7 @@ def run_holdout_check(engine: Engine, settings: Settings) -> HoldoutCheck:
     from quant.strategies import PANEL_COLUMNS, build_strategies
 
     stocks = list(settings.market.stocks)
-    inputs, _ = load_trial_inputs(engine, settings)
+    inputs, _ = load_bond_inputs(engine, settings)
     full = trial_regimes(inputs, settings.regime)
     regimes = {V1: full[V1], V2: full[V2]}
     prices = load_prices(engine, [*stocks, "SPY"])

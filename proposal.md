@@ -730,8 +730,8 @@ Decided by you on 2026-10-15 (option A): the holdout check first, the shadow onl
 
 | Holdout result (v2 vs v1, `regime_switch`) | Action |
 |---|---|
-| Sharpe at least as high **and** max drawdown no deeper | Add v2 to forward-test run 1 as shadow `shadow_rule_v2` |
-| One better, one worse | Add `shadow_rule_v2` as well: one year cannot settle it, and the forward test is the stronger test |
+| Sharpe at least as high **and** max drawdown no deeper | Add v2 to forward-test run 1 as shadow `shadow_rule_bonds` |
+| One better, one worse | Add `shadow_rule_bonds` as well: one year cannot settle it, and the forward test is the stronger test |
 | Both worse | No shadow. v2 is closed: not changed and not tested again on this data |
 
 **Descriptive only:**
@@ -755,7 +755,7 @@ Decided by you on 2026-10-15 (option A): the holdout check first, the shadow onl
 - **Code:** `run_holdout_check` and `write_holdout_report` in `quant/regime/bond_trial.py`.
   - The window is fixed in code: `HOLDOUT_START` 2025-10-10, `HOLDOUT_END` 2026-10-09.
   - The decision table is `holdout_decision`: only "both worse" closes v2.
-  - The shadow's name was changed from `shadow_v2` to `shadow_rule_v2` on 2026-10-15, before the run, to make it clearer. This is a name only; the decision rules are unchanged.
+  - The shadow's name was changed from `shadow_v2` to `shadow_rule_v2` on 2026-10-15, before the run, to make it clearer, and to `shadow_rule_bonds` later that day (see the rename note below). These are names only; the decision rules are unchanged.
 - **Tests:** in `tests/test_regime_bond_trial.py`.
 - **Command:** `python -m quant regime-rule-v2-holdout` is the one-time run. It writes `reports/regime/rule-v2-holdout-<time>.md` and stores nothing.
 
@@ -768,7 +768,7 @@ regime_switch, holdings carried in   CAGR    Sharpe   max DD   invested   turnov
 regime days: v1 BULL 234 / SIDEWAYS 10 / BEAR 7; v2 BULL 226 / SIDEWAYS 13 / BEAR 12
 ```
 
-- **Decision: one better, one worse -> add `shadow_rule_v2`.** The Sharpe ratio is higher; the max drawdown is 0.7 points deeper.
+- **Decision: one better, one worse -> add the shadow** (the report says `shadow_rule_v2`, its name at the time; now `shadow_rule_bonds`). The Sharpe ratio is higher; the max drawdown is 0.7 points deeper.
 - v1's figures reproduce section 13.2 (+26.4%, Sharpe 1.39), so the setup is consistent.
 - **The result rests on one episode.** The regimes differ on 23 sessions, all in March-April 2026:
   - 2026-03-03 .. 03-19: v1 BULL, v2 SIDEWAYS (v2 turned cautious earlier);
@@ -780,11 +780,18 @@ regime days: v1 BULL 234 / SIDEWAYS 10 / BEAR 7; v2 BULL 226 / SIDEWAYS 13 / BEA
 - As stated before the run, one year and one episode can stop v2 but cannot confirm it. The forward test decides.
 
 **Shadow added (2026-10-15).**
-- `forward_test.shadows.shadow_rule_v2: {strategy: regime_switch, regime_rule: rule_based-v2}`.
-- **New shadow option `regime_rule`** (`REGIME_RULES` in the settings; only `rule_based-v2` so far): each evening the freeze computes the regime with `rule_v2_regime` (`quant/regime/bond_trial.py`). It uses the stored inputs and the TLT / IEF / HYG closes, from the trial's first session, 2007-05-09, and no regime is stored.
+- `forward_test.shadows.shadow_rule_bonds: {strategy: regime_switch, regime_rule: rule_bonds-v1}`.
+- **New shadow option `regime_rule`** (`REGIME_RULES` in the settings; only `rule_bonds-v1` so far): each evening the freeze computes the regime with `rule_bonds_regime` (`quant/regime/rule_bonds.py`). It uses the stored inputs and the TLT / IEF / HYG closes, from the trial's first session, 2007-05-09, and no regime is stored.
 - **If a bond close is missing for the session**, the shadow is not frozen that evening ("its data ends ..."), so it is never frozen on stale inputs.
 - Recorded as a design change of forward-test run 1 (Phase 10 pre-registration).
 - **Tests:** in `tests/test_forward_freeze.py`.
+
+**Rename (2026-10-15, before the shadow's first freeze): `rule_based-v2` -> `rule_bonds-v1`, `shadow_rule_v2` -> `shadow_rule_bonds`.**
+- The ACTIVE rules are named `rule_based-v<regime.version>`. Bumping `regime.version` to 2, as section 12.4 asks for any rule change, would have produced a second, different `rule_based-v2`.
+- The rules are unchanged. The trial, combination and holdout reports and the results above keep the name they were made with (`rule_based-v2`, `shadow_rule_v2`).
+- The rule's code moved from `quant/regime/bond_trial.py` to `quant/regime/rule_bonds.py`, because the nightly forward test depends on it. `bond_trial.py` keeps only the one-time trial, the holdout check and their reports.
+- Nothing had been frozen under the old names.
+
 
 ---
 
@@ -1909,7 +1916,7 @@ forward_test:                      # Phase 10 pre-registration (section 29); fro
   shadows:                         # portfolio name -> strategy, and the regime model or predictor it uses
     shadow_hmm: {strategy: regime_switch, regime_model: hmm-20261012T174554Z-5f979a}
     shadow_lr: {strategy: ml_select, predictor: logistic_regression-20261012T183319Z-cf2d50}
-    shadow_rule_v2: {strategy: regime_switch, regime_rule: rule_based-v2}   # added 2026-10-15 (section 12.5.3)
+    shadow_rule_bonds: {strategy: regime_switch, regime_rule: rule_bonds-v1}   # added 2026-10-15 (section 12.5.3)
 
 sentiment:                         # creator opinion factor (sentiment_proposal.md); research only, not in run-daily
   lookback_days: 14                # `quant sentiment fetch` looks this far back (--days overrides)
@@ -2093,13 +2100,13 @@ Fixed before the first forward session; a change after forward data exists is lo
 | `live` | `signals.strategy` (`regime_switch`) with the regime in use (rule-based) | what the signals show |
 | `shadow_hmm` | `regime_switch` with the regime of `hmm-20261012T174554Z-5f979a` (RETIRED; its final fit applied forward, filtered, same dwell) | shadow, never traded |
 | `shadow_lr` | `ml_select` with `logistic_regression-20261012T183319Z-cf2d50` (35 inputs; probabilities from its saved final model), rule-based regime for exposure | shadow, never traded |
-| `shadow_rule_v2` | `regime_switch` with `rule_based-v2` (section 12.5), computed each evening; added 2026-10-15 (design change below) | shadow, never traded |
+| `shadow_rule_bonds` | `regime_switch` with `rule_bonds-v1` (section 12.5, tested as `rule_based-v2`), computed each evening; added 2026-10-15 (design change below) | shadow, never traded |
 | `real` | the owner's account: `data/positions.csv` once at the start, then `data/trades.csv` replayed | what was actually held |
 | `SPY` | buy-and-hold from the start | benchmark |
 
 Shadows are listed in `forward_test.shadows`; they never change the signals.
 
-*Design change (2026-10-15, during run 1, after three forward sessions): `shadow_rule_v2` added*, as decided by the holdout check of section 12.5.3.
+*Design change (2026-10-15, during run 1, after three forward sessions): `shadow_rule_bonds` added*, as decided by the holdout check of section 12.5.3.
 - Run 1 is not restarted, and `live`, the other shadows and `real` are unchanged.
 - The new shadow is frozen from the first evening after it was added (2026-10-15), with no backfill. Its earlier sessions (2026-10-12 .. 10-14) count as missed, and its paper portfolio holds cash over them.
 - Its 12-month comparison with `live` uses the rule below and runs to about 252 sessions after 2026-10-15, so it ends a few days after run 1's verdict.

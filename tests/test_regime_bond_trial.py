@@ -17,7 +17,7 @@ from quant.regime.bond_trial import (
     V2,
     BondTrialOutcome,
     bond_inputs,
-    candidate_scores,
+    bond_scores,
     evaluate,
     point_in_time,
     trial_regimes,
@@ -58,11 +58,11 @@ class InputsTest(unittest.TestCase):
 
     def test_scores_add_the_signs_and_need_every_input(self):
         inputs = v1_inputs(1.0).iloc[:3].assign(**{CREDIT: [0.01, -0.02, np.nan], SAFE_HAVEN: [0.03, -0.01, 0.0]})
-        scores = candidate_scores(inputs, REGIME, BOND_INPUTS)
+        scores = bond_scores(inputs, REGIME, BOND_INPUTS)
         self.assertEqual(scores.iloc[0], 6)  # 4 + 0 (VIX) + 1 + 1
         self.assertEqual(scores.iloc[1], 2)  # 4 - 1 - 1
         self.assertTrue(np.isnan(scores.iloc[2]))  # a missing input is never 0
-        self.assertEqual(candidate_scores(inputs, REGIME, (SAFE_HAVEN,)).iloc[2], 4)
+        self.assertEqual(bond_scores(inputs, REGIME, (SAFE_HAVEN,)).iloc[2], 4)
 
 
 class RegimesTest(unittest.TestCase):
@@ -145,8 +145,8 @@ class HoldoutDecisionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             text = write_holdout_report(check, directory, datetime(2026, 10, 15, tzinfo=timezone.utc)).read_text(
                 encoding="utf-8")
-        self.assertIn("## Decision: add shadow_rule_v2", text)
-        self.assertIn("Sharpe 1.30 with rule_based-v2 vs 1.40 with rule_based-v1 (lower)", text)
+        self.assertIn("## Decision: add shadow_rule_bonds", text)
+        self.assertIn("Sharpe 1.30 with rule_bonds-v1 vs 1.40 with rule_based-v1 (lower)", text)
         self.assertIn("1 of 245 sessions where the two regimes differ", text)
         self.assertIn("| 2026-03-02 | BULL | SIDEWAYS |", text)
 

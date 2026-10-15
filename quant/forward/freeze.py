@@ -56,11 +56,11 @@ def shadow_targets(engine: Engine, settings: Settings, shadow: ShadowSettings) -
         fit = load_active_hmm(_model_row(engine, shadow.regime_model), settings)
         regimes, _ = active_hmm_regime(fit, load_observations(engine, settings), settings.regime.min_dwell_days)
         source = shadow.regime_model
-    elif shadow.regime_rule is not None:  # rule_based-v2, computed each evening (proposal section 12.5.3)
-        from quant.regime.bond_trial import rule_v2_regime
+    elif shadow.regime_rule is not None:  # rule_bonds-v1, computed each evening (proposal section 12.5.3)
+        from quant.regime.rule_bonds import rule_bonds_regime
 
         try:
-            regimes = rule_v2_regime(engine, settings)
+            regimes = rule_bonds_regime(engine, settings)
         except ValueError as exc:
             raise ActiveModelError(f"{shadow.regime_rule}: {exc}") from exc
         source = shadow.regime_rule

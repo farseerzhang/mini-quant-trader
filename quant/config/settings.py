@@ -501,7 +501,7 @@ class LoggingSettings:
 
 
 RESERVED_PORTFOLIOS = ("live", "real", "SPY")
-REGIME_RULES = ("rule_based-v2",)  # forward_test.shadows.<name>.regime_rule (proposal section 12.5.3)
+REGIME_RULES = ("rule_bonds-v1",)  # forward_test.shadows.<name>.regime_rule (proposal section 12.5.3)
 
 
 @dataclass(frozen=True)
