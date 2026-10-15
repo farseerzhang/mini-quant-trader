@@ -730,8 +730,15 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
     if result.frozen:
         print(f"Froze {session} for {', '.join(result.frozen)} (deadline {result.deadline:%Y-%m-%d %H:%M} UTC).")
     elif result.missed:
-        _error(f"{session} was NOT frozen: the next open ({result.deadline:%Y-%m-%d %H:%M} UTC) has passed. "
-               "It is counted as missed (no backfill); run run-daily each evening after the close.")
+        missing = [n for n in ("live", *settings.forward_test.shadows) if n not in result.already]
+        if result.already:  # e.g. a shadow added after this session's deadline
+            print(f"{session} was already frozen for {', '.join(result.already)}; left as it was.")
+            _error(f"{session} was NOT frozen for {', '.join(missing)}: the next open "
+                   f"({result.deadline:%Y-%m-%d %H:%M} UTC) has passed. Counted as missed for "
+                   f"{'it' if len(missing) == 1 else 'them'} (no backfill).")
+        else:
+            _error(f"{session} was NOT frozen: the next open ({result.deadline:%Y-%m-%d %H:%M} UTC) has passed. "
+                   "It is counted as missed (no backfill); run run-daily each evening after the close.")
     else:
         print(f"{session} was already frozen ({', '.join(result.already)}); left as it was.")
     if paper is not None:
