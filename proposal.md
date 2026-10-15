@@ -710,7 +710,7 @@ regime_switch                  CAGR    Sharpe   max DD   invested   turnover   y
 - The trial is not repeated with other definitions on this data.
 - Possible next step, only if you decide on it, and pre-registered before the holdout is viewed: a holdout check of v2 against v1 (as section 13.2). Only if that holds, v2 as a forward-test shadow.
 
-### 12.5.3 Holdout check of rule_based-v2 (DRAFT 2026-10-15; not registered, nothing run)
+### 12.5.3 Holdout check of rule_based-v2 (registered 2026-10-15, before viewing)
 
 Decided by you on 2026-10-15 (option A): the holdout check first, the shadow only after it. This will be **holdout evaluation #3** (#1: section 15.4.8, #2: section 13.2).
 
@@ -730,8 +730,8 @@ Decided by you on 2026-10-15 (option A): the holdout check first, the shadow onl
 
 | Holdout result (v2 vs v1, `regime_switch`) | Action |
 |---|---|
-| Sharpe at least as high **and** max drawdown no deeper | Add v2 to forward-test run 1 as shadow `shadow_v2` |
-| One better, one worse | Add `shadow_v2` as well: one year cannot settle it, and the forward test is the stronger test |
+| Sharpe at least as high **and** max drawdown no deeper | Add v2 to forward-test run 1 as shadow `shadow_rule_v2` |
+| One better, one worse | Add `shadow_rule_v2` as well: one year cannot settle it, and the forward test is the stronger test |
 | Both worse | No shadow. v2 is closed: not changed and not tested again on this data |
 
 **Descriptive only:**
@@ -746,10 +746,18 @@ Decided by you on 2026-10-15 (option A): the holdout check first, the shadow onl
 
 **If a shadow follows:** a new shadow type that computes `rule_based-v2` each evening from the stored inputs and the TLT / IEF / HYG closes (the code of section 12.5), with tests. It is recorded as a design change of run 1 (Phase 10), frozen from the first evening after it is added, with no backfill; its missed sessions are counted.
 
-**To confirm before registering:**
+**Confirmed as drafted (2026-10-15):**
 - (a) the decision table, in particular "one better, one worse -> shadow";
 - (b) the window ends 2026-10-09, before the forward test;
 - (c) holdings carried in (as section 13.2), with the fresh start descriptive only.
+
+**As built (2026-10-15, before the run):**
+- **Code:** `run_holdout_check` and `write_holdout_report` in `quant/regime/bond_trial.py`.
+  - The window is fixed in code: `HOLDOUT_START` 2025-10-10, `HOLDOUT_END` 2026-10-09.
+  - The decision table is `holdout_decision`: only "both worse" closes v2.
+  - The shadow's name was changed from `shadow_v2` to `shadow_rule_v2` on 2026-10-15, before the run, to make it clearer. This is a name only; the decision rules are unchanged.
+- **Tests:** in `tests/test_regime_bond_trial.py`.
+- **Command:** `python -m quant regime-rule-v2-holdout` is the one-time run. It writes `reports/regime/rule-v2-holdout-<time>.md` and stores nothing.
 
 ---
 

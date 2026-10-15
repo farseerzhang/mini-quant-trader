@@ -200,6 +200,130 @@ def input_correlations(inputs: pd.DataFrame, spy: pd.Series, start, end) -> pd.D
     return pd.DataFrame(rows).T.rename_axis("input")
 
 
+# Holdout check of rule_based-v2 (section 12.5.3; holdout evaluation #3).
+
+HOLDOUT_START = pd.Timestamp("2025-10-10")  # the fixed holdout start
+HOLDOUT_END = pd.Timestamp("2026-10-09")  # the last session before forward-test run 1 started
+SHADOW, NO_SHADOW = "add shadow_rule_v2", "no shadow; v2 is closed"
+
+
+@dataclass(frozen=True)
+class HoldoutCheck:
+    start: pd.Timestamp
+    end: pd.Timestamp
+    carried: pd.DataFrame  # portfolio x metrics on the window, holdings carried in (decides)
+    fresh: pd.DataFrame  # the same, started from cash on the window's first session (descriptive)
+    regime_days: pd.DataFrame  # regime x {v1, v2}: sessions in the window
+    differing: pd.DataFrame  # sessions where v1 and v2 differ
+    decision: str
+    sharpe_ok: bool
+    drawdown_ok: bool
+
+
+def holdout_decision(sharpe: float, baseline_sharpe: float, drawdown: float, baseline_drawdown: float):
+    """The table of section 12.5.3: only 'both worse' closes v2."""
+    sharpe_ok, drawdown_ok = sharpe >= baseline_sharpe, drawdown >= baseline_drawdown
+    return (SHADOW if sharpe_ok or drawdown_ok else NO_SHADOW), sharpe_ok, drawdown_ok
+
+
+def run_holdout_check(engine: Engine, settings: Settings) -> HoldoutCheck:
+    from quant.backtest.engine import simulate
+    from quant.backtest.metrics import period_metrics
+    from quant.backtest.orders import order_targets
+    from quant.strategies import PANEL_COLUMNS, build_strategies
+
+    stocks = list(settings.market.stocks)
+    inputs, _ = load_trial_inputs(engine, settings)
+    full = trial_regimes(inputs, settings.regime)
+    regimes = {V1: full[V1], V2: full[V2]}
+    prices = load_prices(engine, [*stocks, "SPY"])
+    panel = queries.load_feature_panel(engine, settings.features.feature_version, stocks, PANEL_COLUMNS)
+    sessions = prices.close.index
+    history = sessions[(sessions >= regimes[V2].index[0]) & (sessions <= HOLDOUT_END)]
+    window = history[history >= HOLDOUT_START]
+    if len(window) == 0 or window[-1] != HOLDOUT_END:
+        raise ValueError(f"prices must cover {HOLDOUT_START.date()} .. {HOLDOUT_END.date()}")
+    bt = settings.backtest
+    strategies = {s.name: s for s in build_strategies(settings) if s.name in ("regime_switch", "regime_switch_bear50")}
+
+    def metrics(index):
+        out = {}
+        for strategy_name, strategy in strategies.items():
+            for regime_name, regime in regimes.items():
+                weights = strategy.weights(panel, regime).reindex(index).fillna(0.0)
+                sim = simulate(order_targets(weights, bt.min_trade_weight), prices, bt)
+                out[portfolio_name(strategy_name, regime_name)] = period_metrics(
+                    sim.value, sim.invested, sim.orders, sim.trades, window[0], window[-1])
+        return pd.DataFrame(out).T
+
+    carried, fresh = metrics(history), metrics(window)
+    v1, v2 = regimes[V1].reindex(window), regimes[V2].reindex(window)
+    days = pd.DataFrame({V1: v1.value_counts(), V2: v2.value_counts()}).reindex([BULL, SIDEWAYS, BEAR]).fillna(0)
+    differ = pd.DataFrame({V1: v1, V2: v2})[v1 != v2].rename_axis("session")
+    a, b = portfolio_name("regime_switch", V2), portfolio_name("regime_switch", V1)
+    decision, sharpe_ok, drawdown_ok = holdout_decision(carried.loc[a, "sharpe"], carried.loc[b, "sharpe"],
+                                                        carried.loc[a, "max_drawdown"], carried.loc[b, "max_drawdown"])
+    return HoldoutCheck(window[0], window[-1], carried, fresh, days.astype(int), differ, decision, sharpe_ok,
+                        drawdown_ok)
+
+
+def _metric_table(frame: pd.DataFrame) -> pd.DataFrame:
+    shown = pd.DataFrame(index=frame.index)
+    for key in ("cagr", "max_drawdown", "avg_invested"):
+        if key in frame:
+            shown[key] = frame[key].map(percent)
+    if "sharpe" in frame:
+        shown["sharpe"] = frame["sharpe"].map(lambda v: f"{v:.2f}")
+    if "turnover" in frame:
+        shown["turnover"] = frame["turnover"].map(lambda v: "-" if pd.isna(v) else f"{v:.1f}x")
+    return shown.rename_axis("portfolio")
+
+
+def write_holdout_report(check: HoldoutCheck, reports_dir: str | Path, now: datetime) -> Path:
+    a, b = portfolio_name("regime_switch", V2), portfolio_name("regime_switch", V1)
+    c = check.carried
+    lines = [
+        f"# Section 12.5.3: holdout check of {V2} ({now:%Y-%m-%d %H:%M} UTC)",
+        "",
+        f"Holdout evaluation #3, pre-registered 2026-10-15. Window {check.start.date()} .. {check.end.date()} "
+        f"(the fixed holdout start to the last session before forward-test run 1); {len(check.differing)} of "
+        f"{int(check.regime_days[V1].sum())} sessions where the two regimes differ. Both recursions start "
+        "2007-05-09; nothing refit or changed. One year is a short test (Sharpe +/-1): the check can stop v2, "
+        "not confirm it.",
+        "",
+        f"## Decision: {check.decision}",
+        "",
+        f"regime_switch, holdings carried in: Sharpe {c.loc[a, 'sharpe']:.2f} with {V2} vs {c.loc[b, 'sharpe']:.2f} "
+        f"with {V1} ({'at least as high' if check.sharpe_ok else 'lower'}); max drawdown "
+        f"{percent(c.loc[a, 'max_drawdown'])} vs {percent(c.loc[b, 'max_drawdown'])} "
+        f"({'no deeper' if check.drawdown_ok else 'deeper'}).",
+        "",
+        "## Holdings carried in (decides for regime_switch; bear50 descriptive)",
+        "",
+        markdown_table(_metric_table(check.carried)),
+        "",
+        "## Started from cash on the window's first session (descriptive)",
+        "",
+        markdown_table(_metric_table(check.fresh)),
+        "",
+        "## Regime days in the window",
+        "",
+        markdown_table(check.regime_days.rename_axis("regime")),
+        "",
+        "## Sessions where v1 and v2 differ",
+        "",
+        markdown_table(check.differing.set_axis([d.date() for d in check.differing.index]).rename_axis("session"))
+        if len(check.differing) else "None.",
+        "",
+        "Research output, not advice.",
+    ]
+    directory = Path(reports_dir) / "regime"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"rule-v2-holdout-{now:%Y%m%dT%H%M%SZ}.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def write_trial_report(outcome: BondTrialOutcome, reports_dir: str | Path, now: datetime) -> Path:
     c = outcome.comparison
     overall = c.overall

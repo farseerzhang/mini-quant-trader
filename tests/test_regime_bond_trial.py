@@ -122,5 +122,34 @@ class GatesAndReportTest(unittest.TestCase):
         self.assertIn("higher in 2 of 2 validation years", text)
 
 
+class HoldoutDecisionTest(unittest.TestCase):
+    def test_only_both_worse_closes_v2(self):
+        from quant.regime.bond_trial import NO_SHADOW, SHADOW, holdout_decision
+
+        self.assertEqual(holdout_decision(1.5, 1.4, -0.10, -0.12)[0], SHADOW)  # both at least as good
+        self.assertEqual(holdout_decision(1.4, 1.4, -0.12, -0.12)[0], SHADOW)  # equal counts as not worse
+        self.assertEqual(holdout_decision(1.3, 1.4, -0.10, -0.12)[0], SHADOW)  # one better, one worse
+        self.assertEqual(holdout_decision(1.5, 1.4, -0.13, -0.12)[0], SHADOW)
+        self.assertEqual(holdout_decision(1.3, 1.4, -0.13, -0.12), (NO_SHADOW, False, False))  # both worse
+
+    def test_report(self):
+        from quant.regime.bond_trial import SHADOW, HoldoutCheck, write_holdout_report
+
+        rows = {portfolio_name("regime_switch", V1): {"sharpe": 1.4, "max_drawdown": -0.11, "cagr": 0.26},
+                portfolio_name("regime_switch", V2): {"sharpe": 1.3, "max_drawdown": -0.09, "cagr": 0.24}}
+        frame = pd.DataFrame(rows).T
+        days = pd.DataFrame({V1: [240, 3, 2], V2: [236, 6, 3]}, index=[BULL, SIDEWAYS, BEAR])
+        differ = pd.DataFrame({V1: [BULL], V2: [SIDEWAYS]}, index=[pd.Timestamp("2026-03-02")])
+        check = HoldoutCheck(pd.Timestamp("2025-10-10"), pd.Timestamp("2026-10-09"), frame, frame, days, differ,
+                             SHADOW, False, True)
+        with tempfile.TemporaryDirectory() as directory:
+            text = write_holdout_report(check, directory, datetime(2026, 10, 15, tzinfo=timezone.utc)).read_text(
+                encoding="utf-8")
+        self.assertIn("## Decision: add shadow_rule_v2", text)
+        self.assertIn("Sharpe 1.30 with rule_based-v2 vs 1.40 with rule_based-v1 (lower)", text)
+        self.assertIn("1 of 245 sessions where the two regimes differ", text)
+        self.assertIn("| 2026-03-02 | BULL | SIDEWAYS |", text)
+
+
 if __name__ == "__main__":
     unittest.main()

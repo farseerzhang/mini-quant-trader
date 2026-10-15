@@ -98,6 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     combo_command.add_argument("--db", help=db_help)
 
+    holdout_command = commands.add_parser(
+        "regime-rule-v2-holdout",
+        help="the pre-registered one-time holdout check of rule_based-v2 (section 12.5.3; holdout evaluation #3; "
+        "writes reports/regime/rule-v2-holdout-*.md, stores nothing)",
+    )
+    holdout_command.add_argument("--db", help=db_help)
+
     backtest_command = commands.add_parser(
         "backtest",
         help="backtest the rule-based strategies against SPY, equal weight and a random baseline, and save the results",
@@ -352,6 +359,29 @@ def _run_combo_trial(args: argparse.Namespace, settings: Settings) -> int:
           f"gates {verdict}")
     for result in outcome.gates.results:
         print(f"  {result.name:28s} {result.status:5s} {result.observed}")
+    print(f"\n{path}")
+    return 0
+
+
+def _run_rule_v2_holdout(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import datetime, timezone
+
+    from quant.regime.bond_trial import run_holdout_check, write_holdout_report
+
+    engine = _engine(settings, args.db)
+    try:
+        print("Section 12.5.3: holdout check of rule_based-v2 (holdout evaluation #3)", flush=True)
+        check = run_holdout_check(engine, settings)
+        path = write_holdout_report(check, settings.retrain.reports_dir, datetime.now(timezone.utc))
+        queries.record_pipeline_run(engine, command="regime-rule-v2-holdout", stage="holdout", status="OK",
+                                    message=f"section 12.5.3 (holdout evaluation #3): {check.decision}")
+    except ValueError as exc:
+        _error(f"Holdout check failed to run: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(f"{check.start.date()} .. {check.end.date()}: Sharpe {'at least as high' if check.sharpe_ok else 'lower'}, "
+          f"max drawdown {'no deeper' if check.drawdown_ok else 'deeper'} -> {check.decision}")
     print(f"\n{path}")
     return 0
 
@@ -787,6 +817,7 @@ COMMANDS = {
     "calculate-regime": lambda args, settings: _run_regime(args, settings),
     "regime-bond-trial": lambda args, settings: _run_bond_trial(args, settings),
     "regime-combo-trial": lambda args, settings: _run_combo_trial(args, settings),
+    "regime-rule-v2-holdout": lambda args, settings: _run_rule_v2_holdout(args, settings),
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),
