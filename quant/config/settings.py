@@ -589,6 +589,9 @@ class ExtractionSettings:
 
     backend: str
     model: str  # passed to the backend, e.g. sonnet / haiku for claude_code
+    # Reports, summaries and the dashboard: per video the opinions of the first of these models
+    # that extracted it (so a video extracted by two models counts once).
+    report_models: tuple[str, ...]
     prompt_version: int  # bump when the prompt changes; opinions of each version are kept apart
     chunk_minutes: float  # transcripts are sent in pieces of this length ...
     chunk_overlap_seconds: float  # ... each starting this much before the previous one ends
@@ -603,6 +606,9 @@ class ExtractionSettings:
             raise ConfigError(f"sentiment.extraction.backend must be one of {', '.join(EXTRACTION_BACKENDS)}")
         if not str(self.model).strip():
             raise ConfigError("sentiment.extraction.model must not be empty")
+        if not self.report_models or not all(self.report_models) or len(set(self.report_models)) < len(
+                self.report_models):
+            raise ConfigError("sentiment.extraction.report_models must list distinct, non-empty model names")
         if self.prompt_version < 1:
             raise ConfigError("sentiment.extraction.prompt_version must be >= 1")
         if self.chunk_minutes <= 0 or not 0 <= self.chunk_overlap_seconds < self.chunk_minutes * 60:
@@ -980,7 +986,8 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         sentiment=_build(SentimentSettings, "sentiment", _section(raw, "sentiment"),
                          {"request_delay_seconds": _as_delay_range, "channels": _as_channels,
                           "gold": _subsection(GoldSettings, "sentiment.gold"),
-                          "extraction": _subsection(ExtractionSettings, "sentiment.extraction"),
+                          "extraction": _subsection(ExtractionSettings, "sentiment.extraction",
+                                                    {"report_models": _as_name_tuple}),
                           "summary": _subsection(SummarySettings, "sentiment.summary")}),
         altdata=_build(AltdataSettings, "altdata", _section(raw, "altdata"),
                        {"sec": _subsection(SecSettings, "altdata.sec", {"insider_backfill_from": _as_date,

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # run from a check
 from quant.config.settings import DEFAULT_CONFIG_PATH, load_settings  # noqa: E402
 from quant.dashboard import data  # noqa: E402
 from quant.persistence.database import create_db_engine  # noqa: E402
+from quant.sentiment.report import models_used  # noqa: E402
 
 # Regime colors: the validated palette of the report chart (quant/regime/chart.py).
 REGIME_COLORS = alt.Scale(domain=["BULL", "SIDEWAYS", "BEAR"], range=["#2a78d6", "#1baf7a", "#eb6834"])
@@ -27,7 +28,11 @@ SIGNAL_ICONS = {"BUY": "▲ BUY", "REDUCE": "▼ REDUCE", "EXIT": "✕ EXIT", "H
 PORTFOLIO_COLORS = {"regime_switch": "#2a78d6", "SPY": "#52514e", "equal_weight": "#eb6834", "trend": "#1baf7a",
                     "mean_reversion": "#9a55d4", "regime_switch_bear50": "#d4a20b"}
 OTHER_COLORS = ["#c94f8a", "#4a9fb5", "#7d7a6f"]
-PAGES = ("Status", "Market", "Signals", "Forward test", "Stock detail", "Models", "Backtest")
+PAGES = ("Status", "Market", "Signals", "Sentiment", "Forward test", "Stock detail", "Models", "Backtest")
+# Creator stances: the report's marks; up/down in the green/orange of the MACD bars.
+STANCES = ["▲ bullish", "▼ bearish", "◆ conditional", "● neutral"]
+STANCE_COLORS = alt.Scale(domain=STANCES, range=["#1baf7a", "#eb6834", "#d4a20b", "#898781"])
+STANCE_SHAPES = alt.Scale(domain=STANCES, range=["triangle-up", "triangle-down", "diamond", "circle"])
 # Fixed colors per forward-test portfolio (a color always means the same portfolio).
 FORWARD_COLORS = {"live": "#2a78d6", "real": "#eb6834", "SPY": "#52514e", "shadow_hmm": "#1baf7a",
                   "shadow_lr": "#9a55d4"}
@@ -42,8 +47,8 @@ def _arguments():
 
 
 @st.cache_resource
-def _engine(db_path: str):
-    return create_db_engine(db_path, 5000)
+def _engine(db_path: str, busy_timeout_ms: int):
+    return create_db_engine(db_path, busy_timeout_ms)
 
 
 def _pct(value, digits=1):
@@ -158,6 +163,93 @@ def page_signals(engine, settings):
         st.dataframe(shown[["symbol", "quantity", "cost_basis", "managed"]], hide_index=True)
 
 
+def _quotes_table(quotes: pd.DataFrame, show_ticker: bool = True):
+    columns = ["date", "ticker", "channel", "stance", "horizon", "conviction", "condition", "action", "quote",
+               "link", "reasoning", "title", "model"]
+    if not show_ticker:
+        columns.remove("ticker")
+    st.dataframe(quotes[columns], hide_index=True, width="stretch", column_config={
+        "date": st.column_config.DateColumn("effective"),
+        "channel": st.column_config.TextColumn("creator"),
+        "conviction": st.column_config.NumberColumn(format="%d", help="1 low .. 3 high"),
+        "quote": st.column_config.TextColumn(width="large"),
+        "link": st.column_config.LinkColumn("video", display_text="▶ open at the quote"),
+        "reasoning": st.column_config.TextColumn("reason"),
+    })
+
+
+def page_sentiment(engine, settings):
+    days = data.sentiment_days(engine, settings)
+    if not days:
+        st.info("No creator opinions yet: run `python -m quant sentiment run` (fetch, extract, summarize, report).")
+        return
+    day = st.selectbox("Effective session", days, format_func=lambda d: f"{d:%Y-%m-%d (%a)}")
+    view = data.sentiment_day(engine, settings, day)
+    extraction, summary = settings.sentiment.extraction, settings.sentiment.summary
+    st.caption(f"Opinions published after the previous session's open count from this session's open. "
+               f"Extraction {extraction.backend} {models_used(view.opinions)}, prompt v{extraction.prompt_version} "
+               f"({extraction.model} accepted provisionally; per video the first of "
+               f"{', '.join(extraction.report_models)}); "
+               f"summaries {summary.backend}/{summary.model}, written from verified opinions only. "
+               "Research only: a creator's opinion is not a signal.")
+    verified, opinions = view.verified, view.opinions
+    with st.container(horizontal=True):
+        st.metric("verified opinions", len(verified), border=True)
+        st.metric("creators", verified["channel"].nunique(), border=True)
+        st.metric("tickers", verified["ticker"].nunique(), border=True)
+        st.metric("not counted", len(opinions) - len(verified), border=True,
+                  help="quotes that did not match the transcript, and names that are not a known ticker")
+
+    st.subheader("Market mood")
+    if view.market:
+        st.write(view.market)
+    else:
+        st.caption("No summary for this day yet: run `python -m quant sentiment summarize`.")
+
+    pool_only = st.toggle("Only stocks in my pool", help="ETFs and indices are always shown")
+    config = {"Pool": st.column_config.TextColumn("pool", help="★ = in your stock pool"),
+              "Net": st.column_config.NumberColumn(format="%+d", help="creators bullish minus creators bearish"),
+              "Creators": st.column_config.TextColumn(width="large", help="▲ bullish ▼ bearish ◆ conditional "
+                                                      "● neutral; S/M/L = short / medium / long term")}
+    stocks = view.stocks[view.stocks["Pool"] == "★"] if pool_only and not view.stocks.empty else view.stocks
+    for title, table in (("Stocks", stocks), ("ETFs and indices", view.etfs)):
+        if table.empty:
+            continue
+        st.subheader(title)
+        st.dataframe(table, hide_index=True, width="stretch", column_config=config)
+    shown = [t for table in (stocks, view.etfs) if not table.empty for t in table["Stock"]]
+    if not shown:
+        st.caption("No verified opinions on stocks in your pool this day." if pool_only
+                   else "No verified opinions this day.")
+    else:
+        ticker = st.selectbox("Summary and quotes for", shown)
+        entry = view.summaries.get(ticker)
+        if entry is None:
+            st.caption("No summary for this stock yet.")
+        else:
+            if entry["disagreement"]:
+                st.warning("Creators disagree on this stock.")
+            st.write(entry["summary"])
+        _quotes_table(view.quotes[view.quotes["ticker"] == ticker], show_ticker=False)
+        with st.expander(f"All {len(view.quotes)} verified quotes of the day"):
+            _quotes_table(view.quotes)
+
+    unverified = opinions[opinions["verification"] == "UNVERIFIED"]
+    unresolved = opinions[opinions["verification"] == "UNRESOLVED"]
+    if len(unverified) or len(unresolved):
+        with st.expander(f"Not counted ({len(unverified) + len(unresolved)})"):
+            if len(unverified):
+                st.markdown("**Quotes that did not match the transcript**")
+                st.dataframe(unverified[["ticker", "channel", "stance", "quote"]], hide_index=True, width="stretch")
+            if len(unresolved):
+                st.markdown("**Names that are not a known ticker** (add real stocks to "
+                            "`config/sentiment_aliases.yaml`)")
+                names = unresolved["name_as_said"].value_counts().rename_axis("name").reset_index()
+                st.dataframe(names, hide_index=True)
+    st.caption(f"The same data as `{Path(summary.reports_dir).as_posix()}/{day:%Y-%m-%d}.md`; one stock over time: Stock detail, or "
+               "`python -m quant sentiment stock <ticker>`.")
+
+
 def page_stock(engine, settings):
     symbol = st.selectbox("Stock", list(settings.market.stocks))
     years = st.radio("Period", [1, 2, 5], index=1, horizontal=True, format_func=lambda y: f"{y} year" + ("s" if y > 1 else ""))
@@ -173,7 +265,16 @@ def page_stock(engine, settings):
                                                    range=["#0b0b0b", "#2a78d6", "#eb6834"]), title=None,
                         legend=alt.Legend(orient="top")),
         tooltip=["date:T", "line:N", alt.Tooltip("value:Q", format=",.2f")]).properties(height=280)
-    rsi = alt.Chart(frame).mark_line(strokeWidth=2, color="#2a78d6").encode(
+    opinions = data.stock_opinions(engine, settings, symbol, frame["date"].iloc[0].date())
+    marks = data.opinion_marks(opinions, frame)
+    if not marks.empty:  # creator opinions on the close of their effective session
+        price = alt.layer(price, alt.Chart(marks).mark_point(filled=True, size=110, opacity=0.9).encode(
+            x="date:T", y="close:Q",
+            color=alt.Color("stance:N", scale=STANCE_COLORS, title=None, legend=alt.Legend(orient="top")),
+            shape=alt.Shape("stance:N", scale=STANCE_SHAPES, legend=None),  # the labels carry the shapes
+            tooltip=["date:T", "stance:N", alt.Tooltip("count:Q", title="opinions"), "creators:N"],
+        )).resolve_scale(color="independent")
+    rsi =alt.Chart(frame).mark_line(strokeWidth=2, color="#2a78d6").encode(
         x=alt.X("date:T", title=None, axis=alt.Axis(labels=False, ticks=False)), y=alt.Y("rsi14:Q", scale=alt.Scale(domain=[0, 100]), title="RSI 14", axis=alt.Axis(minExtent=70)),
         tooltip=["date:T", alt.Tooltip("rsi14:Q", format=".0f")]).properties(height=110)
     rules = alt.Chart(pd.DataFrame({"y": [settings.strategies.mean_reversion.rsi_entry,
@@ -190,6 +291,21 @@ def page_stock(engine, settings):
         st.altair_chart(chart, width="stretch")
     st.caption(f"Dashed lines: the dip-buy RSI entry ({settings.strategies.mean_reversion.rsi_entry:g}) "
                f"and exit ({settings.strategies.mean_reversion.rsi_exit:g}).")
+
+    st.subheader("Creator opinions")
+    if opinions.empty:
+        st.caption(f"No verified creator opinions on {symbol} in this period "
+                   "(`python -m quant sentiment run` collects them).")
+        return
+    counts = opinions["stance"].value_counts()
+    with st.container(horizontal=True):
+        for stance in STANCES:
+            st.metric(stance, int(counts.get(stance, 0)), border=True)
+    if marks["date"].nunique() < opinions["date"].nunique():
+        st.caption("Opinions effective after the last stored close are listed but not yet on the chart.")
+    _quotes_table(opinions.sort_values("date", ascending=False), show_ticker=False)
+    st.caption("Marks sit on the close of the session the opinion counts from (its effective date). "
+               "Research only: a creator's opinion is not a signal.")
 
 
 def page_models(engine, settings):
@@ -359,14 +475,15 @@ def main():
     st.set_page_config(page_title="Mini Quant Trader", layout="wide")
     args = _arguments()
     settings = load_settings(args.config)
-    engine = _engine(args.db or settings.database.path)
+    engine = _engine(args.db or settings.database.path, settings.database.busy_timeout_ms)
     st.sidebar.title("Mini Quant Trader")
     page = st.sidebar.radio("Page", PAGES, label_visibility="collapsed")
     st.sidebar.caption(data.NOTICE)
     st.sidebar.caption("Read-only. Refresh after `python -m quant run-daily`.")
     st.title(page)
     st.caption(data.NOTICE)
-    {"Status": page_status, "Market": page_market, "Signals": page_signals, "Stock detail": page_stock,
+    {"Status": page_status, "Market": page_market, "Signals": page_signals, "Sentiment": page_sentiment,
+     "Stock detail": page_stock,
      "Models": page_models, "Backtest": page_backtest, "Forward test": page_forward}[page](engine, settings)
 
 

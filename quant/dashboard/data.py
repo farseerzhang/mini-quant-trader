@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, inspect, select
 
 from quant.backtest.data import load_prices
 from quant.config.settings import Settings
@@ -256,3 +257,88 @@ def latest_frozen(engine: Engine, run_id: int | None = None) -> tuple[pd.Timesta
                             .order_by(ft.c.portfolio, ft.c.target_weight.desc(), ft.c.symbol)).mappings().all()
     return pd.Timestamp(last), headers, pd.DataFrame([dict(r) for r in rows],
                                                      columns=["portfolio", "symbol", "target_weight", "close", "score"])
+
+
+# Creator opinions (sentiment_proposal.md 8.1): the same data as `quant sentiment report` / `stock`.
+
+def _has_opinions(engine: Engine) -> bool:
+    return inspect(engine).has_table("sentiment_opinions")  # not created until `quant sentiment ...` runs
+
+
+def sentiment_days(engine: Engine, settings: Settings) -> list[date]:
+    """Effective sessions with opinions of the configured extractor (report_models), newest first."""
+    if not _has_opinions(engine):
+        return []
+    from quant.sentiment.summarize import load_opinions
+
+    return sorted(set(load_opinions(engine, settings)["effective_date"]), reverse=True)
+
+
+@dataclass(frozen=True)
+class SentimentDay:
+    day: date
+    opinions: pd.DataFrame  # every opinion effective that day (verified or not)
+    verified: pd.DataFrame
+    market: str | None  # the market-mood paragraph
+    summaries: dict[str, dict]  # ticker -> stored summary (written from exactly these verified opinions)
+    stocks: pd.DataFrame  # the report's table: Stock, Pool, Bull, Bear, Cond, Neutral, Net, Creators
+    etfs: pd.DataFrame
+    quotes: pd.DataFrame  # one row per verified opinion, with a link to the second in the video
+
+
+def quote_rows(opinions: pd.DataFrame) -> pd.DataFrame:
+    from quant.sentiment.report import ACTION, MARKS, _clock, _condition, _link
+
+    columns = ["date", "ticker", "channel", "stance", "horizon", "conviction", "condition", "action", "quote",
+               "reasoning", "at", "link", "title", "model"]
+    if opinions.empty:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame({
+        "date": pd.to_datetime(opinions["effective_date"]),
+        "ticker": opinions["ticker"], "channel": opinions["channel"],
+        "stance": [f"{MARKS[s]} {s.lower()}" for s in opinions["stance"]],
+        "horizon": opinions["horizon"].str.lower(), "conviction": opinions["conviction"],
+        "condition": opinions["condition"].map(_condition), "action": opinions["action"].map(ACTION),
+        "quote": opinions["quote"], "reasoning": opinions["reasoning"].fillna(""),
+        "at": opinions["start_seconds"].map(_clock),
+        "link": [_link(o) for o in opinions.itertuples(index=False)], "title": opinions["title"],
+        "model": opinions["model"],
+    })[columns].reset_index(drop=True)
+
+
+def sentiment_day(engine: Engine, settings: Settings, day: date) -> SentimentDay:
+    from quant.sentiment import tables as st
+    from quant.sentiment.report import stock_table
+    from quant.sentiment.summarize import inputs_hash, load_opinions, load_summaries
+
+    opinions = load_opinions(engine, settings, day, day)
+    verified = opinions[opinions["verification"] == "VERIFIED"]
+    summaries = load_summaries(engine, settings, day, inputs_hash(verified, settings)) if len(verified) else {}
+    pool = set(settings.market.stocks)
+    tables_ = {kind: stock_table(verified[verified["asset_type"] == kind], pool) for kind in ("STOCK", "ETF")}
+    market = summaries.pop(st.MARKET, {}).get("summary")
+    return SentimentDay(day, opinions, verified, market, summaries, tables_["STOCK"], tables_["ETF"],
+                        quote_rows(verified))
+
+
+def stock_opinions(engine: Engine, settings: Settings, symbol: str, start: date | None = None) -> pd.DataFrame:
+    """Verified opinions on one stock from `start` on, oldest first (quote_rows columns)."""
+    if not _has_opinions(engine):
+        return quote_rows(pd.DataFrame())
+    from quant.sentiment.report import stock_history
+
+    return quote_rows(stock_history(engine, settings, symbol, start))
+
+
+def opinion_marks(opinions: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
+    """One mark per effective session and stance, placed on that session's close (stock_detail frame).
+
+    Opinions effective after the last stored close (published tonight) have no mark yet.
+    """
+    columns = ["date", "stance", "close", "count", "creators"]
+    if opinions.empty or prices.empty:
+        return pd.DataFrame(columns=columns)
+    grouped = opinions.groupby(["date", "stance"], as_index=False).agg(
+        count=("channel", "size"), creators=("channel", lambda c: ", ".join(dict.fromkeys(c))))
+    marks = grouped.merge(prices[["date", "close"]], on="date", how="inner")
+    return marks[columns].sort_values(["date", "stance"]).reset_index(drop=True)

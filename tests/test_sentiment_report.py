@@ -25,32 +25,52 @@ from test_sentiment_extract import BOOK, PIECE, FakeBackend, _row
 DAY = date(2026, 10, 12)  # Friday-evening videos count from Monday
 
 
+def fake_settings(reports_dir):
+    """The project settings with the fake extractor and summarizer of these tests."""
+    extraction = dataclasses.replace(SETTINGS.sentiment.extraction, model="fake", report_models=("fake", "fake2"))
+    summary = dataclasses.replace(SETTINGS.sentiment.summary, model="fake", reports_dir=str(reports_dir))
+    return dataclasses.replace(SETTINGS, sentiment=dataclasses.replace(
+        SETTINGS.sentiment, extraction=extraction, summary=summary))
+
+
+def add_opinions(engine, settings):
+    """Two videos effective DAY: NVDA bull and bear, SPY bear, AMD unverified, ZZZQ unresolved."""
+    store.sync_channels(engine, SETTINGS.sentiment.channels)
+    segments = [{"start": float(line.start), "duration": 5.0, "text": line.text} for line in PIECE]
+    for video_id, handle in (("v1", "@NaNaShuoMeiGu"), ("v2", "@yttalkjun")):
+        channel = SETTINGS.sentiment.channel(handle)
+        store.insert_video(engine, {"video_id": video_id, "channel_id": channel.channel_id,
+                                    "title": f"title {video_id}", "published_at": datetime(2026, 10, 9, 22),
+                                    "transcript_status": "PENDING"})
+        store.save_transcript(engine, video_id, "zh-Hans", False, segments, segments, 1)
+    backend = FakeBackend([
+        {"opinions": [_row(), _row(ticker="SPY", stance="BEARISH", horizon="SHORT", quote="AMD 我暂时不看。"),
+                      _row(ticker="ZZZQ", name_as_said="某公司", quote="今天我们来聊聊英伟达。")]},
+        {"opinions": [_row(stance="BEARISH", horizon="SHORT", action="NONE", quote="今天我们来聊聊英伟达。"),
+                      _row(ticker="AMD", stance="NEUTRAL", quote="完全对不上的一句话")]},
+    ])
+    run_extract(engine, settings, backend, BOOK, videos_to_extract(engine, "claude_code", "fake", 1))
+    return load_opinions(engine, settings, verified_only=True)
+
+
+def summary_reply(verified):
+    def ids(ticker):
+        return [int(i) for i in verified[verified["ticker"] == ticker]["opinion_id"]]
+
+    return {"market": {"summary": "Creators lean cautious.", "opinion_ids": ids("SPY")},
+            "stocks": [{"ticker": "NVDA", "summary": "NaNa is bullish long term; TALK is bearish short term.",
+                        "disagreement": True, "opinion_ids": ids("NVDA")},
+                       {"ticker": "SPY", "summary": "NaNa expects a short-term dip.", "disagreement": False,
+                        "opinion_ids": ids("SPY")}]}
+
+
 class ReportTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        extraction = dataclasses.replace(SETTINGS.sentiment.extraction, model="fake")
-        summary = dataclasses.replace(SETTINGS.sentiment.summary, model="fake",
-                                      reports_dir=str(Path(self.temp.name) / "reports"))
-        self.settings = dataclasses.replace(SETTINGS, sentiment=dataclasses.replace(
-            SETTINGS.sentiment, extraction=extraction, summary=summary))
+        self.settings = fake_settings(Path(self.temp.name) / "reports")
         self.engine = create_db_engine(":memory:", 1000)
         init_db(self.engine)
-        store.sync_channels(self.engine, SETTINGS.sentiment.channels)
-        segments = [{"start": float(line.start), "duration": 5.0, "text": line.text} for line in PIECE]
-        for video_id, handle in (("v1", "@NaNaShuoMeiGu"), ("v2", "@yttalkjun")):
-            channel = SETTINGS.sentiment.channel(handle)
-            store.insert_video(self.engine, {"video_id": video_id, "channel_id": channel.channel_id,
-                                             "title": f"title {video_id}", "published_at": datetime(2026, 10, 9, 22),
-                                             "transcript_status": "PENDING"})
-            store.save_transcript(self.engine, video_id, "zh-Hans", False, segments, segments, 1)
-        backend = FakeBackend([
-            {"opinions": [_row(), _row(ticker="SPY", stance="BEARISH", horizon="SHORT", quote="AMD 我暂时不看。"),
-                          _row(ticker="ZZZQ", name_as_said="某公司", quote="今天我们来聊聊英伟达。")]},
-            {"opinions": [_row(stance="BEARISH", horizon="SHORT", action="NONE", quote="今天我们来聊聊英伟达。"),
-                          _row(ticker="AMD", stance="NEUTRAL", quote="完全对不上的一句话")]},
-        ])
-        run_extract(self.engine, self.settings, backend, BOOK, videos_to_extract(self.engine, "claude_code", "fake", 1))
-        self.verified = load_opinions(self.engine, self.settings, verified_only=True)
+        self.verified = add_opinions(self.engine, self.settings)
 
     def tearDown(self):
         self.engine.dispose()
@@ -60,11 +80,10 @@ class ReportTest(unittest.TestCase):
         return [int(i) for i in self.verified[self.verified["ticker"] == ticker]["opinion_id"]]
 
     def reply(self, nvda_ids=None):
-        return {"market": {"summary": "Creators lean cautious.", "opinion_ids": self.ids("SPY")},
-                "stocks": [{"ticker": "NVDA", "summary": "NaNa is bullish long term; TALK is bearish short term.",
-                            "disagreement": True, "opinion_ids": nvda_ids or self.ids("NVDA")},
-                           {"ticker": "SPY", "summary": "NaNa expects a short-term dip.", "disagreement": False,
-                            "opinion_ids": self.ids("SPY")}]}
+        reply = summary_reply(self.verified)
+        if nvda_ids:
+            reply["stocks"][0]["opinion_ids"] = nvda_ids
+        return reply
 
     def test_input_and_validation(self):
         self.assertEqual(sorted(self.verified["ticker"].unique()), ["NVDA", "SPY"])  # AMD unverified, ZZZQ unresolved
@@ -140,6 +159,22 @@ class ReportTest(unittest.TestCase):
         ])
         creators = stock_table(rows, set()).iloc[0]["Creators"]
         self.assertEqual(creators, "Chip ◆M ▲L (if it sells off; holds)")
+
+    def test_one_model_per_video(self):
+        second = FakeBackend([{"opinions": [_row(ticker="SPY", stance="BULLISH", quote="AMD 我暂时不看。")]},
+                              {"opinions": []}])
+        second.model = "fake2"
+        run_extract(self.engine, self.settings, second, BOOK, videos_to_extract(self.engine, "claude_code", "fake2", 1))
+        self.assertEqual(set(load_opinions(self.engine, self.settings)["model"]), {"fake"})  # the first model wins
+        prefer_second = dataclasses.replace(self.settings, sentiment=dataclasses.replace(
+            self.settings.sentiment, extraction=dataclasses.replace(
+                self.settings.sentiment.extraction, report_models=("fake2", "fake"))))
+        opinions = load_opinions(self.engine, prefer_second)
+        self.assertEqual(list(opinions["ticker"]), ["SPY"])  # v1: fake2's one opinion; v2: fake2 found none
+        [path] = write_reports(self.engine, prefer_second)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("Extraction claude_code fake2 (1 video), prompt v1", text)
+        self.assertIn("by fake2", text)  # quotes not from the configured model are marked
 
     def test_report_without_summaries(self):
         [path] = write_reports(self.engine, self.settings)

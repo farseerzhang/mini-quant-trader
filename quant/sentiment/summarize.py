@@ -30,23 +30,37 @@ from quant.sentiment.store import now_utc
 Progress = Callable[[str], None]
 OPINION_COLUMNS = ["opinion_id", "effective_date", "published_at", "item_id", "channel", "title", "is_generated",
                    "ticker", "name_as_said", "asset_type", "stance", "horizon", "condition", "conviction", "action",
-                   "quote", "start_seconds", "reasoning", "verification"]
+                   "quote", "start_seconds", "reasoning", "verification", "model"]
+
+
+def report_extractions(engine: Engine, settings: Settings) -> pd.DataFrame:
+    """video_id -> model whose opinions the reports use: the first of extraction.report_models
+    with a successful extraction of that video (backend and prompt version as configured)."""
+    config, x = settings.sentiment.extraction, tables.sentiment_extractions
+    with engine.connect() as conn:
+        rows = conn.execute(select(x.c.video_id, x.c.model).where(and_(
+            x.c.backend == config.backend, x.c.prompt_version == config.prompt_version, x.c.status == "OK",
+            x.c.model.in_(config.report_models)))).all()
+    frame = pd.DataFrame(rows, columns=["video_id", "model"])
+    frame["rank"] = frame["model"].map({m: i for i, m in enumerate(config.report_models)})
+    return frame.sort_values("rank").drop_duplicates("video_id")[["video_id", "model"]].reset_index(drop=True)
 
 
 def load_opinions(engine: Engine, settings: Settings, start: date | None = None, end: date | None = None,
                   verified_only: bool = False) -> pd.DataFrame:
-    """Opinions of the configured extractor (backend, model, prompt version), with creator and video."""
+    """Opinions of the configured extractor, with creator and video: per video those of the first
+    model in extraction.report_models that extracted it (report_extractions)."""
     config = settings.sentiment.extraction
     o, v, c, t = (tables.sentiment_opinions, tables.sentiment_videos, tables.sentiment_channels,
                   tables.sentiment_transcripts)
     stmt = (select(o.c.opinion_id, o.c.effective_date, o.c.published_at, o.c.item_id, c.c.name.label("channel"),
                    v.c.title, t.c.is_generated, o.c.ticker, o.c.name_as_said, o.c.asset_type, o.c.stance,
                    o.c.horizon, o.c.condition, o.c.conviction, o.c.action, o.c.quote, o.c.start_seconds,
-                   o.c.reasoning, o.c.verification)
+                   o.c.reasoning, o.c.verification, o.c.model)
             .join(v, v.c.video_id == o.c.item_id).join(c, c.c.channel_id == o.c.channel_id)
             .outerjoin(t, t.c.video_id == o.c.item_id)
-            .where(and_(o.c.source == "youtube", o.c.backend == config.backend, o.c.model == config.model,
-                        o.c.prompt_version == config.prompt_version))
+            .where(and_(o.c.source == "youtube", o.c.backend == config.backend,
+                        o.c.model.in_(config.report_models), o.c.prompt_version == config.prompt_version))
             .order_by(o.c.effective_date, o.c.ticker, c.c.name, o.c.horizon))
     if start:
         stmt = stmt.where(o.c.effective_date >= start)
@@ -56,6 +70,8 @@ def load_opinions(engine: Engine, settings: Settings, start: date | None = None,
         stmt = stmt.where(o.c.verification == "VERIFIED")
     with engine.connect() as conn:
         frame = pd.DataFrame(conn.execute(stmt).mappings().all(), columns=OPINION_COLUMNS)
+    chosen = report_extractions(engine, settings).rename(columns={"video_id": "item_id"})
+    frame = frame.merge(chosen, on=["item_id", "model"], how="inner")  # keeps the order above
     frame["condition"] = frame["condition"].fillna("")
     return frame
 

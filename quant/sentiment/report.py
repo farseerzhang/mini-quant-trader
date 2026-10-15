@@ -85,6 +85,16 @@ def _markdown_table(frame: pd.DataFrame) -> list[str]:
     return lines
 
 
+def models_used(day: pd.DataFrame) -> str:
+    """Which extraction model the day's videos come from, e.g. "sonnet (3 videos), haiku (2 videos)"."""
+    videos = day.drop_duplicates("item_id")["model"].value_counts()
+    return ", ".join(f"{model} ({n} video{'s' if n > 1 else ''})" for model, n in videos.items())
+
+
+def _other_model(o, settings: Settings) -> str:
+    return "" if o.model == settings.sentiment.extraction.model else f"by {o.model}"
+
+
 def render_day(day_date: date, day: pd.DataFrame, summaries: dict[str, dict], settings: Settings) -> str:
     verified = day[day["verification"] == "VERIFIED"]
     pool = set(settings.market.stocks)
@@ -97,10 +107,10 @@ def render_day(day_date: date, day: pd.DataFrame, summaries: dict[str, dict], se
         f"{verified['ticker'].nunique()} ticker(s), published {first:%Y-%m-%d %H:%M} .. {last:%Y-%m-%d %H:%M} UTC; "
         "they count from this session's open. Research only, not advice: a creator's opinion is not a signal.",
         "",
-        f"Extraction {extraction.backend}/{extraction.model}, prompt v{extraction.prompt_version} (accepted "
-        f"provisionally); summaries {summary.backend}/{summary.model}, prompt v{summary.prompt_version}, written "
-        "from verified opinions only. ▲ bullish ▼ bearish ◆ conditional ● neutral; S/M/L = short / medium / long "
-        "term; ★ = in your stock pool.",
+        f"Extraction {extraction.backend} {models_used(day)}, prompt v{extraction.prompt_version} ({extraction.model} "
+        f"accepted provisionally; quotes from another model are marked); summaries {summary.backend}/{summary.model}, "
+        f"prompt v{summary.prompt_version}, written from verified opinions only. ▲ bullish ▼ bearish ◆ conditional "
+        "● neutral; S/M/L = short / medium / long term; ★ = in your stock pool.",
         "",
         "## Market mood",
         "",
@@ -124,7 +134,7 @@ def render_day(day_date: date, day: pd.DataFrame, summaries: dict[str, dict], se
         lines.append(f"### {ticker}")
         for o in mine.itertuples(index=False):
             extras = [e for e in (_condition(o.condition), ACTION[o.action],
-                                  "auto captions" if o.is_generated == 1 else "") if e]
+                                  "auto captions" if o.is_generated == 1 else "", _other_model(o, settings)) if e]
             lines.append(f"- **{o.channel}** {MARKS[o.stance]} {o.stance} {o.horizon}, conviction {o.conviction}"
                          + (f" ({'; '.join(extras)})" if extras else "")
                          + f" · [{_clock(o.start_seconds)}]({_link(o)}) · _{str(o.title)[:80]}_")
@@ -187,7 +197,7 @@ def format_history(ticker: str, history: pd.DataFrame, engine: Engine, settings:
             lines.append(f"   Summary: {summary['summary']}")
         for o in day.itertuples(index=False):
             extras = [e for e in (_condition(o.condition), ACTION[o.action],
-                                  "auto captions" if o.is_generated == 1 else "",
+                                  "auto captions" if o.is_generated == 1 else "", _other_model(o, settings),
                                   "" if o.verification == "VERIFIED" else o.verification.lower()) if e]
             lines.append(f"   {MARKS[o.stance]} {o.channel}: {o.stance} {o.horizon}, conviction {o.conviction}"
                          + (f" ({'; '.join(extras)})" if extras else ""))

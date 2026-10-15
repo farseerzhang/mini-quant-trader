@@ -460,6 +460,7 @@ The selected six publish about 20 long videos a week in total (about 3 a day), w
 - Seen in the first reports, for prompt version 2 after your week of reading: the summaries repeat "No bearish view was given" for single-creator stocks; the extractor sometimes turns one quote into two opinions with different horizons and stances (MRVL on 2026-10-12: BULLISH LONG and NEUTRAL from the same sentence).
 - `quant sentiment stock TICKER [--from D] [--to D] [--all]` (read-only): every opinion on one stock over time, grouped by effective date, with that day's summary, quotes and links; the ticker may be typed as a name from the alias table (美光 -> MU). Added because one daily report often shows a single creator per stock.
 - Also for prompt version 2: the summaries sometimes write opinion ids into the text ("Financial Education (37)").
+- **Sonnet and Haiku in one report (2026-10-15).** `sentiment.extraction.report_models: [sonnet, haiku]`: reports, summaries, `sentiment stock` and the dashboard take, per video, the opinions of the first listed model that extracted it, so a video extracted by both counts once (Sonnet's). The report header says which model each day's videos come from; quotes not from `extraction.model` are marked "by haiku". Haiku has not been reviewed like Sonnet (S2 step 6-8 postponed), so Haiku days are weaker evidence. First run: 2026-10-08 .. 10-12 mixed, 10-13 .. 10-15 Haiku only; 6 days summarized again.
 - Done when (section 12): you have read a week of reports and accept their quality.
 
 ## 12.3 S2 steps 1-5 as built (2026-10-13)

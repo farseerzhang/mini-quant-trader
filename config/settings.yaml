@@ -178,6 +178,7 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
   extraction:                      # opinions from transcripts (sentiment_proposal.md section 4)
     backend: claude_code           # claude_code (your Pro subscription, `claude -p`); gemini comes later
     model: sonnet                  # placeholder until the S2 comparison; `extract --model haiku` overrides
+    report_models: [sonnet, haiku] # reports use, per video, the first of these that extracted it
     prompt_version: 1              # bump when the prompt changes; each version's opinions are kept apart
     chunk_minutes: 10              # transcripts are sent in pieces of this length ...
     chunk_overlap_seconds: 30      # ... each starting this much before the previous one ends
