@@ -28,7 +28,7 @@ market:
     materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
-  market_symbols: [SPY, QQQ, ^VIX]
+  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG]   # TLT / IEF / HYG: bond-market inputs of the section 12.5 trial (research only)
 
 features:
   version: 1

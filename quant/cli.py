@@ -84,6 +84,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     regime_command.add_argument("--db", help=db_help)
 
+    trial_command = commands.add_parser(
+        "regime-bond-trial",
+        help="the pre-registered one-time trial of section 12.5: bond-market fear inputs in the rule score "
+        "(research only; writes reports/regime/bond-trial-*.md, stores nothing)",
+    )
+    trial_command.add_argument("--db", help=db_help)
+
     backtest_command = commands.add_parser(
         "backtest",
         help="backtest the rule-based strategies against SPY, equal weight and a random baseline, and save the results",
@@ -282,6 +289,34 @@ def _run_regime(args: argparse.Namespace, settings: Settings) -> int:
     if active is not None:
         print(f"ACTIVE regime model {active.model_id}: {active.rows} regimes through {active.last_date.date()}, "
               f"latest {active.latest_regime} (probability {active.latest_probability:.0%}); the signals use it")
+    return 0
+
+
+def _run_bond_trial(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import datetime, timezone
+
+    from quant.regime.bond_trial import V1, V2, run_bond_trial, write_trial_report
+    from quant.regime.comparison import portfolio_name
+
+    engine = _engine(settings, args.db)
+    try:
+        print("Section 12.5 trial: v1 and v2 regimes, regime_switch with each (a few minutes)", flush=True)
+        outcome = run_bond_trial(engine, settings)
+        path = write_trial_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
+        verdict = "PASSED" if outcome.gates.passed else "FAILED"
+        queries.record_pipeline_run(engine, command="regime-bond-trial", stage="trial", status="OK",
+                                    message=f"section 12.5: gates {verdict}")
+    except ValueError as exc:
+        _error(f"Trial failed to run: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    v = outcome.comparison.versus(portfolio_name("regime_switch", V2), portfolio_name("regime_switch", V1))
+    print(f"regime_switch Sharpe {v['sharpe']:.4f} with {V2} vs {v['baseline_sharpe']:.4f} with {V1}; "
+          f"higher in {v['folds_higher_sharpe']}/{v['folds']} years; gates {verdict}")
+    for result in outcome.gates.results:
+        print(f"  {result.name:38s} {result.status:5s} {result.observed}")
+    print(f"\n{path}")
     return 0
 
 
@@ -714,6 +749,7 @@ COMMANDS = {
     "update-market-data": lambda args, settings: _run_update(args, settings),
     "calculate-features": lambda args, settings: _run_features(args, settings),
     "calculate-regime": lambda args, settings: _run_regime(args, settings),
+    "regime-bond-trial": lambda args, settings: _run_bond_trial(args, settings),
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),

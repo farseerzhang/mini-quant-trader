@@ -613,6 +613,71 @@ Bump `regime.version` whenever the rules or any `regime` setting change, so stor
 - Changing a threshold is a manual research trial: bump `regime.version`, record it in the trial log, and compare out-of-sample. Tuning thresholds on the full history is in-sample.
 - The rule-based regime is the baseline that HMM must beat to be adopted.
 
+## 12.5 Pre-registered trial: bond-market fear inputs (registered 2026-10-15, before any data or result)
+
+**Why not the Fear & Greed index itself.** It stays excluded (section 11): no official point-in-time history (an unofficial CNN endpoint from about 2011, unpublished method, possible revisions). Of its seven components, two are already in the score (SPY vs a moving average, VIX), two need point-in-time index constituents, which V1 does not have (52-week highs vs lows, breadth; section 11), and the put/call ratio has no reliable free history. The other two come from the bond market, which the regime knows nothing about yet: **junk-bond demand** and **safe-haven demand**. They can be rebuilt from ETF total-return closes, point in time at the close of T.
+
+**Question.** Does adding these two inputs to the rule score improve `regime_switch` after costs out of sample?
+
+**Data.**
+- Add TLT (since 2002-07), IEF (since 2002-07) and HYG (since 2007-04) to `market.market_symbols`, with the same provider, quality checks and total-return closes as SPY / QQQ.
+- Before any result, check coverage and gaps. This check is descriptive and decides nothing.
+
+**Inputs** (at the close of T; 20 sessions, as in CNN's components). Two new `market_features` columns; the existing columns do not change.
+
+| # | Input | Definition at T | +1 | 0 | -1 |
+|---|---|---|---|---|---|
+| 6 | Junk-bond demand | `credit_appetite_20d` = 20-session total return of HYG minus IEF's | > 0 | = 0 | < 0 |
+| 7 | Safe-haven demand | `stock_vs_bond_20d` = 20-session total return of SPY minus TLT's | > 0 | = 0 | < 0 |
+
+- **Direction:** risk-on scores +1, the same direction as inputs 1-5. The contrarian reading ("extreme fear is a buying chance") is not tested in this round.
+- **Missing inputs:** as in section 12.1, a NULL input means no regime for T.
+
+**Candidate rule.**
+- The score of the seven inputs runs from -7 to +7.
+- `E = 4`, `X = 1`. These are the same fractions of the range as today's 3/5 and 1/5, rounded (4.2 -> 4, 1.4 -> 1). They are fixed now and no other values are tried.
+- `min_dwell_days`, `vix_low` and `vix_high` are unchanged.
+- The candidate is research only, as `rule_based-v2`. `rule_based-v1` stays ACTIVE.
+
+**Test.**
+- **Window:** the walk-forward validation window of section 13, 2014-09-26 .. 2025-10-01. The holdout (from 2025-10-10) stays untouched.
+- **Nothing is fitted.** Both regimes run their recursion from the same first session with all seven inputs (about 2007-05), so the history start is the same for both.
+- **Trading:** `regime_switch` (baseline bear exposure 0) on the current 81-stock pool, same settings and costs, from fresh cash, once with v1 and once with the candidate.
+
+**Pass criteria** (all must hold; `retrain.gates.regime` where they apply):
+1. `beats_rule_based_regime_after_costs`: the candidate's Sharpe after costs is higher than v1's on the same window.
+2. `min_avg_regime_dwell_days`: at least 10 sessions.
+3. Point in time: the regime at T does not change when later sessions are added (truncation test at two cuts, as in section 13).
+
+`state_mapping_stable_across_refits` does not apply (nothing is fitted).
+
+This is **one trial**. If it fails, no input is promoted, and the two inputs are not redefined or tested again on the same data. Other windows, thresholds, weights or the contrarian direction would each be a new trial with its own pre-registration.
+
+**Descriptive only** (reported, decides nothing):
+- Each input alone (six inputs, -6 .. +6, `E = 4`, `X = 1` by the same rounding).
+- `regime_switch_bear50` with the candidate.
+- Per regime: share of sessions, number of changes, average length, SPY's return a year.
+- The first BEAR session in the 2018 Q4, 2020, 2022 and 2025 sell-offs.
+- Year-by-year Sharpe (years higher, of 11) and max drawdown.
+- The rank correlation of each raw input with SPY's next-21-session return (non-overlapping sessions).
+
+**If it passes**, the live regime still does not change:
+- Forward-test run 1 continues with v1, because switching the live regime would end the run.
+- Next steps, each pre-registered separately: a holdout check (as section 13.2), then the candidate as a shadow (`forward_test.shadows`). Live only after forward evidence.
+
+**Confirmed as drafted (2026-10-15):**
+- (a) the seven-input score with `E = 4`, `X = 1` (not the five-input score with the two inputs as a veto on BULL);
+- (b) the 20-session window;
+- (c) the baseline bear exposure 0, with bear50 descriptive only;
+- (d) "higher Sharpe" with no minimum margin, as for the HMM. An 11-year Sharpe difference below about 0.1 is within noise, so a narrow pass would be weak evidence and is reported as such.
+
+### 12.5.1 As built (2026-10-15; nothing run yet)
+
+- **Data:** TLT, IEF and HYG are in `market.market_symbols` and loaded by `update-market-data`. TLT and IEF run from 2005-01-03, HYG from 2007-04-11; there are no missing SPY sessions inside their ranges and nothing is quarantined. All seven inputs exist from 2007-05-09, and on all 2,770 sessions of the window.
+- **One implementation change to the wording above:** the two inputs are computed in the trial code from the stored total-return closes, not stored as new `market_features` columns. Adding columns would change a table that the running forward test reads, and the DB can no longer be rebuilt freely. The definitions are unchanged.
+- **Code:** `quant/regime/bond_trial.py` holds the inputs, the candidate and single-input scores, the regimes from a common first session, the point-in-time check (inputs and regimes recomputed from data ending at the two `default_cuts`), the three gates and the report. Comparisons use `compare_regimes` and sell-offs use `sell_off_reactions`, as for the HMM. Tests are in `tests/test_regime_bond_trial.py`.
+- **Command:** `python -m quant regime-bond-trial` is the one-time run. It writes `reports/regime/bond-trial-<time>.md` and stores no regime.
+
 ---
 
 # 13. Market Regime Detection — HMM
@@ -1499,7 +1564,7 @@ market:
     materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
-  market_symbols: [SPY, QQQ, ^VIX]
+  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG]   # TLT / IEF / HYG: bond-market inputs of the section 12.5 trial (research only)
 
 features:
   version: 1

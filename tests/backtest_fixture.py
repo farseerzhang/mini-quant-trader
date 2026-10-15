@@ -18,11 +18,12 @@ DATES = pd.bdate_range("2023-01-02", periods=SESSIONS)
 
 
 def small_settings(random_runs: int = 3):
-    """The project settings with the small pool and a few random-baseline runs."""
+    """The project settings with the small pool, the market symbols this fixture stores, and a few
+    random-baseline runs."""
     pool = {sector: tuple(stocks) for sector, stocks in POOL.items()}
     return dataclasses.replace(
         SETTINGS,
-        market=dataclasses.replace(SETTINGS.market, symbols=pool),
+        market=dataclasses.replace(SETTINGS.market, symbols=pool, market_symbols=("SPY", "QQQ", "^VIX")),
         backtest=dataclasses.replace(SETTINGS.backtest, random_baseline_runs=random_runs),
     )
 
