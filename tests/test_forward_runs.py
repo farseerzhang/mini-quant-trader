@@ -1,13 +1,10 @@
-import dataclasses
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
 
-import yaml
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from quant import cli
@@ -15,7 +12,7 @@ from quant.forward.freeze import freeze_session
 from quant.forward.report import build_report, format_report
 from quant.persistence import queries, tables
 from quant.persistence.database import create_db_engine, init_db
-from tests.backtest_fixture import DATES, POOL
+from tests.backtest_fixture import DATES
 from tests.test_forward_paper import WINDOW, PaperFixture
 from tests.test_forward_freeze import EVENING
 from tests.test_settings import PROJECT_SETTINGS

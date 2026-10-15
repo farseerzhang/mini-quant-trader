@@ -10,7 +10,6 @@ from io import StringIO
 from pathlib import Path
 
 import joblib
-import numpy as np
 import pandas as pd
 import yaml
 from sqlalchemy import update

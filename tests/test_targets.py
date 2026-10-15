@@ -1,13 +1,13 @@
 import dataclasses
 import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from quant.persistence import queries, tables
+from quant.persistence import queries
 from quant.persistence.database import create_db_engine
 from quant.regime.pipeline import RULE_METHOD
 from quant.signals.targets import TARGET_COLUMNS, compute_targets, load_targets

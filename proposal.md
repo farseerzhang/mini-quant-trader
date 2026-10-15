@@ -1745,6 +1745,10 @@ Implementation (`quant/logs.py`, Phase 9): every command logs to `<database dire
 
 # 27. Configuration
 
+*Removed 2026-10-15 (cleanup), because no code read them, so changing them had no effect:*
+- `market.timezone` and `market.execution`. The trading calendar and its time zone come from `market.calendar` (`exchange_calendars`). Filling at the next open is built into the backtest and the signals (section 4.5).
+- `altdata.sec.signal_codes` and `altdata.sec.exclude_10b5_1_sales` (`altdata_proposal.md` section 13.2).
+
 ```yaml
 database:
   url: sqlite:///data/quant.db
@@ -1755,8 +1759,6 @@ market:
   request_timeout_seconds: 20
   calendar: XNYS                   # exchange_calendars name for the NYSE trading calendar
   initial_history: 2005-01-01      # regime work needs more than one or two bear phases
-  timezone: America/New_York
-  execution: next_open
   # Stock pool by GICS sector (sector -> stocks), used for the sector cap (risk.max_sector_weight).
   # Large caps listed before 2005, avoiding stocks with large spin-offs (spin-offs are not
   # modelled as corporate actions). Chosen today, and sectors are today's classification,
@@ -1953,8 +1955,6 @@ altdata:                           # free structured alternative data (altdata_p
   sec:                             # EDGAR: Form 4 insider trades, Schedule 13D activist stakes
     max_requests_per_second: 5     # the SEC allows 10
     insider_backfill_from: 2006-01-01   # set from the A0 spike
-    signal_codes: [P, S]           # open-market purchases and sales; grants, exercises, gifts are not decisions
-    exclude_10b5_1_sales: true     # pre-planned sales are not discretionary
     extra_ciks:                    # earlier CIKs whose filings belong to a pool stock (A1 finding)
       XOM: [34088]                 # Exxon Mobil Corp; company_tickers.json now gives the new holding company
       GOOGL: [1288776]             # Google Inc. (before Alphabet, 2015)

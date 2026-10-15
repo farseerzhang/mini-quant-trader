@@ -101,8 +101,6 @@ sentiment_extractions = Table(
 )
 
 
-VERIFICATIONS = ("VERIFIED", "UNVERIFIED", "UNRESOLVED")
-
 # Section 6: one merged opinion per video, stock and horizon (section 4.5) for each extractor.
 sentiment_opinions = Table(
     "sentiment_opinions",

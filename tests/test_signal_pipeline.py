@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from io import StringIO
 from pathlib import Path
 

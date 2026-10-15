@@ -12,8 +12,6 @@ from typing import Any
 
 import pandas as pd
 
-_PRICE_FIELDS = ("open", "high", "low", "close")
-
 
 def _is_missing(value: Any) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value))

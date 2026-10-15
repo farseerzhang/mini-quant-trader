@@ -32,7 +32,6 @@ from quant.sentiment.gold import CSV_ENCODING
 
 COLUMNS = ["case", "kind", "video_id", "channel", "ticker", "reference", "reference_time", "reference_note",
            "extractor", "extractor_quote", "extractor_time", "link", "transcript_around", "verdict", "comment"]
-VERDICTS = ("reference", "extractor", "both", "neither")
 AROUND_SECONDS = 45
 
 

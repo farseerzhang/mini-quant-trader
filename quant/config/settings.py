@@ -62,8 +62,6 @@ class MarketSettings:
     request_timeout_seconds: float
     calendar: str
     initial_history: date
-    timezone: str
-    execution: str
     # Stock pool by GICS sector, in config order: sector -> stocks.
     symbols: Mapping[str, tuple[str, ...]]
     market_symbols: tuple[str, ...]
@@ -710,8 +708,6 @@ def _as_channels(value: Any) -> tuple[ChannelSettings, ...]:
 class SecSettings:
     max_requests_per_second: float  # the SEC allows 10; stay well below
     insider_backfill_from: date
-    signal_codes: tuple[str, ...]  # Form 4 transaction codes that are decisions (P purchase, S sale)
-    exclude_10b5_1_sales: bool  # pre-planned sales are not discretionary
     # Earlier SEC CIKs of a pool company, when its filings moved to a new CIK (e.g. a new holding
     # company): symbol -> CIKs, in addition to the one company_tickers.json gives today.
     extra_ciks: Mapping[str, tuple[int, ...]]
@@ -719,8 +715,6 @@ class SecSettings:
     def __post_init__(self) -> None:
         if not 0 < self.max_requests_per_second <= 10:
             raise ConfigError("altdata.sec.max_requests_per_second must be in (0, 10] (the SEC's limit)")
-        if not self.signal_codes:
-            raise ConfigError("altdata.sec.signal_codes must list at least one transaction code")
 
 
 def _as_extra_ciks(value: Any) -> dict[str, tuple[int, ...]]:
@@ -997,6 +991,5 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                           "summary": _subsection(SummarySettings, "sentiment.summary")}),
         altdata=_build(AltdataSettings, "altdata", _section(raw, "altdata"),
                        {"sec": _subsection(SecSettings, "altdata.sec", {"insider_backfill_from": _as_date,
-                                                                         "signal_codes": _as_str_tuple,
                                                                          "extra_ciks": _as_extra_ciks})}),
     )

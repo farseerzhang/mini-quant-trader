@@ -9,7 +9,6 @@ import pandas as pd
 
 from quant.forward.report import FIRST_LOOK, build_report, format_report, score
 from quant.persistence import queries
-from tests.backtest_fixture import DATES
 from tests.test_forward_paper import WINDOW, PaperFixture
 from tests.test_settings import PROJECT_SETTINGS
 

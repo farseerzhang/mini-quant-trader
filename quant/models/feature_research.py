@@ -92,11 +92,6 @@ def ic_summary(ic: pd.Series, horizon: int) -> dict[str, float]:
     }
 
 
-# Size / liquidity features: with a pool chosen today, being small in the past predicts
-# having grown since (survivorship bias), so they must not be selected for trading.
-SURVIVORSHIP_BIASED = ("log_dollar_volume_20d", "illiquidity_20d")
-
-
 def with_candidates(dataset: Dataset, candidates: Mapping[str, pd.DataFrame]) -> Dataset:
     """The dataset with candidate features added as columns; rows missing any are dropped."""
     frame = dataset.frame.copy()
