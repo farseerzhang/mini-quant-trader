@@ -113,11 +113,50 @@ class FreezeTests(unittest.TestCase):
         self.assertEqual((live["regime"], live["positions"], live["invested"]), ("BEAR", 0, 0.0))
 
 
+    def _with_rule_v2(self, drop_last_hyg=False):
+        """shadow_rule_v2 (section 12.5.3) with TLT / IEF / HYG closes added to the fixture."""
+        import numpy as np
+
+        from tests.backtest_fixture import _rows
+
+        t = np.arange(len(DATES))
+        bonds = {"TLT": 100 * np.exp(0.0001 * t + 0.05 * np.sin(t / 30)), "IEF": 100 * np.exp(0.0001 * t),
+                 "HYG": 100 * np.exp(0.0002 * t + 0.02 * np.sin(t / 20))}
+        rows = [row for symbol, closes in bonds.items() for row in _rows(symbol, closes)]
+        if drop_last_hyg:
+            rows = [r for r in rows if not (r["symbol"] == "HYG" and r["date"] == LAST.date())]
+        queries.upsert_daily_prices(self.engine, rows)
+        market = dataclasses.replace(self.settings.market,
+                                     market_symbols=(*self.settings.market.market_symbols, "TLT", "IEF", "HYG"))
+        shadows = {"shadow_rule_v2": ShadowSettings("regime_switch", regime_rule="rule_based-v2")}
+        return dataclasses.replace(self.settings, market=market, forward_test=ForwardTestSettings(shadows))
+
+    def test_rule_v2_shadow_is_computed_each_evening(self):
+        from quant.regime.bond_trial import rule_v2_regime
+
+        settings = self._with_rule_v2()
+        result = freeze_session(self.engine, settings, now=EVENING, start=True)
+        self.assertEqual(sorted(result.frozen), ["live", "shadow_rule_v2"])
+        row = queries.frozen_sessions(self.engine, "shadow_rule_v2").iloc[0]
+        self.assertEqual((row["strategy"], row["regime_source"]), ("regime_switch", "rule_based-v2"))
+        self.assertEqual(row["regime"], rule_v2_regime(self.engine, settings).iloc[-1])
+        self.assertEqual(rule_v2_regime(self.engine, settings).index[-1], LAST)
+
+    def test_rule_v2_shadow_without_the_latest_bond_close_is_not_frozen(self):
+        from quant.regime.active import ActiveModelError
+
+        settings = self._with_rule_v2(drop_last_hyg=True)
+        with self.assertRaisesRegex(ActiveModelError, "shadow_rule_v2: its data ends"):
+            freeze_session(self.engine, settings, now=EVENING, start=True)
+        self.assertEqual(list(queries.frozen_sessions(self.engine)["portfolio"]), ["live"])
+
+
 class ShadowSettingsTests(unittest.TestCase):
     def test_project_shadows(self):
         shadows = load_settings(PROJECT_SETTINGS).forward_test.shadows
-        self.assertEqual(sorted(shadows), ["shadow_hmm", "shadow_lr"])
+        self.assertEqual(sorted(shadows), ["shadow_hmm", "shadow_lr", "shadow_rule_v2"])
         self.assertEqual(shadows["shadow_lr"].strategy, "ml_select")
+        self.assertEqual(shadows["shadow_rule_v2"].regime_rule, "rule_based-v2")
 
     def test_invalid_shadows_are_rejected(self):
         bad = {
@@ -126,6 +165,9 @@ class ShadowSettingsTests(unittest.TestCase):
             "predictor on a rule strategy": {"x": {"strategy": "trend", "predictor": "lr"}},
             "unknown strategy": {"x": {"strategy": "momentum"}},
             "unknown key": {"x": {"strategy": "trend", "model": "lr"}},
+            "unknown regime rule": {"x": {"strategy": "regime_switch", "regime_rule": "rule_based-v9"}},
+            "regime model and rule": {"x": {"strategy": "regime_switch", "regime_model": "hmm-1",
+                                            "regime_rule": "rule_based-v2"}},
         }
         for name, shadows in bad.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:

@@ -84,6 +84,18 @@ def trial_regimes(inputs: pd.DataFrame, settings: RegimeSettings) -> dict[str, p
     return regimes
 
 
+def rule_v2_regime(engine: Engine, settings: Settings) -> pd.Series:
+    """rule_based-v2 per session up to the latest stored one, from the same first session as in the
+    trial (the first with all seven inputs): the forward-test shadow's regime (section 12.5.3)."""
+    inputs, _ = load_trial_inputs(engine, settings)
+    complete = inputs.dropna()
+    if complete.empty:
+        raise ValueError("no session has all seven rule_based-v2 inputs")
+    inputs = inputs.loc[complete.index[0]:]
+    return classify_regimes(candidate_scores(inputs, settings.regime, BOND_INPUTS),
+                            candidate_settings(settings.regime))["regime"]
+
+
 def load_trial_inputs(engine: Engine, settings: Settings) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(the seven inputs per session, the total-return closes of SPY / TLT / IEF / HYG)."""
     missing = [s for s in BOND_SYMBOLS if s not in settings.market.market_symbols]

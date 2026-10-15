@@ -35,7 +35,7 @@ STANCE_COLORS = alt.Scale(domain=STANCES, range=["#1baf7a", "#eb6834", "#d4a20b"
 STANCE_SHAPES = alt.Scale(domain=STANCES, range=["triangle-up", "triangle-down", "diamond", "circle"])
 # Fixed colors per forward-test portfolio (a color always means the same portfolio).
 FORWARD_COLORS = {"live": "#2a78d6", "real": "#eb6834", "SPY": "#52514e", "shadow_hmm": "#1baf7a",
-                  "shadow_lr": "#9a55d4"}
+                  "shadow_lr": "#9a55d4", "shadow_rule_v2": "#d4a20b"}
 
 
 def _arguments():
