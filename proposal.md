@@ -671,12 +671,44 @@ This is **one trial**. If it fails, no input is promoted, and the two inputs are
 - (c) the baseline bear exposure 0, with bear50 descriptive only;
 - (d) "higher Sharpe" with no minimum margin, as for the HMM. An 11-year Sharpe difference below about 0.1 is within noise, so a narrow pass would be weak evidence and is reported as such.
 
-### 12.5.1 As built (2026-10-15; nothing run yet)
+### 12.5.1 As built (2026-10-15, before the run)
 
 - **Data:** TLT, IEF and HYG are in `market.market_symbols` and loaded by `update-market-data`. TLT and IEF run from 2005-01-03, HYG from 2007-04-11; there are no missing SPY sessions inside their ranges and nothing is quarantined. All seven inputs exist from 2007-05-09, and on all 2,770 sessions of the window.
 - **One implementation change to the wording above:** the two inputs are computed in the trial code from the stored total-return closes, not stored as new `market_features` columns. Adding columns would change a table that the running forward test reads, and the DB can no longer be rebuilt freely. The definitions are unchanged.
 - **Code:** `quant/regime/bond_trial.py` holds the inputs, the candidate and single-input scores, the regimes from a common first session, the point-in-time check (inputs and regimes recomputed from data ending at the two `default_cuts`), the three gates and the report. Comparisons use `compare_regimes` and sell-offs use `sell_off_reactions`, as for the HMM. Tests are in `tests/test_regime_bond_trial.py`.
 - **Command:** `python -m quant regime-bond-trial` is the one-time run. It writes `reports/regime/bond-trial-<time>.md` and stores no regime.
+
+### 12.5.2 Result (2026-10-15; `reports/regime/bond-trial-20261015T092130Z.md`)
+
+The run was a single one, made by you. The window was **2014-10-01 .. 2025-10-06** (11 validation years), not the registered 2014-09-26 .. 2025-10-01. The folds come from the fixed fold rule (`retrain.validation`) on the current data, and the development end has moved since the HMM trial, so the window shifted by three to five sessions. The rule is unchanged and v1 and v2 were judged on identical sessions. Every recursion starts 2007-05-09.
+
+```text
+gate                                  status  observed
+beats_rule_based_regime_after_costs   PASS    regime_switch Sharpe 1.0152 vs 0.9841 with rule_based-v1
+min_avg_regime_dwell_days             PASS    39.6 sessions (need >= 10)
+point_in_time                         PASS    2/2 cuts identical (2018-04-05, 2025-04-08)
+verdict                               PASSED
+```
+
+```text
+regime_switch                  CAGR    Sharpe   max DD   invested   turnover   years higher
+[rule_based-v1]                13.4%   0.9841   -25.0%   76%        4.1x       -
+[rule_based-v2]                13.7%   1.0152   -24.8%   73%        4.3x       6/11
+```
+
+- **Weak evidence (confirmation (d)).** The margin is +0.031 Sharpe, a third of the about 0.1 that 11 years can tell apart. v2 is higher in 6 of 11 years, with large swings both ways: 2014-15 0.54 -> 1.02 and 2017-18 1.85 -> 2.33, but 2015-16 0.30 -> -0.19 and 2018-19 -0.74 -> -1.01. Max drawdown is about the same.
+- **Descriptive, decides nothing:**
+  - **Earlier BEAR in three of four sell-offs:** 2018 Q4 at -7% from the peak (v1 -13%), 2022 at -8% (-10%), 2025 at -9% (-19%). 2020 is the same for all (-19%).
+  - **v2's extra SIDEWAYS sessions are partly false alarms.** SIDEWAYS is 13% of sessions (v1 8%), and SPY rose 9% a year in v2's SIDEWAYS against -14% in v1's. v2 also changes regime more often: 69 changes against 55.
+  - **The late BEAR exit remains:** SPY rose 50% a year in v2's BEAR sessions (v1: 58%).
+  - **It does not hold for bear50:** `regime_switch_bear50` is lower with v2 (1.0613 vs 1.0853).
+  - **Each bond input alone scored higher than both together:** credit 1.0491, safe haven 1.0486. Choosing one now would be a selection after seeing results, so it would need a new pre-registration and would count as a weaker, second trial.
+  - **The raw inputs' rank correlation with SPY's next 21 sessions is negative** (credit -0.073, t -0.84; safe haven -0.175, t -2.03; 132 non-overlapping sessions). That is the opposite of the risk-on direction scored. The inputs seem to help as an early warning in sell-offs, not as a forecast of returns.
+
+**Outcome of the section 12.5 trial: PASSED, weak evidence.**
+- Nothing changes live: `rule_based-v1` stays ACTIVE, and forward-test run 1 continues unchanged.
+- The trial is not repeated with other definitions on this data.
+- Possible next step, only if you decide on it, and pre-registered before the holdout is viewed: a holdout check of v2 against v1 (as section 13.2). Only if that holds, v2 as a forward-test shadow.
 
 ---
 
