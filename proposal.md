@@ -809,6 +809,107 @@ The HMM regime is sound (point in time, stable, persistent) but does not beat th
 
 `quant retrain --role regime` (`quant/regime/retrain.py`, `report.py`) runs the steps above, fits the final HMM on all purged development sessions (2006-01-03 .. 2025-10-01), saves it as `models/hmm/<model_id>.joblib`, writes `reports/hmm/<model_id>.md` and registers a REGIME CANDIDATE in `model_versions` (`trial_count` 1: one pre-registered configuration). First registration: `hmm-20261011T150715Z-ba9d41`, gates FAILED. Since 2026-10-11 the report also embeds a regime timeline (`quant/regime/chart.py`; `<model_id>_regimes.svg` plus an interactive `.html`): SPY (log scale) above one ribbon per regime from the first session with both regimes (2005-10-17) to the end of the walk-forward window. Before the first out-of-sample session the HMM ribbon shows the final fit's filtered regime, which has seen those years; it is drawn faded and marked in sample. Colors: categorical slots 1-3 (bull blue, bear orange, sideways aqua), validated for both modes. Phase 7 outcome: the HMM regime is a sound, lower-risk alternative of equal risk-adjusted quality, but it does not beat the rule-based regime by the pre-registered criterion, so the rule-based regime remains in use.
 
+## 13.3 Pre-registered trial: the rule-based regime with an HMM BEAR trigger (registered 2026-10-15, before any result)
+
+**Where the idea comes from, and what that means for the evidence.** The idea comes from the sell-off table in section 13. The HMM entered BEAR earlier in the sudden shocks (2020: -12% vs -19%; 2025: -12% vs -19%), the rule-based regime earlier in the grinding declines (2018 Q4, 2022). All four sell-offs lie inside the test window below, so the idea was formed on part of the data that tests it. A pass on the development window is therefore **partly in sample**. That is why the bar below is stricter than for earlier regime trials, and why the forward test, not this backtest, is meant to decide.
+
+**The holdout cannot help either.** It has been viewed twice for these two regimes (sections 15.4.8 and 13.2), and the HMM had no BEAR session in it (BULL 77, SIDEWAYS 168). The combination below therefore equals the rule-based regime on every holdout session, so a holdout check would show nothing.
+
+**Question.** Does `regime_switch` do better when the HMM's BEAR is added to the rule-based regime as an extra BEAR trigger?
+
+**The combined regime** (per session T, from the two regimes as each already exists at T):
+
+```text
+rule-based BEAR or HMM BEAR      -> BEAR
+otherwise                        -> the rule-based regime (BULL or SIDEWAYS)
+```
+
+- **Rule-based:** `rule_based-v1`, the ACTIVE one: five inputs, E = 3, X = 1, dwell 5 (sections 12.1-12.2). It is not v2: v2 passed only weakly and is not adopted (section 12.5.2).
+- **HMM:** the walk-forward regime of section 13: yearly fits on the development folds, filtered (forward only), the `regime.hmm` configuration, the same dwell. Out of sample in every validation year.
+- **The HMM's SIDEWAYS is ignored.** It was a poor signal on development data (SPY rose 13% a year in it) and on the holdout (two thirds of a rally).
+- **No dwell on top.** Each input regime already has its own dwell; adding a third would be a new parameter. The combined regime's own average length is checked by a gate instead.
+- **Known risk, stated before the run:** BEAR now ends only when **both** regimes have left it. The late BEAR exit (SPY +43% to +58% a year during BEAR sessions) may get worse.
+
+**Test.**
+- **Window:** the walk-forward validation window as produced by the fold rule (`retrain.validation`) on the stored data at run time, holdout excluded. The dates are not written in advance; the report states them. (Section 12.5.2 shows why: the window moves with the development end.)
+- **Trading:** `regime_switch` (bear exposure 0) on the 81-stock pool, the same settings and costs, from fresh cash, once with `rule_based-v1` and once with the combination.
+- **Point in time:** the HMM part is checked as in section 13 (refit up to two cuts, identical filtered regimes). The rule-based part is a forward recursion. The combined regime at T must not change when later sessions are added.
+
+**Pass criteria** (all must hold; stricter than sections 12.5 and 13 because the idea came from this data):
+1. Sharpe after costs **higher** than with `rule_based-v1`.
+2. Max drawdown **no deeper** than with `rule_based-v1`.
+3. Higher Sharpe in **at least 6 of the 11** validation years.
+4. Average regime length of the combination at least **10 sessions**.
+5. Point in time, as above.
+
+This is **one trial**. If it fails, no other combination rule is tried on this data: "both must say BEAR", a HMM-only exit, an extra dwell or v2 instead of v1 would each be a new pre-registration and a further trial.
+
+**Descriptive only** (reported, decides nothing):
+- `regime_switch_bear50` with the combination.
+- The variant where both must say BEAR.
+- Per regime: share of sessions, changes, average length, SPY's return a year.
+- The first BEAR session **and the first session after it that is no longer BEAR** in each sell-off (2018 Q4, 2020, 2022, 2025).
+- Year-by-year Sharpe and max drawdown.
+
+**If it passes** (the backtest only says the idea is worth a forward test):
+- No change to `live` or to the ACTIVE regime.
+- The combination becomes a forward-test shadow, `shadow_combo`, as a logged design change of forward-test run 1 (Phase 10 pre-registration). It is frozen from the first evening after it is added, with no backfill, and its missed sessions before that are counted.
+- Its 12-month comparison with `live` follows the Phase 10 rule: Sharpe higher **and** max drawdown no deeper. It runs from the date it was added, so its verdict comes later than run 1's.
+- **If it fails:** no shadow; nothing changes.
+
+**Confirmed as drafted (2026-10-15):**
+- (a) the combination rule: either BEAR -> BEAR, otherwise the rule-based regime;
+- (b) `rule_based-v1`, not v2, as the rule-based part;
+- (c) the stricter pass criteria 1-5;
+- (d) a pass leads only to a forward shadow, never to a live change from the backtest.
+
+### 13.3.1 As built (2026-10-15, before the run)
+
+- **Code:** `quant/regime/combo_trial.py`.
+  - The combination and the descriptive "both must say BEAR" variant: BEAR only when both say BEAR; a rule-based BEAR alone becomes SIDEWAYS.
+  - `rule_based-v1` recomputed from the stored inputs over the whole history, and the walk-forward HMM from `run_hmm_walk_forward`, as in section 13.
+  - The point-in-time checks: the HMM part with section 13's `point_in_time_checks`; the rule-based part and the combination recomputed from inputs ending at the same two cuts.
+  - The five gates, and the report. The sell-off table shows each BEAR spell's entry, measured from the peak, and its exit, measured off the low.
+- **Tests:** `tests/test_regime_combo_trial.py`.
+- **Command:** `python -m quant regime-combo-trial` is the one-time run. It writes `reports/regime/combo-trial-<time>.md` and stores nothing.
+
+### 13.3.2 Result (2026-10-15; `reports/regime/combo-trial-20261015T141233Z.md`)
+
+The run was a single one, made by you. The window from the fold rule was 2014-10-01 .. 2025-10-06 (11 validation years).
+
+```text
+gate                         status  observed
+sharpe_higher                FAIL    regime_switch Sharpe 0.9610 vs 0.9841 with rule_based-v1
+max_drawdown_no_deeper       PASS    -19.6% vs -25.0%
+years_higher                 PASS    7 of 11 validation years (need >= 6)
+min_avg_regime_dwell_days    PASS    42.6 sessions (need >= 10)
+point_in_time                PASS    HMM 2/2, rule-based and combined 2/2 cuts identical (2018-04-05, 2025-04-08)
+verdict                      FAILED
+```
+
+```text
+regime_switch     CAGR    Sharpe   max DD   vol     invested   turnover
+[rule_based-v1]   13.4%   0.9841   -25.0%   13.8%   76%        4.1x
+[combined]        12.2%   0.9610   -19.6%   12.9%   75%        4.3x
+```
+
+- **Lower risk, not better risk-adjusted.** The drawdown is 5.4 points shallower, but the return is 1.2 points a year lower and the Sharpe ratio 0.023 lower, the same pattern as the HMM alone (section 13).
+- **The HMM trigger works as expected on entry.** BEAR came earlier in the sudden sell-offs: 2020 at -9% from the peak (v1 -19%), 2025 at -12% (-19%). In 2018 Q4 and 2022 the combination equals v1, which was in BEAR first.
+- **The late exit got worse, as stated before the run.** In 2020 BEAR ended 2020-06-02, at +38% off the low (v1: 2020-05-26, +34%). An earlier entry and a later exit roughly cancel.
+- **Descriptive, decides nothing:**
+  - `regime_switch_bear50` is higher with the combination: Sharpe 1.1371 vs 1.0853, max DD -26.1% vs -30.8%.
+  - The "both must say BEAR" variant has Sharpe 1.0301, with the same max DD as v1 (-25.0%).
+  - Both were seen only after the run. Choosing either now would be a selection on this data; it would need a new pre-registration and would be weaker evidence for it.
+
+**Outcome of the section 13.3 trial: FAILED.**
+- No shadow is added, and nothing changes: `rule_based-v1` stays ACTIVE, and forward-test run 1 continues unchanged.
+- No other combination rule is tried on this data.
+- Forward evidence on the HMM accumulates anyway, through `shadow_hmm`.
+
+**Sections 12.5 and 13.3 together:**
+- Both moved `regime_switch`'s Sharpe by about 0.03 (+0.031 and -0.023), well inside the about 0.1 that 11 years can tell apart.
+- On development data, these changes shift when BEAR starts and ends, but they do not reliably improve the risk-adjusted return. `rule_based-v1` remains the baseline to beat.
+
 # 14. ML Models
 
 ## Candidates

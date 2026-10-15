@@ -91,6 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     trial_command.add_argument("--db", help=db_help)
 
+    combo_command = commands.add_parser(
+        "regime-combo-trial",
+        help="the pre-registered one-time trial of section 13.3: the rule-based regime with an HMM BEAR trigger "
+        "(research only; writes reports/regime/combo-trial-*.md, stores nothing)",
+    )
+    combo_command.add_argument("--db", help=db_help)
+
     backtest_command = commands.add_parser(
         "backtest",
         help="backtest the rule-based strategies against SPY, equal weight and a random baseline, and save the results",
@@ -316,6 +323,35 @@ def _run_bond_trial(args: argparse.Namespace, settings: Settings) -> int:
           f"higher in {v['folds_higher_sharpe']}/{v['folds']} years; gates {verdict}")
     for result in outcome.gates.results:
         print(f"  {result.name:38s} {result.status:5s} {result.observed}")
+    print(f"\n{path}")
+    return 0
+
+
+def _run_combo_trial(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import datetime, timezone
+
+    from quant.regime.combo_trial import COMBO, V1, run_combo_trial, write_combo_report
+    from quant.regime.comparison import portfolio_name
+
+    engine = _engine(settings, args.db)
+    try:
+        print("Section 13.3 trial: walk-forward HMM (11 yearly fits, then two point-in-time re-runs), the "
+              "rule-based regime, regime_switch with each (several minutes)", flush=True)
+        outcome = run_combo_trial(engine, settings)
+        path = write_combo_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
+        verdict = "PASSED" if outcome.gates.passed else "FAILED"
+        queries.record_pipeline_run(engine, command="regime-combo-trial", stage="trial", status="OK",
+                                    message=f"section 13.3: gates {verdict}")
+    except ValueError as exc:
+        _error(f"Trial failed to run: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    v = outcome.comparison.versus(portfolio_name("regime_switch", COMBO), portfolio_name("regime_switch", V1))
+    print(f"regime_switch Sharpe {v['sharpe']:.4f} combined vs {v['baseline_sharpe']:.4f} with {V1}; "
+          f"gates {verdict}")
+    for result in outcome.gates.results:
+        print(f"  {result.name:28s} {result.status:5s} {result.observed}")
     print(f"\n{path}")
     return 0
 
@@ -750,6 +786,7 @@ COMMANDS = {
     "calculate-features": lambda args, settings: _run_features(args, settings),
     "calculate-regime": lambda args, settings: _run_regime(args, settings),
     "regime-bond-trial": lambda args, settings: _run_bond_trial(args, settings),
+    "regime-combo-trial": lambda args, settings: _run_combo_trial(args, settings),
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),
