@@ -349,7 +349,8 @@ class SentimentSettingsTest(unittest.TestCase):
 
     def test_project_channels(self):
         handles = [c.handle for c in SETTINGS.sentiment.channels]
-        self.assertEqual(len(handles), 6)
+        self.assertEqual(len(handles), 11)  # six from S0 / S1, five added 2026-10-16
+        self.assertEqual(len(set(handles)), len(handles))
         self.assertEqual(SETTINGS.sentiment.channel("@CHIPSTOCKINVESTOR").language, "en")
         with self.assertRaises(ConfigError):
             SETTINGS.sentiment.channel("@nobody")

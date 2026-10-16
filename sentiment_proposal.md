@@ -450,6 +450,34 @@ Consequences: neither can join. 贝拉聊财金 would need audio transcription, 
 
 The selected six publish about 20 long videos a week in total (about 3 a day), which fits the daily limits of either backend.
 
+### Third spike and five more channels (2026-10-16)
+
+You asked for creators who also post on Xiaohongshu; scraping Xiaohongshu itself was ruled out (no content API, anti-bot protection, terms of use). You then asked for Chinese and English YouTube channels in general.
+
+- **Method:** candidates came from YouTube searches (Chinese: 美股 分析 / 个股 / 财报 / 科技股 / 复盘; English: stock analysis / best stocks / deep dive / earnings reaction / portfolio buys). For each, the 12 newest uploads were listed, and the captions of the two newest long videos were read with `youtube-transcript-api` (`list`).
+- **Left out:**
+  - captions disabled: 老李玩钱, Kelly Tsai, 美股小头狼 Stock Alpha Research, XTrader猫姐美股, 小左第一视角, Victor美股投资;
+  - videos unreadable: JohnLu谈股;
+  - promotional titles (profit targets, "will explode") and news networks (CNBC, Bloomberg), which have many speakers.
+- **Usable but not added:** 幂笈投资, Sam谈美股, Amy说美股@致富学院 (zh); Ticker Symbol: YOU, Couch Investor, BWB - Business With Brian, Tom Nash, Daniel Pronk (en).
+
+**Added (2026-10-16):**
+
+| Channel | Handle / channel_id | Followers | Typical length | Captions | Why |
+|---|---|---|---|---|---|
+| 老汤美股财经 | `@laotangmeigu` / `UCeTEWFsNC3eeUsn9hvsDALQ` | 154k | 8-14 min | manual `zh-Hans` | Single-stock analysis |
+| Ethan的美股笔记 | `@EthanFinanceNote` / `UCvf_c9B7iL0x7aqdhxI4zRg` | 22k | 13-26 min | manual `zh-Hans` | Talks about his own trades (the `action` field) |
+| Parkev Tatevosian, CFA | `@parkevtatevosiancfa9544` / `UCwKB_00dPL3x5XmHF9IJCrg` | 878k | 7-9 min | auto `en` | One stock per video with a buy or sell verdict |
+| Everything Money | `@EverythingMoney` / `UChBVf9YnourrEDTsbbwJPRA` | 417k | 21-39 min | auto `en` | Valuation-based calls, a value view |
+| Dividend Talks | `@DividendTalks` / `UClLyc3C2K3C-RAh7eEJAwyg` | 128k | 23-34 min | auto `en` | Dividend stocks: the pool's utilities and REITs |
+
+**Consequences:**
+- There are now 11 channels.
+- **Parkev Tatevosian posts about 4 videos a day** (31 long ones in the first fetch's 7 days), more than estimated in the spike. They are short (about 4,000-7,000 caption characters), so each is about one extraction call. With him, the 11 channels give roughly 60-70 long videos a week.
+- Extraction needs about 60-90 more Sonnet calls a week. Watch the Pro usage for the first week. If it is too much, Parkev is the first channel to drop or to limit.
+- `max_captions_per_run: 10` makes the first fetch of the new channels' last 14 days take a few runs; the backlog clears oldest first.
+- The scorecard (S4) and the forward-only test (S6) judge each creator from their own first opinion on, so creators added later are not mixed with earlier ones.
+
 ## 12.4 S3 as built (2026-10-13)
 
 - `quant sentiment summarize [--from D] [--to D] [--force]` and `quant sentiment report [--from D] [--to D]`; both join `quant sentiment run` (fetch, extract, summarize, report; each step runs even after an earlier one had problems). Code: `quant/sentiment/summarize.py`, `quant/sentiment/report.py`; summary prompt v1 and schema in `prompts.py`; table `sentiment_summaries` (section 6).

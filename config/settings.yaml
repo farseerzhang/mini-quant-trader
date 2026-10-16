@@ -199,6 +199,11 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     - {handle: "@yttalkjun", channel_id: UCRBrH2qS7yKGMNSmjnj8gcw, name: "投资TALK君", language: zh, style: "macro + sectors"}
     - {handle: "@Zac-Stock-Journal", channel_id: UCawshLsWXrFnYhAlnmn0h2A, name: "Zac美股笔记", language: zh, style: "technical buy points, own holdings"}
     - {handle: "@nick_stockcafe", channel_id: UCjrP2TtSTifuRJ76hW2IW1A, name: "Nick 美股咖啡館", language: zh, style: "own buys, Traditional Chinese"}
+    - {handle: "@laotangmeigu", channel_id: UCeTEWFsNC3eeUsn9hvsDALQ, name: "老汤美股财经", language: zh, style: "single-stock analysis"}
+    - {handle: "@EthanFinanceNote", channel_id: UCvf_c9B7iL0x7aqdhxI4zRg, name: "Ethan的美股笔记", language: zh, style: "own trades"}
+    - {handle: "@parkevtatevosiancfa9544", channel_id: UCwKB_00dPL3x5XmHF9IJCrg, name: "Parkev Tatevosian, CFA", language: en, style: "one stock, buy or sell verdict"}
+    - {handle: "@EverythingMoney", channel_id: UChBVf9YnourrEDTsbbwJPRA, name: "Everything Money", language: en, style: "valuation, buy / sell"}
+    - {handle: "@DividendTalks", channel_id: UClLyc3C2K3C-RAh7eEJAwyg, name: "Dividend Talks", language: en, style: "dividend stocks"}
 
 altdata:                           # free structured alternative data (altdata_proposal.md); research only, not in run-daily
   version: 1
