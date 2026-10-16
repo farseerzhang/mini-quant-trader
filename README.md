@@ -383,11 +383,123 @@ mini-quant-trader/
     forward/             forward test: freeze, paper portfolios, real account, report
     ops/                 status, promote, retire
     dashboard/           data for the Streamlit app
-  dashboard/app.py       the Streamlit app
     persistence/         tables and queries (SQLAlchemy Core)
-  models/, reports/      written by `retrain` (git-ignored)
+    sentiment/           creator opinions: YouTube captions, extraction, summaries, reports (research only)
+    altdata/             SEC Form 4 and analyst changes, A4 research (research only)
+  dashboard/app.py       the Streamlit app
+  models/, reports/      written by `retrain` and the research commands (git-ignored)
   tests/                 unittest suite
 ```
+
+## Architecture
+
+Three modules share one SQLite database. Only the trading core feeds your signals; sentiment and alt data are research and never change what is traded.
+
+```mermaid
+flowchart TB
+    yahoo["Yahoo Finance<br/>prices, analysts"]
+    sec["SEC EDGAR<br/>insider Form 4"]
+    yt["YouTube<br/>creator captions"]
+    claude["Claude Code<br/>AI extraction"]
+
+    core["Trading core<br/>run-daily pipeline"]
+    sent["Sentiment<br/>fetch, extract, report"]
+    alt["Alt data<br/>research only"]
+
+    db[("SQLite database<br/>data/quant.db")]
+    models["Models<br/>quant retrain, manual"]
+
+    signals["Signals<br/>BUY / EXIT, reasons"]
+    fwd["Forward test<br/>live + 3 shadows"]
+    dash["Dashboard<br/>Streamlit, read-only"]
+    reports["Reports<br/>Markdown per run"]
+
+    yahoo --> core
+    yahoo --> alt
+    sec --> alt
+    yt --> sent
+    claude --> sent
+    core --> db
+    sent --> db
+    alt --> db
+    db <--> models
+    db --> signals
+    db --> fwd
+    db --> dash
+    db --> reports
+
+    classDef trading fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef research fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    class core,models,signals,fwd trading
+    class sent,alt research
+```
+
+Each evening `run-daily` runs the trading core in order. The freeze writes tonight's targets for every portfolio into the forward-test log before the next market open; frozen sessions are never changed or backfilled.
+
+```mermaid
+flowchart LR
+    update["Update data<br/>81 stocks, ETFs"] --> features["Features<br/>stock + market"]
+    features --> regime["Regime<br/>rule_based-v1"]
+    regime --> signals["Signals<br/>regime_switch"]
+    signals --> freeze["Freeze<br/>before next open"]
+    freeze --> live["live<br/>your signals"]
+    freeze --> hmm["shadow_hmm<br/>HMM regime"]
+    freeze --> lr["shadow_lr<br/>ML stock picks"]
+    freeze --> bonds["shadow_rule_bonds<br/>bond-input regime"]
+
+    classDef trading fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef shadow fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    class update,features,regime,signals,freeze,live trading
+    class hmm,lr,bonds shadow
+```
+
+Shadows are never traded: they are recorded so that, after 12 months, each can be compared with `live` under the rule fixed before the forward test began (`proposal.md`, Phase 10).
+
+### Models
+
+The models have two roles. A **predictor** decides *which* stocks to hold: it gives each stock a calibrated probability of beating SPY over the next 5 sessions, and `ml_select` holds the 10 most likely. A **regime** decides *how much* is invested: `regime_switch` follows the trend in BULL, trades dips in SIDEWAYS and goes to cash in BEAR.
+
+`quant retrain` (manual, never part of `run-daily`) fits the candidates on purged walk-forward folds and backtests them against `regime_switch` after costs. It registers a candidate only through pre-defined gates; `quant promote` is a separate, manual step.
+
+```mermaid
+flowchart TB
+    data["Training data<br/>35 features, 5-day excess label<br/>11 purged walk-forward years"]
+
+    lr["Logistic regression"]
+    rf["Random forest"]
+    xgb["XGBoost"]
+    rule["Rule-based<br/>5-input score"]
+    hmm["HMM<br/>3 hidden states, filtered"]
+
+    select["ml_select<br/>top 10 by calibrated probability"]
+    switch["regime_switch<br/>BULL / SIDEWAYS / BEAR exposure"]
+
+    gates{"Gates vs regime_switch<br/>after costs"}
+
+    shadow_lr["shadow_lr<br/>LR, failed its holdout"]
+    failed["RF, XGBoost<br/>failed the gates"]
+    active["rule_based-v1<br/>ACTIVE regime"]
+    shadow_hmm["shadow_hmm<br/>HMM, retired"]
+
+    data --> lr & rf & xgb & rule & hmm
+    lr & rf & xgb --> select
+    rule & hmm --> switch
+    select --> gates
+    switch --> gates
+    gates --> shadow_lr & failed & active & shadow_hmm
+
+    classDef predictor fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef regime fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    class lr,rf,xgb,select predictor
+    class rule,hmm,switch regime
+```
+
+Where it stands:
+- No predictor is ACTIVE, so the stocks come from the rule-based selection inside `regime_switch`.
+- The rule-based regime `rule_based-v1` is ACTIVE.
+- The HMM regime was promoted and later retired after its holdout check.
+- The logistic regression and the HMM run on as forward-test shadows. A rule-based variant with bond-market inputs (`rule_bonds-v1`) runs as a third shadow.
+- The full trial record is in `proposal.md` (sections 13 and 15.4).
 
 ## Architecture Principles
 
