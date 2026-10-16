@@ -113,7 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--strategy",
         action="append",
         metavar="NAME",
-        help="run only this strategy (repeatable; default: all). Benchmarks always run",
+        help="run only this strategy: trend, mean_reversion, regime_switch, or regime_switch_bear50 (one "
+        "regime_switch_bear<N> per extra strategies.regime_switch.bear_exposures value). Repeatable; default: "
+        "all. Benchmarks (SPY, equal weight, random baseline) always run",
     )
     backtest_command.add_argument(
         "--evaluate-holdout",
