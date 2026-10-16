@@ -894,6 +894,42 @@ You chose **A**: fewer thresholds and fewer researcher choices. Only one design 
   - Tests: `tests/test_regime_rate_shocks.py`.
 - **Command:** `python -m quant regime-rate-shocks-trial` is the one-time run. It writes `reports/regime/rate-shocks-trial-<time>.md` and stores nothing.
 
+### 12.7.2 Result (2026-10-16; `reports/regime/rate-shocks-trial-20261016T203411Z.md`)
+
+The run was a single one, made by you. The window from the fold rule was 2014-10-03 .. 2025-10-07; every recursion starts 2005-10-17.
+
+```text
+gate                         status  observed
+sharpe_higher                FAIL    regime_switch Sharpe 0.9726 vs 0.9733 with rule_based-v1
+max_drawdown_no_deeper       PASS    -25.0% vs -25.0%
+years_higher                 FAIL    1 of 11 validation years (10 identical)
+min_avg_regime_dwell_days    PASS    49.4 sessions
+point_in_time                PASS    2/2 cuts identical (2018-04-09, 2025-04-09)
+verdict                      FAILED
+```
+
+**The inputs change almost nothing.**
+- The candidate's regime has the same share per state as v1's (BULL 78%, SIDEWAYS 8%, BEAR 14%) and the same 55 changes.
+- It enters and leaves BEAR on exactly the same days in all four sell-offs.
+- 10 of the 11 validation years are identical; in the other (2023-24) the Sharpe is 2.22 vs 2.20.
+
+**Why** (descriptive):
+- `short_rate_drop_20d` fired only in 2020 (9% of sessions), when v1 was already in BEAR on its price inputs.
+- `long_rate_jump_60d` fired mostly in 2022 (40%), with a little in 2016, 2021 and 2023-25. In 2022 v1 had already left BULL.
+- The rate shocks arrived together with, or after, the breaks in price trend that v1 already scores, so the extra -1 rarely moved the score across a threshold.
+- With `regime_switch_bear50` the candidate is marginally higher (1.0813 vs 1.0750). This is descriptive and decides nothing.
+
+The baseline's Sharpe (0.9733) differs from section 12.5's v1 (0.9841) because the window moved by a few sessions and the recursion starts in 2005, not 2007.
+
+**Outcome of the section 12.7 trial: FAILED.**
+- Nothing changes: `rule_based-v1` stays ACTIVE, and no holdout check or shadow follows.
+- These inputs are not redefined or re-tested on this data. Option B of section 12.7, or a bear-flattening input, would be a separate trial, and this result is a reason to expect little from it.
+- `^TNX` and `^IRX` stay in `market.market_symbols` for reading.
+
+**Three regime trials** (12.5, 13.3, 12.7):
+- The Sharpe moved by +0.031, -0.023 and -0.0007.
+- Market information beyond prices and VIX (credit, bonds, the HMM, rates) has so far changed when BEAR starts more than it has changed risk-adjusted returns.
+
 ---
 
 # 13. Market Regime Detection — HMM
