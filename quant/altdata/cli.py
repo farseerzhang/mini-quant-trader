@@ -34,8 +34,10 @@ def add_parser(commands, db_help: str) -> None:
         "rows only, with the date first and last seen (altdata_proposal.md 13.4; about 2 minutes)")
     analysts.add_argument("--symbol", action="append", metavar="TICKER", help="only this stock (repeatable)")
     analysts.add_argument("--db", help=db_help)
-    research = sub.add_parser("research", help="A4 round 1, stage 1: rank IC of the Form 4 features on the "
-                              "development folds (pre-registered, altdata_proposal.md 8.1; no holdout)")
+    research = sub.add_parser("research", help="A4: rank IC of the candidate features on the development folds, "
+                              "then the model trial (pre-registered, altdata_proposal.md 8.1 and 8.2; no holdout)")
+    research.add_argument("--round", type=int, choices=[1, 2], default=1, dest="round_no",
+                          help="1: the Form 4 features (8.1); 2: the analyst features (8.2)")
     research.add_argument("--stage", type=int, choices=[1, 2], default=1,
                           help="1: rank IC per feature; 2: the pre-registered model trial with the features "
                           "that passed stage 1")
@@ -133,13 +135,21 @@ def _run_research(args: argparse.Namespace, settings: Settings) -> int:
 
     engine = _engine(settings, args.db)
     try:
-        features = load_features(engine, settings.altdata.version)
-        if all(f.empty for f in features.values()):
-            _error("altdata_features is empty; run `quant altdata features` first")
-            return 1
         dataset = load_dataset(engine, settings)
         labelled = dataset.labelled()
         target = labelled.frame["excess"].unstack("symbol")
+        if args.round_no == 2:
+            from quant.altdata.analyst_features import compute_analyst_features, percentile_ranks
+
+            features = compute_analyst_features(engine, settings, target.index)
+            if all(f.isna().all().all() for f in features.values()):
+                _error("no analyst changes stored; run `quant altdata analysts` first")
+                return 1
+        else:
+            features = load_features(engine, settings.altdata.version)
+            if all(f.empty for f in features.values()):
+                _error("altdata_features is empty; run `quant altdata features` first")
+                return 1
         folds = development_folds(labelled.sessions, settings)
         results = stage1(features, target, folds, settings.model.target.horizon_days)
         if args.stage == 2:
@@ -147,11 +157,14 @@ def _run_research(args: argparse.Namespace, settings: Settings) -> int:
 
             passing = [r.name for r in results if r.passed]
             if not passing:
-                print("No feature passes stage 1, so there is no stage 2 (pre-registration 8.1).")
+                print(f"No feature passes stage 1, so there is no stage 2 (pre-registration "
+                      f"{'8.2' if args.round_no == 2 else '8.1'}).")
                 return 0
             print(f"Stage 2 with {', '.join(passing)}: two walk-forward runs and their backtest (several minutes)",
                   flush=True)
-            outcome = stage2(engine, settings, features, passing)
+            if args.round_no == 2:  # stage-2 inputs are each session's percentile ranks (8.2 (c))
+                features = {name: percentile_ranks(features[name]) for name in passing}
+            outcome = stage2(engine, settings, features, passing, round_no=args.round_no)
             report = write_stage2_report(outcome, settings.retrain.reports_dir)
             e = outcome.evidence
             print(f"  trial: Sharpe {e.sharpe:.2f} vs regime_switch {e.baseline_sharpe:.2f}, max DD "
@@ -162,14 +175,14 @@ def _run_research(args: argparse.Namespace, settings: Settings) -> int:
                   f"{r.max_drawdown:.1%}, years higher {r.folds_higher_sharpe}/{r.folds}")
             print(f"  AUC {outcome.trial_auc:.4f} with the feature, {outcome.reference_auc:.4f} without")
             print(f"\n{report}")
-            queries.record_pipeline_run(engine, "altdata-research", "stage2",
+            queries.record_pipeline_run(engine, "altdata-research", f"round{args.round_no}-stage2",
                                         "OK", message=f"{','.join(passing)}: gates "
                                         f"{'PASSED' if outcome.gates.passed else 'FAILED'}")
             return 0
-        path = write_report(results, folds, settings.retrain.reports_dir)
+        path = write_report(results, folds, settings.retrain.reports_dir, round_no=args.round_no)
     finally:
         engine.dispose()
-    print(f"A4 round 1, stage 1 ({len(folds)} folds, {folds[0].validation_start.date()} .. "
+    print(f"A4 round {args.round_no}, stage 1 ({len(folds)} folds, {folds[0].validation_start.date()} .. "
           f"{folds[-1].validation_end.date()}; pass = |t| >= 2 and >= 7 folds same sign):")
     for r in results:
         print(f"  {r.name:28s} mean IC {r.mean_ic:+.4f}  t {r.t_stat:+.2f}  folds {r.folds_same_sign}/{r.folds}  "

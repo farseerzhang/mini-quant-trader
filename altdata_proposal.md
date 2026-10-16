@@ -313,6 +313,38 @@ Written after the A0b spike (section 13.3) and the loader (13.4). Only counts, c
 - (c) percentile ranks as the stage-2 inputs;
 - (d) the protocol and pass rule of round 1, unchanged.
 
+**As built (2026-10-16, before any stage is run):**
+- **Code:** the features are in `quant/altdata/analyst_features.py`, computed in memory (`altdata_features` keeps round 1's columns only).
+  - `AS_OF` = 2026-10-16 fixes the download.
+  - The split rules use `corporate_actions` `SPLIT` rows. Their ratio is the share multiple, e.g. 10 for NVDA on 2024-06-10. GE's spin-off adjustments are stored as splits too (1.281, 1.253) and are applied the same way.
+- **Shared with round 1:** stage 1 and stage 2 are the round-1 code in `quant/altdata/research.py`, now taking the round number. The reports are `a4-round2-*.md`, and the trial is named `ml_lr_analysts`.
+- **Command:** `quant altdata research --round 2 [--stage 1|2]`.
+- **Readiness check** on the real data, coverage only: share of stock-sessions with a value over 2014-09-26 .. 2025-10-01: 87% (revision and rating features), 84% (`target_upside`). The features compute in about 2 s.
+- **Tests:** `tests/test_altdata_analyst_features.py` covers:
+  - the windows, NULL before the first change, and the clip;
+  - the rating count, the median of each firm's latest target and the 250-session expiry;
+  - split adjustment and exclusion, percentile ranks, and the as-of view with one change per firm and session.
+
+### 8.2.1 Stage 1 result and outcome of round 2 (2026-10-16)
+
+`quant altdata research --round 2`, report `reports/altdata/a4-round2-20261016T113155Z.md`. 11 folds 2014-09-26 .. 2025-10-01, 2,770 sessions; coverage 81-98% of the pool per fold (76-98% for `target_upside`).
+
+```text
+feature                  mean IC   t      folds same sign   result
+target_revision_20d      +0.0079   +1.07  7/11              fail
+net_rating_changes_20d   +0.0006   +0.38  4/11              fail
+target_upside            -0.0014   -0.07  5/11              fail
+```
+
+- **No feature passes**, so there is no stage 2.
+- `target_revision_20d` has the expected sign (raised targets, slightly higher 5-day excess returns) and 7 of 11 folds, but t = 1.07: far from the pre-registered 2. Its folds swing both ways (-0.021 .. +0.034).
+- The rating count and the implied upside are indistinguishable from zero.
+- This fits the expectation written before the run: in large caps, analyst news is priced before the next session's open, which is when the label starts.
+
+**Outcome of A4 round 2: no analyst feature is promoted; no stage 2, no A5.**
+- Per the pre-registration, these three features are not redefined or re-tested on this data (other windows, normalizations, or a shorter target).
+- The loader and its table stay. Weekly downloads keep building a point-in-time record, which a later, separately pre-registered question could use, for example on forward data only.
+
 ---
 
 # 9. Tests

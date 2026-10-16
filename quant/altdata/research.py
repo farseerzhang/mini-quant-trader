@@ -1,4 +1,5 @@
-"""`quant altdata research`: stage 1 of A4 round 1 (altdata_proposal.md section 8.1).
+"""`quant altdata research`: A4 rounds 1 (Form 4, section 8.1) and 2 (analysts, section 8.2) of
+altdata_proposal.md; stages 1 and 2 follow the same protocol in both rounds.
 
 Per feature: the daily cross-sectional rank IC against the label's 5-day excess return over
 the sessions of the 11 development validation windows (holdout start fixed at 2025-10-10),
@@ -18,7 +19,8 @@ import pandas as pd
 from quant.models.feature_research import ic_summary, rank_ic
 from quant.models.folds import Fold, walk_forward_folds
 
-HOLDOUT_START = pd.Timestamp("2025-10-10")  # fixed by the pre-registration (8.1)
+HOLDOUT_START = pd.Timestamp("2025-10-10")  # fixed by the pre-registration (8.1, 8.2)
+ROUNDS = {1: ("Form 4 features", "8.1", "ml_lr_insider"), 2: ("analyst features", "8.2", "ml_lr_analysts")}
 MIN_ABS_T = 2.0
 MIN_FOLDS_SAME_SIGN = 7
 
@@ -83,6 +85,7 @@ class Stage2Result:
     reference_evidence: object
     trial_auc: float
     reference_auc: float
+    round_no: int = 1
 
 
 def trial_dataset(dataset, features: dict[str, pd.DataFrame], passing: list[str]):
@@ -104,7 +107,7 @@ def trial_folds(folds: list[Fold], sessions: pd.DatetimeIndex) -> list[Fold]:
     return out
 
 
-def stage2(engine, settings, features: dict[str, pd.DataFrame], passing: list[str]) -> Stage2Result:
+def stage2(engine, settings, features: dict[str, pd.DataFrame], passing: list[str], round_no: int = 1) -> Stage2Result:
     """One trial (8.1): the 35 inputs plus the passing features, everything else unchanged, judged by
     the gates against regime_switch. The same model without the features on the same rows is run
     alongside as a descriptive reference; it decides nothing."""
@@ -125,7 +128,7 @@ def stage2(engine, settings, features: dict[str, pd.DataFrame], passing: list[st
     trial = trial_dataset(dataset, features, passing)
     folds = trial_folds(development_folds(dataset.labelled().sessions, settings), trial.sessions)
     columns = [*INPUT_COLUMNS, *passing]
-    trial_name, reference_name = "ml_lr_insider", "ml_lr_same_rows"
+    trial_name, reference_name = ROUNDS[round_no][2], "ml_lr_same_rows"
     trial_result = run_walk_forward(trial, folds, STAGE2_MODEL, STAGE2_PARAMETERS, settings, input_columns=columns)
     reference = run_walk_forward(trial, folds, STAGE2_MODEL, STAGE2_PARAMETERS, settings)
     prices = load_prices(engine, [*stocks, "SPY"])
@@ -143,18 +146,20 @@ def stage2(engine, settings, features: dict[str, pd.DataFrame], passing: list[st
         gates=evaluate_predictor_gates(gate_settings, evidence),
         reference_gates=evaluate_predictor_gates(gate_settings, reference_evidence),
         evidence=evidence, reference_evidence=reference_evidence,
-        trial_auc=float(trial_result.folds["auc"].mean()), reference_auc=float(reference.folds["auc"].mean()))
+        trial_auc=float(trial_result.folds["auc"].mean()), reference_auc=float(reference.folds["auc"].mean()),
+        round_no=round_no)
 
 
 def write_stage2_report(result: Stage2Result, reports_dir: str | Path) -> Path:
     now = datetime.now(timezone.utc)
-    path = Path(reports_dir) / "altdata" / f"a4-round1-stage2-{now:%Y%m%dT%H%M%SZ}.md"
+    title, section, trial_name = ROUNDS[result.round_no]
+    path = Path(reports_dir) / "altdata" / f"a4-round{result.round_no}-stage2-{now:%Y%m%dT%H%M%SZ}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     e, r = result.evidence, result.reference_evidence
     lines = [
-        f"# A4 round 1, stage 2: {', '.join(result.passing)} ({now:%Y-%m-%d %H:%M} UTC)",
+        f"# A4 round {result.round_no}, stage 2: {', '.join(result.passing)} ({now:%Y-%m-%d %H:%M} UTC)",
         "",
-        f"Pre-registration: altdata_proposal.md section 8.1. Logistic regression C = 1.0, the 35 inputs plus "
+        f"Pre-registration: altdata_proposal.md section {section}. Logistic regression C = 1.0, the 35 inputs plus "
         f"{', '.join(result.passing)}; {len(result.folds)} folds {result.folds[0].validation_start.date()} .. "
         f"{result.folds[-1].validation_end.date()} (holdout start fixed at {HOLDOUT_START.date()}; no holdout); "
         f"`ml_select` as configured; after costs. Rows without the feature are dropped: {result.rows_trial:,} of "
@@ -168,7 +173,7 @@ def write_stage2_report(result: Stage2Result, reports_dir: str | Path) -> Path:
                      f"{row['turnover']:.1f}x |")
     lines += [
         "",
-        "`ml_lr_insider` is the trial; `ml_lr_same_rows` is the same model without the feature on the same rows "
+        f"`{trial_name}` is the trial; `ml_lr_same_rows` is the same model without the feature on the same rows "
         "(descriptive only: it isolates what the feature adds and decides nothing).",
         "",
         "| | Trial | Same rows, no feature |",
@@ -194,14 +199,15 @@ def write_stage2_report(result: Stage2Result, reports_dir: str | Path) -> Path:
     return path
 
 
-def write_report(results: list[FeatureResult], folds: list[Fold], reports_dir: str | Path) -> Path:
+def write_report(results: list[FeatureResult], folds: list[Fold], reports_dir: str | Path, round_no: int = 1) -> Path:
     now = datetime.now(timezone.utc)
-    path = Path(reports_dir) / "altdata" / f"a4-round1-{now:%Y%m%dT%H%M%SZ}.md"
+    title, section, _ = ROUNDS[round_no]
+    path = Path(reports_dir) / "altdata" / f"a4-round{round_no}-{now:%Y%m%dT%H%M%SZ}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"# A4 round 1, stage 1: Form 4 features ({now:%Y-%m-%d %H:%M} UTC)",
+        f"# A4 round {round_no}, stage 1: {title} ({now:%Y-%m-%d %H:%M} UTC)",
         "",
-        f"Pre-registration: altdata_proposal.md section 8.1. Rank IC against the 5-day excess return over the "
+        f"Pre-registration: altdata_proposal.md section {section}. Rank IC against the 5-day excess return over the "
         f"validation sessions of {len(folds)} folds ({folds[0].validation_start.date()} .. "
         f"{folds[-1].validation_end.date()}), holdout start fixed at {HOLDOUT_START.date()}; no holdout data. "
         f"Pass = |t| >= {MIN_ABS_T:g} and >= {MIN_FOLDS_SAME_SIGN} of {len(folds)} folds with the overall sign.",
@@ -221,7 +227,7 @@ def write_report(results: list[FeatureResult], folds: list[Fold], reports_dir: s
                      + " | ".join(cells) + " |")
     passed = [r.name for r in results if r.passed]
     lines += ["", f"**Stage 1 outcome:** {', '.join(passed) + ' pass' if passed else 'no feature passes'}. "
-              "With 4 features about 0.2 passes are expected by chance; a pass is a candidate for stage 2, "
-              "not a finding.", ""]
+              f"With {len(results)} features about {0.05 * len(results):.2g} passes are expected by chance; a pass "
+              "is a candidate for stage 2, not a finding.", ""]
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
