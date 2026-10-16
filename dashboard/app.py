@@ -374,6 +374,33 @@ def _forward_scale(names):
     return alt.Scale(domain=list(names), range=[FORWARD_COLORS.get(n) or next(others) for n in names])
 
 
+def _session_axis(dates, labels: bool = True) -> alt.Axis:
+    """An x axis for daily data: one label per day while the record is short (never hours of the
+    day, which Vega picks for a span of a few days), month labels once it is long."""
+    dates = pd.to_datetime(pd.Series(dates))
+    span = int((dates.max() - dates.min()).days) if len(dates) else 0
+    options = {"labels": labels, "ticks": labels, "labelAngle": 0, "grid": False}
+    if span <= 45:
+        options.update(format="%b %d", tickCount={"interval": "day", "step": max(1, span // 8)})
+    else:
+        options.update(format="%b %Y" if span > 400 else "%b %d")
+    return alt.Axis(**options)
+
+
+def _score_table(scores: pd.DataFrame) -> pd.DataFrame:
+    """The forward scores as display text, one row per portfolio."""
+    def fmt(spec):
+        return lambda v: "n/a" if pd.isna(v) else format(v, spec)  # a bare "-" would render as a list bullet
+
+    return pd.DataFrame({
+        "return": scores["total_return"].map(fmt("+.2%")),
+        "volatility": scores["volatility"].map(fmt(".1%")),
+        "Sharpe": scores["sharpe"].map(fmt(".2f")),
+        "max drawdown": scores["max_drawdown"].map(fmt(".1%")),
+        "missed": scores["missed"].map(lambda v: "n/a" if pd.isna(v) else str(int(v))),  # paper portfolios only
+    }, index=scores.index).rename_axis("portfolio")
+
+
 def page_forward(engine, settings):
     runs = data.forward_runs(engine)
     if runs.empty:
@@ -397,28 +424,23 @@ def page_forward(engine, settings):
             st.metric(name, f"{row['total_return']:+.2%}", border=True,
                       help=f"max drawdown {row['max_drawdown']:.1%}"
                            + ("" if pd.isna(row["missed"]) else f"; {int(row['missed'])} missed session(s)"))
-    table = report.scores.rename(columns={"total_return": "return", "max_drawdown": "max drawdown"})
-    table["missed"] = table["missed"].map(lambda v: "-" if pd.isna(v) else str(int(v)))  # paper portfolios only
-    st.dataframe(table, width="stretch", column_config={
-        "return": st.column_config.NumberColumn(format="percent"),
-        "volatility": st.column_config.NumberColumn(format="percent"),
-        "Sharpe": st.column_config.NumberColumn(format="%.2f"),
-        "sharpe": st.column_config.NumberColumn("Sharpe", format="%.2f"),
-        "max drawdown": st.column_config.NumberColumn(format="percent"),
-    })
+    # A static table (not a scrollable grid), so it fits the page width on screen and in print.
+    st.table(_score_table(report.scores))
 
     curves = data.growth_and_drawdown(report.values)
     if len(report.values) > 1:
         colors = _forward_scale(report.values.columns)
-        growth = alt.Chart(curves).mark_line(strokeWidth=2).encode(
-            x=alt.X("date:T", title=None, axis=alt.Axis(labels=False, ticks=False)),
+        day = alt.Tooltip("date:T", title="session", format="%Y-%m-%d")
+        growth = alt.Chart(curves).mark_line(strokeWidth=2, point=len(report.values) <= 30).encode(
+            x=alt.X("date:T", title=None, axis=_session_axis(curves["date"], labels=False)),
             y=alt.Y("growth:Q", scale=alt.Scale(zero=False), title="growth of 1"),
             color=alt.Color("portfolio:N", scale=colors, title=None, legend=alt.Legend(orient="top")),
-            tooltip=["date:T", "portfolio:N", alt.Tooltip("growth:Q", format=".4f")]).properties(height=280)
-        drawdown = alt.Chart(curves).mark_line(strokeWidth=1.5).encode(
-            x=alt.X("date:T", title=None), y=alt.Y("drawdown:Q", axis=alt.Axis(format="%"), title="drawdown"),
+            tooltip=[day, "portfolio:N", alt.Tooltip("growth:Q", format=".4f")]).properties(height=280)
+        drawdown = alt.Chart(curves).mark_line(strokeWidth=1.5, point=len(report.values) <= 30).encode(
+            x=alt.X("date:T", title=None, axis=_session_axis(curves["date"])),
+            y=alt.Y("drawdown:Q", axis=alt.Axis(format="%"), title="drawdown"),
             color=alt.Color("portfolio:N", scale=colors, legend=None),
-            tooltip=["date:T", "portfolio:N", alt.Tooltip("drawdown:Q", format=".1%")]).properties(height=140)
+            tooltip=[day, "portfolio:N", alt.Tooltip("drawdown:Q", format=".1%")]).properties(height=140)
         st.altair_chart(growth, width="stretch")
         st.altair_chart(drawdown, width="stretch")
     else:
@@ -473,6 +495,10 @@ def page_forward(engine, settings):
 
 def main():
     st.set_page_config(page_title="Mini Quant Trader", layout="wide")
+    # Printing (e.g. to PDF): charts and grids are drawn at the screen width, so let them shrink to
+    # the paper instead of being cut off at its right edge.
+    st.html("<style>@media print { canvas, [data-testid='stVegaLiteChart'] svg, [data-testid='stDataFrame'] "
+            "{ max-width: 100% !important; height: auto !important; } }</style>")
     args = _arguments()
     settings = load_settings(args.config)
     engine = _engine(args.db or settings.database.path, settings.database.busy_timeout_ms)
