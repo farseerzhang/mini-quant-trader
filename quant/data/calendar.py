@@ -109,6 +109,19 @@ def first_session_closing_after(moment: datetime, calendar_name: str) -> date:
     raise ValueError(f"no {calendar_name} session closes within 15 days after {moment}")
 
 
+def sessions_closing_after(moments: pd.Series, calendar_name: str) -> pd.Series:
+    """first_session_closing_after for many naive-UTC moments at once (one calendar, one search)."""
+    if moments.empty:
+        return pd.Series([], index=moments.index, dtype=object)
+    stamps = pd.to_datetime(moments).dt.tz_localize("UTC")
+    calendar = _calendar(calendar_name, stamps.min().date())
+    closes = calendar.closes  # session -> close (UTC)
+    position = closes.searchsorted(stamps, side="right")  # the first close strictly after
+    if (position >= len(closes)).any():
+        raise ValueError(f"a moment lies after the last {calendar_name} session the calendar knows")
+    return pd.Series([closes.index[p].date() for p in position], index=moments.index)
+
+
 def sessions_between(first: date, last: date, calendar_name: str) -> list[date]:
     """Every session from ``first`` to ``last``, both included."""
     calendar = _calendar(calendar_name, first)

@@ -9,7 +9,7 @@ Times are stored as naive UTC; `available_on` is the session at whose close a fi
 first be used (altdata_proposal.md section 2, decision 6).
 """
 
-from sqlalchemy import Column, Date, DateTime, Float, Integer, PrimaryKeyConstraint, String, Table, Text
+from sqlalchemy import Column, Date, DateTime, Float, Integer, PrimaryKeyConstraint, String, Table, Text, UniqueConstraint
 
 from quant.persistence.tables import metadata
 
@@ -103,12 +103,36 @@ altdata_features = Table(
     PrimaryKeyConstraint("symbol", "date", "altdata_version", name="pk_altdata_features"),
 )
 
+# Analyst rating and price-target changes from Yahoo (section 13.4): one row per version of a
+# change, identified by stock, timestamp and firm. A row is never updated except `last_seen`;
+# a change whose content differs in a later download gets a new row, a change that disappears
+# keeps its row (its `last_seen` stops). `first_seen` is the first download that had it.
+altdata_analyst_changes = Table(
+    "altdata_analyst_changes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("symbol", String, nullable=False),
+    Column("grade_time", DateTime, nullable=False),  # Yahoo's GradeDate, naive UTC (section 13.3)
+    Column("firm", String, nullable=False),
+    Column("from_grade", String),
+    Column("to_grade", String),
+    Column("action", String),  # main | up | down | reit | init
+    Column("target_action", String),  # Raises | Lowers | Announces | Maintains | Removes | Adjusts
+    Column("current_target", Float),  # NULL when Yahoo gives none (0)
+    Column("prior_target", Float),
+    Column("content_hash", String, nullable=False),
+    Column("available_on", Date, nullable=False),  # the first session closing after grade_time
+    Column("first_seen", Date, nullable=False),
+    Column("last_seen", Date, nullable=False),
+    UniqueConstraint("symbol", "grade_time", "firm", "content_hash", name="uq_altdata_analyst_changes"),
+)
+
 # What has been loaded: one row per quarterly data set, and one for the live updates.
 altdata_sync = Table(
     "altdata_sync",
     metadata,
-    Column("source", String, nullable=False),  # form4-dataset | form4-live
-    Column("key", String, nullable=False),  # 2026q2 | live
+    Column("source", String, nullable=False),  # form4-dataset | form4-live | analysts-yahoo
+    Column("key", String, nullable=False),  # 2026q2 | live | the download date
     Column("status", String, nullable=False),  # OK | FAILED
     Column("filings", Integer, nullable=False),
     Column("lines", Integer, nullable=False),

@@ -29,6 +29,11 @@ def add_parser(commands, db_help: str) -> None:
     features = sub.add_parser("features", help="rebuild altdata_features (the four Form 4 candidate features) "
                               "from the stored filings and shares outstanding")
     features.add_argument("--db", help=db_help)
+    analysts = sub.add_parser(
+        "analysts", help="analyst rating and price-target changes from Yahoo for the pool: stores new and changed "
+        "rows only, with the date first and last seen (altdata_proposal.md 13.4; about 2 minutes)")
+    analysts.add_argument("--symbol", action="append", metavar="TICKER", help="only this stock (repeatable)")
+    analysts.add_argument("--db", help=db_help)
     research = sub.add_parser("research", help="A4 round 1, stage 1: rank IC of the Form 4 features on the "
                               "development folds (pre-registered, altdata_proposal.md 8.1; no holdout)")
     research.add_argument("--stage", type=int, choices=[1, 2], default=1,
@@ -59,6 +64,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_features(args, settings)
     if args.altdata_command == "research":
         return _run_research(args, settings)
+    if args.altdata_command == "analysts":
+        return _run_analysts(args, settings)
     raise ValueError(f"unknown altdata command {args.altdata_command!r}")
 
 
@@ -169,6 +176,36 @@ def _run_research(args: argparse.Namespace, settings: Settings) -> int:
               f"{'PASS' if r.passed else 'fail'}")
     print(f"\n{path}")
     return 0
+
+
+def _run_analysts(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.altdata.analysts import update_analysts
+
+    symbols = [s.upper() for s in args.symbol] if args.symbol else None
+    unknown = [s for s in symbols or [] if s not in settings.market.stocks]
+    if unknown:
+        _error(f"not in the stock pool: {', '.join(unknown)}")
+        return 1
+
+    def progress(line: str) -> None:
+        print(line, flush=True)
+        log.info("altdata analysts: %s", line.strip())
+
+    engine = _engine(settings, args.db)
+    try:
+        count = len(symbols or settings.market.stocks)
+        print(f"Analyst changes from Yahoo for {count} stock(s), one request each:", flush=True)
+        result = update_analysts(engine, settings, symbols, progress=progress)
+        print(f"\nSummary {result.day}: {len(result.symbols_ok)} stock(s) read, {result.seen:,} changes seen; "
+              f"{result.new:,} new, {result.changed:,} changed, {result.gone:,} gone since the previous download")
+        for symbol, error in result.failed.items():
+            _error(f"  {symbol}: {error}")
+        queries.record_pipeline_run(engine, "altdata-analysts", "analysts", "OK" if result.ok else "FAILED",
+                                    message=f"{result.new} new, {result.changed} changed, {result.gone} gone, "
+                                    f"{len(result.failed)} failed")
+        return 0 if result.ok else 1
+    finally:
+        engine.dispose()
 
 
 def _run_coverage(args: argparse.Namespace, settings: Settings) -> int:

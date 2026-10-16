@@ -382,6 +382,82 @@ Decided (section 15, decisions 6 and 7): the conservative availability rule abov
 - Quality (section 6): P / S lines without a positive price or shares, dated after their filing, or priced more than 50% away from that day's as-traded close go to `data_quarantine` (provider `sec-form4`) and are not stored.
 - **Settings removed (2026-10-15, cleanup):** `altdata.sec.signal_codes` and `altdata.sec.exclude_10b5_1_sales`, which section 5 planned, were never read. The features always use P and S lines and always leave out 10b5-1 sales, as fixed by the A4 pre-registration (sections 7 and 8.1), so changing the settings had no effect. The rule is now stated only in the code (`quant/altdata/features.py`) and in sections 7 and 8.1.
 
+## 13.3 A0b spike: analyst rating and price-target changes (2026-10-16; data only, no returns looked at)
+
+A new source, not in sections 3-12: sell-side analysts' rating changes and price targets (e.g. "JP Morgan raises AAPL's target to 360 from 340"). Spike scripts were kept outside the repository. Nothing is stored in the database.
+
+**Source.** `yfinance` 1.7.0, `Ticker(symbol).upgrades_downgrades` (Yahoo Finance's web data, personal use, as for the prices). One request per stock, all 81 answered, no errors. The other yfinance analyst fields do not suit a backtest: `analyst_price_targets` is today's consensus only, and `recommendations` covers only the last few months.
+
+**Fields.** `GradeDate` (a timestamp to the second), `Firm`, `FromGrade`, `ToGrade`, `Action` (`main` maintain, `up`, `down`, `reit` reiterate, `init` initiate), `priceTargetAction` (Raises / Lowers / Announces / Maintains / Removes / Adjusts), `currentPriceTarget`, `priorPriceTarget`.
+
+**Coverage.** 38,836 rows from 213 firms, 2011-12-08 .. 2026-10-15.
+
+```text
+year   rows    stocks   with target   with prior target
+2012   1,189   62       92%           80%
+2014   1,271   62       86%           67%
+2016   1,406   62       68%           55%
+2018   1,550   63       82%           77%
+2020   3,195   71       96%           85%
+2022   3,624   73       98%           87%
+2024   5,068   78       97%           89%
+2026   4,285   81       98%           93%   (to 2026-10-15)
+```
+
+- Actions: maintain 28,474, up 2,841, down 2,602, reiterate 2,478, initiate 2,441.
+- Price targets: raised 19,912, lowered 9,687.
+- The median stock has 446 rows; the most are GOOGL 994, AMZN 988 and NVDA 983.
+
+**Timestamps are UTC (checked against dated news, 2026-10-16).**
+- Benzinga's "Top Upgrades, Downgrades for January 29, 2019", published 09:15 ET (`2019-01-29T09:15:43-05:00`), lists UBS's NVDA upgrade, quoted in pre-market trading. Yahoo has that day's NVDA changes at 11:53 (UBS), 12:23 (Morgan Stanley) and 12:41 (Needham). Read as ET, they would postdate the roundup that reports them. Read as UTC (06:53 .. 07:41 ET), they are pre-market, as reported.
+- TheFly published Barclays' NFLX downgrade to Underweight at 2024-10-07 09:18 UTC. Yahoo's timestamp is 11:05, about two hours later if UTC.
+- NFLX's ten downgrades after its Q4 2021 report fall at 09:29 .. 14:49, that is 04:29 .. 09:49 ET on the morning after the report.
+- Records cluster at 10-13 UTC, i.e. 06-09 ET, when pre-market notes come out.
+- **Yahoo's time can be hours after the first public report** (TheFly example), never earlier in these checks. Using it is therefore late, not early, which is safe against look-ahead. **Availability rule for any feature:** a change counts from the first session whose close is after its timestamp (`first_session_closing_after`, as for live Form 4 filings).
+
+**Problems a feature design must handle:**
+1. **History from 2012**, while development starts in 2006. The training windows would have to be cut, as in A4 round 1, which started in 2009.
+2. **Rows per year grow fourfold** (about 1,200 to 5,000), most likely from Yahoo's sourcing rather than from analysts. Counts are therefore not comparable over time: a feature must be relative, e.g. ranked across stocks on each session, or measured against the stock's own trailing level.
+3. **Missing histories for some long-listed stocks:** GE starts 2021-10 (after its ticker change), LIN 2024-11 and BRK-B has only 22 rows. Recent listings (GEV, TEM, XYZ, SNDK, FIG, SPCX) start with their listing, as expected.
+4. **Not point in time.** This is today's view of the history; Yahoo may have changed or dropped old rows, which cannot be checked. 51 rows repeat a firm, stock and day; they would be counted once.
+5. **2-32% of rows have no price target**, depending on the year (most missing 2016-17). The prior target is missing more often.
+
+**Assessment.** Usable for one A4-style pre-registered round, from 2012. The most promising input is the **price-target revision** (current / prior target - 1), because ratings rarely change: three in four rows are "maintain". The prior, as in section 10: large caps absorb analyst news within hours, and A4 showed that new inputs are often already in the price features (analysts raise targets after rises). Next step, only if decided: a pre-registration (features, normalization, the availability rule above, pass criteria). It would first need a loader that stores the snapshot (`altdata_analyst_changes`), with the date it was downloaded, and keeps later downloads as new snapshots, so that from then on the data becomes point in time.
+
+## 13.4 Analyst changes loader (designed and built 2026-10-16)
+
+**Storage: changes, not copies.**
+- A full download is about 2.8 MB and 39,000 rows; a daily copy would add about 700 MB a year, almost all of it repeated.
+- Instead, each change (stock, timestamp, firm) is stored once per **version of its content**, with `first_seen` and `last_seen`, the download dates.
+- New growth is about 5,000 changes a year, well under 1 MB.
+
+| In a download | Stored |
+|---|---|
+| A new change | Inserted; `first_seen` = `last_seen` = the download date |
+| The same change, same content | Only `last_seen` moves |
+| The same change, different content (e.g. a corrected target) | A new row, a new version; the old one keeps its `last_seen` |
+| A change no longer there | Kept as it was (its `last_seen` stops); counted as "gone" against the previous download |
+| A stock whose download failed | Nothing changes, and its changes are not counted as gone |
+
+**What it is for:**
+1. From the first download on, `first_seen` is the latest date a change was visible here, so the data becomes **point in time**.
+2. A change that appears later with an old `grade_time` is a **backfill** by Yahoo, and research can leave it out.
+3. Versions and gone changes show **how much Yahoo revises its history**.
+
+The first download stores the whole history with `first_seen` = that day. That history stays today's view, not point in time (section 13.3, problem 4).
+
+**As built:**
+- **Code:** `quant/altdata/analysts.py` and table `altdata_analyst_changes` (`quant/altdata/tables.py`).
+  - Stored columns: `symbol`, `grade_time` (naive UTC), `firm`, `from_grade`, `to_grade`, `action`, `target_action`, `current_target`, `prior_target`.
+  - Zero targets and empty text are stored as NULL.
+  - `content_hash` identifies the version.
+  - `available_on` is the first session whose close is after `grade_time`, from the new `quant/data/calendar.py: sessions_closing_after`, the vectorized `first_session_closing_after`.
+- **Logging:** each download of the whole pool writes one row to `altdata_sync` (source `analysts-yahoo`, key = the download date) with its counts.
+  - A partial run with `--symbol` stores its rows but writes no such row, so it is not the "previous download" that "gone" is counted against.
+- **Command:** `quant altdata analysts [--symbol T ...]`. It makes one request per stock, 1 s apart, so about 2 minutes for the pool. Research only, and not part of `run-daily`.
+- **Schedule:** once a week is enough for research, because availability uses Yahoo's timestamp and `first_seen` only checks backfills. Daily only if a feature is ever used live.
+- **Tests:** `tests/test_altdata_analysts.py`, offline with a fake Yahoo. It covers normalization, the first download, new / changed / gone, a rerun on the same day, a failed stock, and the session before or after the close.
+
 ---
 
 # 14. Risks
