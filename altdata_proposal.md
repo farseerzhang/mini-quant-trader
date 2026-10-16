@@ -255,6 +255,64 @@ Coverage limits that apply to the protocol:
 - **Wikipedia** starts in July 2015, so `pageviews_z` exists for 10 of the 11 folds (the first fold only from mid-2015). The report states the coverage per fold.
 - **Short interest** coverage depends on what A0 finds; a feature covering fewer than 8 folds is reported but cannot pass.
 
+## 8.2 Pre-registration, A4 round 2: analyst price targets and ratings (registered 2026-10-16, before any feature value or result is computed)
+
+Written after the A0b spike (section 13.3) and the loader (13.4). Only counts, coverage and timestamps have been looked at; no feature value has been computed and no return has been joined to analyst data.
+
+**Data.**
+- `altdata_analyst_changes` **as of the download of 2026-10-16**: the rows with `first_seen` <= 2026-10-16 <= `last_seen`, i.e. that download's view. Later downloads therefore cannot change the research input.
+- That history is Yahoo's view today, not point in time (13.3, problem 4); this is accepted for this round and stated in the report.
+- Each change counts from its `available_on` session: the first session closing after its UTC timestamp.
+- If a firm has several changes for the same stock that become available on the same session, only the latest by timestamp counts.
+
+**Features (3)**, per pool stock and NYSE session T, from changes with `available_on` <= T only. Windows are in sessions.
+
+1. `target_revision_20d`: the mean of ln(current target / prior target) over the changes that became available in the 20 sessions up to and including T and that have both targets, each value clipped to [-ln 2, +ln 2] (a halving or doubling at most).
+   - **Idea:** analysts raising or cutting their targets (the strongest documented analyst signal for returns).
+   - 0 when the stock had no such change in the window.
+2. `net_rating_changes_20d`: the number of `up` minus the number of `down` actions among the changes that became available in the 20 sessions up to T.
+   - **Idea:** rating changes.
+   - 0 when there were none.
+3. `target_upside`: for each firm, its latest change with a current target that became available in the 250 sessions up to T. The feature is the median of those targets divided by the as-traded close of T, minus 1.
+   - **Idea:** the analysts' implied upside (with no clear sign in the literature).
+   - NULL when no firm has a target in the window.
+
+- **Stock splits.** Targets are in as-traded dollars.
+  - For `target_upside`, a target set before a split is divided by the split ratios between its session and T, from the stored `corporate_actions`.
+  - For `target_revision_20d`, a change that becomes available within 5 sessions after a split of the stock is left out, because its prior target may still be the unadjusted one.
+- **Before a stock's first change in the table, all three are NULL.** This includes stocks with a known gap in history (GE before 2021-10, LIN before 2024-11).
+- **Counts grow fourfold over the years** (13.3, problem 2):
+  - Stage 1 is a cross-sectional rank IC per session, so a level shift that is common to all stocks does not matter.
+  - In stage 2, each feature enters the model as its **cross-sectional percentile rank on that session** (0..1, ties averaged), not as the raw value.
+
+**Target, folds, stage 1** exactly as in round 1 (section 8.1):
+- the label's `excess` column;
+- the same 11 development folds, with the holdout start fixed at 2025-10-10 (validation windows 2014-09-26 .. 2025-10-01);
+- daily rank IC on sessions with at least 10 stocks that have a value, with the `ic_summary` t-statistic on every 5th session;
+- **Pass** = |t| >= 2 **and** at least 7 of 11 folds with the overall sign.
+- The direction is not fixed in advance: either sign can pass, as in round 1.
+- With 3 features tested, about 0.15 passes are expected by chance.
+- Reported per fold: the coverage, as sessions and stocks with a value.
+
+**Stage 2 (only for features that pass):**
+- One trial, as round 1's stage 2: logistic regression C = 1.0 with the 35 inputs plus the passing features as percentile ranks; everything else is unchanged (label, `ml_select`, 81 stocks, folds, embargo, `retrain.gates`).
+- The training windows are cut to the trial rows, which start in 2012 at the earliest. The validation windows are kept.
+- Alongside, the same model without the features on the same rows, as a descriptive reference.
+- One trial, added to the trial log; nothing is registered or promoted. A pass would lead to A5.
+- **No holdout** (section 8, point 4).
+
+**If no feature passes:** the result is recorded here and round 2 ends, with no redefinition or re-test of these features on this data. Other windows, other normalizations or the rating-level features would each be a new pre-registration.
+
+**Expectation, stated before any result:** most likely no improvement. Large caps absorb analyst news within hours, analysts tend to raise targets after rises (so the price features already carry part of it), and the data is not point in time.
+
+**Report:** `reports/altdata/a4-round2-<timestamp>.md`, and the outcome written here, whatever it is.
+
+**Confirmed as drafted (2026-10-16):**
+- (a) the three features and their definitions, including the 20- and 250-session windows, the ±ln 2 clip and the split rules;
+- (b) the data as of the 2026-10-16 download;
+- (c) percentile ranks as the stage-2 inputs;
+- (d) the protocol and pass rule of round 1, unchanged.
+
 ---
 
 # 9. Tests
