@@ -363,6 +363,18 @@ All settings live in one file, `config/settings.yaml`, laid out as in section 27
 
 The application uses SQLite with WAL mode for local data storage. The database file is set by `database.url` (default `data/quant.db`).
 
+**Back it up.** Since the forward test started, the database holds records that cannot be rebuilt: the frozen forward log (each session can only be frozen on its own evening), the start positions, and the analyst `first_seen` dates. Make a copy from time to time, for example weekly, and before any larger change:
+
+```bash
+python -m quant backup-database
+```
+
+- It writes a dated copy such as `data/backups/quant-20261016T204347Z.db` (about 300 MB).
+- It checks the copy (SQLite integrity check, and the forward-test row counts against the original) and keeps the newest `database.backups_to_keep` copies (10).
+- It is safe while the dashboard is open.
+
+To restore: close the dashboard and any running command, move `data/quant.db` aside, and copy a backup to `data/quant.db`. The backups sit on the same disk as the database, so for protection against a disk failure, copy one to another drive now and then.
+
 `daily_prices` holds prices, volumes and dividends as originally traded. Yahoo returns them rescaled for later splits, and `YFinanceProvider` reverses that (see section 8 of `proposal.md`). Databases built before this fix hold Yahoo's split-rescaled values, and stored rows are never overwritten, so rebuild such a database: move `data/quant.db` aside, then run `python -m quant update-market-data` and `python -m quant calculate-features`.
 
 ## Project Structure

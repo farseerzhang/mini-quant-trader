@@ -24,6 +24,8 @@ class ConfigError(ValueError):
 class DatabaseSettings:
     url: str
     busy_timeout_ms: int
+    backup_directory: str  # where `quant backup-database` writes its copies
+    backups_to_keep: int  # the newest N copies are kept; older ones are deleted
 
     def __post_init__(self) -> None:
         try:
@@ -34,6 +36,8 @@ class DatabaseSettings:
             raise ConfigError(f"database.url must look like 'sqlite:///path/to/file.db', got {self.url!r}")
         if self.busy_timeout_ms < 0:
             raise ConfigError("database.busy_timeout_ms must not be negative")
+        if self.backups_to_keep < 1:
+            raise ConfigError("database.backups_to_keep must be at least 1")
 
     @property
     def path(self) -> str:

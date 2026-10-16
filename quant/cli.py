@@ -206,6 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status_command.add_argument("--db", help=db_help)
 
+    backup_command = commands.add_parser(
+        "backup-database",
+        help="copy the database to database.backup_directory (checked, dated; keeps the newest "
+        "database.backups_to_keep copies). Safe while the dashboard is open",
+    )
+    backup_command.add_argument("--db", help=db_help)
+
     daily_command = commands.add_parser(
         "run-daily",
         help="update market data, calculate features and the regime, then generate signals "
@@ -419,6 +426,25 @@ def _run_rate_shocks_trial(args: argparse.Namespace, settings: Settings) -> int:
     for result in outcome.gates.results:
         print(f"  {result.name:28s} {result.status:5s} {result.observed}")
     print(f"\n{path}")
+    return 0
+
+
+def _run_backup_database(args: argparse.Namespace, settings: Settings) -> int:
+    import sqlite3
+
+    from quant.ops.backup import BackupError, backup_database
+
+    database = settings.database
+    try:
+        result = backup_database(args.db or database.path, database.backup_directory, database.backups_to_keep)
+    except (BackupError, sqlite3.Error, OSError) as exc:
+        _error(f"Backup failed: {exc}")
+        return 1
+    counts = ", ".join(f"{table} {count:,}" for table, count in result.row_counts.items())
+    print(f"Backed up to {result.path} ({result.size_bytes / 1e6:,.0f} MB); integrity check OK; rows: {counts}")
+    print(f"{result.kept} backup(s) kept in {database.backup_directory}"
+          + (f"; deleted {len(result.deleted)} older: {', '.join(p.name for p in result.deleted)}"
+             if result.deleted else ""))
     return 0
 
 
@@ -865,6 +891,7 @@ COMMANDS = {
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),
+    "backup-database": lambda args, settings: _run_backup_database(args, settings),
     "forward-report": lambda args, settings: _run_forward_report(args, settings),
     "forward-test": lambda args, settings: _run_forward(args, settings),
     "generate-signals": lambda args, settings: _run_signals(args, settings),

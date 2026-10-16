@@ -1897,6 +1897,8 @@ Implementation (`quant/logs.py`, Phase 9): every command logs to `<database dire
 database:
   url: sqlite:///data/quant.db
   busy_timeout_ms: 30000
+  backup_directory: data/backups   # `quant backup-database` writes dated copies here (git-ignored with data/)
+  backups_to_keep: 10             # the newest 10 copies are kept, older ones deleted
 
 market:
   provider: yfinance
@@ -2247,6 +2249,12 @@ Fixed before the first forward session; a change after forward data exists is lo
 | `SPY` | buy-and-hold from the start | benchmark |
 
 Shadows are listed in `forward_test.shadows`; they never change the signals.
+
+*Decision (2026-10-16, owner): run 1 is a paper test; `live` is the evidence.*
+- The owner does not trade the signals or record fills, and `data/trades.csv` stays empty. The real account held about 8% of the live targets in the first sessions.
+- `real` therefore shows the owner's own account, valued from the start positions; it is **not** the strategy as traded. The followed share and the execution cost measure nothing in this run.
+- The 12-month comparison uses `live` and the shadows only.
+- The checkpoints and the rules are unchanged.
 
 *Design change (2026-10-15, during run 1, after three forward sessions): `shadow_rule_bonds` added*, as decided by the holdout check of section 12.5.3.
 - Run 1 is not restarted, and `live`, the other shadows and `real` are unchanged.

@@ -4,6 +4,8 @@
 database:
   url: sqlite:///data/quant.db
   busy_timeout_ms: 30000
+  backup_directory: data/backups   # `quant backup-database` writes dated copies here (git-ignored with data/)
+  backups_to_keep: 5             # the newest 5 copies are kept, older ones deleted
 
 market:
   provider: yfinance
