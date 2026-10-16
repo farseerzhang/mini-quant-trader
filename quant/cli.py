@@ -105,6 +105,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     holdout_command.add_argument("--db", help=db_help)
 
+    rate_shocks_command = commands.add_parser(
+        "regime-rate-shocks-trial",
+        help="the pre-registered one-time trial of section 12.7: interest-rate shock inputs (3-month yield drop, "
+        "10-year yield jump) in the rule score (research only; writes reports/regime/rate-shocks-trial-*.md, "
+        "stores nothing)",
+    )
+    rate_shocks_command.add_argument("--db", help=db_help)
+
     backtest_command = commands.add_parser(
         "backtest",
         help="backtest the rule-based strategies against SPY, equal weight and a random baseline, and save the results",
@@ -384,6 +392,32 @@ def _run_rule_v2_holdout(args: argparse.Namespace, settings: Settings) -> int:
         engine.dispose()
     print(f"{check.start.date()} .. {check.end.date()}: Sharpe {'at least as high' if check.sharpe_ok else 'lower'}, "
           f"max drawdown {'no deeper' if check.drawdown_ok else 'deeper'} -> {check.decision}")
+    print(f"\n{path}")
+    return 0
+
+
+def _run_rate_shocks_trial(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import datetime, timezone
+
+    from quant.regime.rate_shocks_trial import run_rate_shocks_trial, write_rate_shocks_report
+
+    engine = _engine(settings, args.db)
+    try:
+        print("Section 12.7 trial: rule_based-v1 and rule_rate_shocks-v1, regime_switch with each (a few minutes)",
+              flush=True)
+        outcome = run_rate_shocks_trial(engine, settings)
+        path = write_rate_shocks_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
+        verdict = "PASSED" if outcome.gates.passed else "FAILED"
+        queries.record_pipeline_run(engine, command="regime-rate-shocks-trial", stage="trial", status="OK",
+                                    message=f"section 12.7: gates {verdict}")
+    except ValueError as exc:
+        _error(f"Trial failed to run: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(f"gates {verdict}")
+    for result in outcome.gates.results:
+        print(f"  {result.name:28s} {result.status:5s} {result.observed}")
     print(f"\n{path}")
     return 0
 
@@ -827,6 +861,7 @@ COMMANDS = {
     "regime-bond-trial": lambda args, settings: _run_bond_trial(args, settings),
     "regime-combo-trial": lambda args, settings: _run_combo_trial(args, settings),
     "regime-rule-v2-holdout": lambda args, settings: _run_rule_v2_holdout(args, settings),
+    "regime-rate-shocks-trial": lambda args, settings: _run_rate_shocks_trial(args, settings),
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),

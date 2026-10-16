@@ -793,6 +793,107 @@ regime days: v1 BULL 234 / SIDEWAYS 10 / BEAR 7; v2 BULL 226 / SIDEWAYS 13 / BEA
 - Nothing had been frozen under the old names.
 
 
+## 12.6 Spike: Treasury yields (2026-10-16; data only, no returns looked at)
+
+Question raised: should Treasury yields (the level, or the slope of the curve) be a market input? Nothing is stored and no setting is changed; the spike scripts were kept outside the repository.
+
+**Sources compared over 2005-01-03 .. 2026-10-15** (5,481 SPY sessions):
+
+| Source | Series | Coverage on SPY sessions | Notes |
+|---|---|---|---|
+| Yahoo (yfinance, the project's provider) | `^IRX` 13-week bill, `^FVX` 5y, `^TNX` 10y, `^TYX` 30y | from 2005-01-03; 5 sessions missing, never two in a row | Quoted **in percent**: `^TNX` / FRED `DGS10` median ratio 0.998, absolute difference median 0.007, 95th percentile 0.03, max 0.10 points. (`^TNX` used to be 10x the yield; it no longer is.) |
+| FRED (Federal Reserve, CSV without a key) | `DGS3MO`, `DGS2`, `DGS10` | 41 sessions missing: Columbus Day and Veterans Day, when the bond market is closed and NYSE is open | Published with a lag: the latest value on 2026-10-16 was for 2026-10-14. **Not usable at the close of the same session** without a one-day lag |
+
+**Findings:**
+- On those bond-market holidays Yahoo still has a value (36 of 41), close to the previous session's. It would be treated as a session with an unchanged yield.
+- `^IRX` was negative on 7 sessions (2020-03-19 .. 03-27, as low as -0.105%); `^IRX` / `DGS3MO` ratio 0.969 (discount rate vs bond-equivalent yield). This is harmless for a slope computed in differences.
+- The largest daily 10y moves: +0.47 points (2009-03-18, the Fed's QE announcement), 0.33 (2008-09-19), 0.32 (2022-11-10, CPI).
+- **10y minus 3m (Yahoo)** is inverted on 15% of sessions, in 19 separate spells. By year: 2006 40%, 2007 37%, 2019 33%, 2020 3%, 2022 14%, **2023 100%, 2024 92%**, 2025 3%.
+
+**Assessment:**
+- **Usable data:** Yahoo, same provider, same-session availability, full coverage from 2005. If a trial follows, the inputs would be `^TNX` and `^IRX` in `market.market_symbols`, like TLT / IEF / HYG.
+- **Inversion itself is a poor regime input.** It lasted almost all of 2023-2024, a strong rally, and its known lead on recessions (12-18 months) is far longer than the regime's horizon.
+- **The candidate worth a trial is the change in the slope**, e.g. the 20-session change of 10y minus 3m. A falling slope points to an expected easing; a rising one, to tightening or a long-end sell-off. It overlaps least with `rule_bonds-v1`'s bond-price inputs. A yield level is not stationary (0.5% to 5.3% here), so it would only be used as a change, not a level.
+- A trial would be a new, separately pre-registered question. It counts as a further regime trial after sections 12.5 and 13.3, both of which moved the Sharpe ratio by only about 0.03.
+
+## 12.7 Pre-registered trial: interest-rate shock inputs (registered 2026-10-16, before any data or result)
+
+**A change from section 12.6, made while drafting, before any result.** Section 12.6 suggested the 20-session change of the curve slope. Its direction is ambiguous for a regime: the slope steepens both when long yields rise in a recovery and when the Fed cuts short rates in a crash (2007-08, 2008, 2020, a "bull steepening"). A +1 for steepening would then score crashes as risk-on. Rates are therefore used here only as **danger signals**, each scored **0 or -1**, never +1.
+
+**Inputs** (at the close of T, from Yahoo `^IRX` and `^TNX` in percentage points; a missing session takes the previous session's value, at most one session, covering bond-market holidays and Yahoo's 5 gaps):
+
+| # | Input | -1 when | Otherwise | Idea |
+|---|---|---|---|---|
+| 6 | `short_rate_drop_20d` | the 3-month yield fell more than **0.50** points over 20 sessions | 0 | The market prices emergency easing within a month (at least two 25 bp cuts) |
+| 7 | `long_rate_jump_60d` | the 10-year yield rose more than **0.75** points over 60 sessions | 0 | A rate shock (2013 taper, 2022) that reprices stocks |
+
+The thresholds are round numbers chosen from those meanings. They are fixed now; how often they trigger has not been looked at.
+
+**Candidate rule `rule_rate_shocks-v1`:**
+- The five v1 inputs plus inputs 6 and 7; the score runs from -7 to +5.
+- `E = 3`, `X = 1`, the dwell and the VIX thresholds are **unchanged**. The new inputs can only add caution, so the BULL side keeps v1's thresholds.
+- Research only; `rule_based-v1` stays ACTIVE.
+
+**Test** (as section 13.3):
+- **Window:** the walk-forward validation window from the fold rule at run time; the report states its dates. The holdout is untouched.
+- **History start:** every recursion starts on the first session with all seven inputs.
+- **Trading:** `regime_switch` (bear exposure 0), 81 stocks, the same settings and costs, from fresh cash, once with v1 and once with the candidate.
+
+**Pass criteria** (all must hold; the stricter set of section 13.3). The thresholds were chosen with known episodes in mind (2008, 2020, 2022), all inside the window, so a pass is partly in sample:
+1. Sharpe after costs **higher** than v1;
+2. max drawdown **no deeper** than v1;
+3. a higher Sharpe in **at least 6 of the 11** validation years;
+4. average regime length at least **10 sessions**;
+5. point in time: inputs and regimes are unchanged when later sessions are added (two cuts).
+
+This is **one trial**. If it fails, these inputs are not redefined or re-tested on this data.
+
+**Descriptive only** (decides nothing):
+- each input alone;
+- `regime_switch_bear50` with the candidate;
+- regime shares, number of changes and SPY's return a year per regime;
+- BEAR entry and exit in the 2018 Q4, 2020, 2022 and 2025 sell-offs;
+- how often each input is -1, by year.
+
+**If it passes:** no live change. A holdout check would follow, pre-registered separately as in section 12.5.3, and only then a forward-test shadow (`shadow_rule_rate_shocks`).
+
+**Data needed first:** `^TNX` and `^IRX` in `market.market_symbols`, loaded by `update-market-data` (no new table; the inputs are computed in code, like `rule_bonds-v1`).
+
+**Design choice (2026-10-16, before any result): option A.** You asked whether splitting a slope change by which end moves could tell a good steepening from a bad one. The four textbook cases:
+
+| Case | Driver | Stocks |
+|---|---|---|
+| Bull steepening | Short yields falling fast (emergency easing) | Clearly a danger signal |
+| Bear flattening | Short yields rising fast (hikes) | Usually a danger signal |
+| Bear steepening | Long yields rising (recovery, or a term-premium jump as in Aug-Oct 2023) | Unclear |
+| Bull flattening | Long yields falling (growth scare) | Unclear |
+
+Two designs were considered:
+- **A:** keep the two danger inputs above. Input 6 is about bull steepening, input 7 about long-end shocks.
+- **B:** classify all four cases, scoring bull steepening and bear flattening -1. That needs a rule for "which end leads" and more thresholds.
+
+You chose **A**: fewer thresholds and fewer researcher choices. Only one design is tested; B (or A plus a bear-flattening input) would be a separate trial.
+
+**Confirmed (2026-10-16):**
+- (a) the change from section 12.6: danger-only inputs instead of the slope change (option A, chosen 2026-10-16);
+- (b) the two inputs and their thresholds (0.50 points in 20 sessions, 0.75 points in 60 sessions);
+- (c) v1's thresholds unchanged (E = 3, X = 1) with a -7 .. +5 score;
+- (d) the strict pass criteria 1-5;
+- (e) the name `rule_rate_shocks-v1` (and `shadow_rule_rate_shocks` if it ever becomes a shadow).
+- **No bond inputs:** the candidate is v1 plus the two rate inputs, compared with `rule_based-v1`, not with `rule_bonds-v1`. One change at a time, against the ACTIVE baseline: `rule_bonds-v1` is only weak evidence and is still being tested as a shadow. Combining the two would be a separate trial.
+
+### 12.7.1 As built (2026-10-16, before the run)
+
+- **Data:** `^TNX` and `^IRX` are in `market.market_symbols` and loaded by `update-market-data` (5,477 sessions each, from 2005-01-03).
+  - **Quality-check change:** the first load quarantined 9 `^IRX` days (2020-03-18 .. 03-30) as a "non-positive price"; the 3-month yield really was slightly below zero. A yield is not a price, so `quant/data/data_quality.py` now lets the yield indexes in `YIELD_SYMBOLS` (`^IRX`, `^FVX`, `^TNX`, `^TYX`) be zero or negative. All other checks still apply to them.
+  - `^IRX` was then removed and reloaded whole; nothing quarantined. The quarantine rows of the first load stay as a record.
+- **Inputs:** all seven inputs exist from 2005-10-17, the same first session as v1. So v1 in this trial is exactly the ACTIVE regime's history. There are no incomplete sessions over 2014-09 .. 2025-10 (2,810 sessions).
+- **Code:**
+  - `quant/regime/rule_rate_shocks.py`: the inputs, the score and the candidate regime.
+  - `quant/regime/rate_shocks_trial.py`: the trial, the five gates, the point-in-time check (rate inputs and every regime recomputed from data ending at the two `default_cuts`), and the report.
+  - Tests: `tests/test_regime_rate_shocks.py`.
+- **Command:** `python -m quant regime-rate-shocks-trial` is the one-time run. It writes `reports/regime/rate-shocks-trial-<time>.md` and stores nothing.
+
 ---
 
 # 13. Market Regime Detection — HMM
@@ -1782,7 +1883,7 @@ market:
     materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
-  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG]   # TLT / IEF / HYG: bond-market inputs of the section 12.5 trial (research only)
+  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG, ^TNX, ^IRX]   # TLT / IEF / HYG: bond inputs (12.5); ^TNX / ^IRX: 10-year and 3-month Treasury yields in percent (12.7); research only
 
 features:
   version: 1

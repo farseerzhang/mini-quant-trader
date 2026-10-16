@@ -12,6 +12,10 @@ from typing import Any
 
 import pandas as pd
 
+# Treasury yield indexes in percent (proposal section 12.7): a yield is not a price and can be zero
+# or negative (the 3-month bill was below 0 in March 2020), so only these may be non-positive.
+YIELD_SYMBOLS = frozenset({"^IRX", "^FVX", "^TNX", "^TYX"})
+
 
 def _is_missing(value: Any) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value))
@@ -60,7 +64,7 @@ def validate_prices(
             reject("missing OHLC value")
             continue
         o, h, l, c = float(o), float(h), float(l), float(c)
-        if any(v <= 0 for v in (o, h, l, c)):
+        if symbol not in YIELD_SYMBOLS and any(v <= 0 for v in (o, h, l, c)):
             reject("non-positive price")
             continue
         if h < max(o, c, l):
