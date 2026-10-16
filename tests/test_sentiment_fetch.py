@@ -193,7 +193,10 @@ class FetchTest(SentimentDb):
 
         videos = FakeVideos(self.channel_listing(), self.channel_pages())
         captions.requests.clear()
-        result = self.run_fetch(videos, captions)
+        lines = []
+        result = self.run_fetch(videos, captions, progress=lines.append)
+        self.assertIn("    no new videos", lines)
+        self.assertFalse(any("reading the new ones" in line for line in lines))
 
         stable = lambda rows: {k: {c: v for c, v in row.items() if c not in ("attempts", "updated_at")}
                                for k, row in rows.items()}

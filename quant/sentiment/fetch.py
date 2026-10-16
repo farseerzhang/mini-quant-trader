@@ -111,7 +111,7 @@ def _list_channel(engine: Engine, channel: ChannelSettings, since: datetime, min
         return result
     result.listed = len(listed)
     known = store.known_videos(engine, [video.video_id for video in listed])
-    progress(f"    {len(listed)} listed, {len(known)} already stored; reading the new ones")
+    progress(f"    {len(listed)} listed, {len(known)} already stored")
 
     def record(video_id: str, title: str | None, status: str, note: str | None = None, **extra) -> None:
         if store.insert_video(engine, {"video_id": video_id, "channel_id": channel.channel_id, "title": title,
@@ -162,6 +162,8 @@ def _list_channel(engine: Engine, channel: ChannelSettings, since: datetime, min
             record(video.video_id, title, "SKIPPED", "short", **info)
         else:
             record(video.video_id, title, "PENDING", **info)
+    if result.new == 0 and not result.errors:
+        progress("    no new videos")
     return result
 
 
