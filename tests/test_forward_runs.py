@@ -76,7 +76,7 @@ class RunTests(PaperFixture):
 
         init_db(self.engine)
         Path(self.settings.positions.path).write_text("symbol,quantity\nCASH,1000\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "no trading212 and ibkr snapshot.*sync-accounts"):
+        with self.assertRaisesRegex(ValueError, "no trading212 and ibkr snapshot.*run-daily"):
             freeze_session(self.engine, self.settings, now=EVENING, start=True, real_from_brokers=True)
         self.assertIsNone(queries.forward_run(self.engine))
 

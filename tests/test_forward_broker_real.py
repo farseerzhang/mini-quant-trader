@@ -82,7 +82,13 @@ class BrokerRealTest(unittest.TestCase):
         self.assertAlmostEqual(parts[OUTSIDE_POOL], (1000 * 1.2 / 1.1 - 1000) / 2600)  # BMW in USD: only FX moved
         self.assertAlmostEqual(parts[IN_POOL] + parts[OUTSIDE_POOL] + parts[CASH_PART], expected)
         self.assertGreater(parts["FX (inside the others)"], 0)  # EUR rose against USD
-        self.assertEqual(real.incomplete, [pd.Timestamp(D3)])  # IBKR carried forward on D3
+        # IBKR carried forward on D3, the latest session: provisional (its statement comes next morning), not a gap
+        self.assertEqual((real.incomplete, real.awaiting_ibkr_statement), ([], pd.Timestamp(D3)))
+        self.assertEqual(real.warnings, [])
+        earlier = broker_real(self.engine, SETTINGS, SESSIONS.append(pd.DatetimeIndex([date(2026, 10, 22)])), 2600.0)
+        self.assertEqual(earlier.incomplete, [pd.Timestamp(D3), pd.Timestamp(date(2026, 10, 22))])  # real gaps
+        self.assertIsNone(earlier.awaiting_ibkr_statement)  # D4: Trading 212 missing too, which never fills in
+        self.assertIn("run `quant run-daily` every evening", earlier.warnings[0])
         self.assertAlmostEqual(real.weights.loc[pd.Timestamp(D2), "MSFT"], 1100 / 3300)
 
     def test_holdings_for_the_signals(self):

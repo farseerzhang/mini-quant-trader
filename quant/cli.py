@@ -187,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--start", action="store_true",
         help="ONCE, before the next open: start a forward-test run with your Trading 212 and IBKR accounts, "
         "combined in USD, as real (both brokers' snapshots of the latest session are needed: run "
-        "`quant broker sync-accounts` after the close and again the next morning)",
+        "`quant run-daily` after the close, and once more the next day for IBKR's statement)",
     )
     freeze_command.add_argument(
         "--end", action="store_true",
@@ -760,8 +760,9 @@ def _end_forward(args: argparse.Namespace, settings: Settings) -> int:
         engine.dispose()
     print(f"Forward test run {run['run_id']} (since {run['started_on']}, {frozen} frozen sessions) ENDED: {reason}. "
           f"It is kept: `quant forward-report --run {run['run_id']}`.")
-    print("To start a new run: store both brokers' snapshots of a session (`quant broker sync-accounts` after its "
-          "close and again the next morning), then `quant forward-test --start` before the next open.")
+    print("To start a new run: both brokers' snapshots of the latest session are needed (`quant run-daily` "
+          "after its close, and once more the next day for IBKR's statement); then `quant forward-test --start` "
+          "before the next open.")
     return 0
 
 
@@ -776,8 +777,8 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
         # stays readable in the reports but is no longer started.
         result = freeze_session(engine, settings, start=start, real_from_brokers=True)
         if not result.started:
-            print("Forward test not started: run `python -m quant broker sync-accounts` after a close and again "
-                  "the next morning, then `python -m quant forward-test --start` (before the next open).")
+            print("Forward test not started: run `python -m quant run-daily` after a close, and once more the next "
+                  "day for IBKR's statement; then `python -m quant forward-test --start` (before the next open).")
             return 0
         if start and before is not None:
             print(f"Forward test run {before['run_id']} is already running (since {before['started_on']}); "
@@ -786,8 +787,8 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
             begun = queries.forward_start(engine)
             print(f"Forward test run {begun['run_id']} STARTED on {begun['started_on']} with "
                   f"{begun['start_value']:,.2f} "
-                  f"({begun['value_source']}). real is read from the broker snapshots: run "
-                  "`quant broker sync-accounts` after each close and again the next morning (IBKR's statement).")
+                  f"({begun['value_source']}). From now on run `quant run-daily` every evening after the "
+                  "close: it stores the broker snapshots and freezes the session.")
         paper = update_paper_equity(engine, settings)
     except (TradesError, ValueError) as exc:
         _error(f"Forward test failed: {exc}")

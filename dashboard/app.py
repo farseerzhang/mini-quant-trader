@@ -175,10 +175,12 @@ def page_signals(engine, settings):
     as_of, positions = data.latest_positions(engine)
     st.subheader("Positions snapshot" + (f" ({as_of.date()})" if as_of is not None else ""))
     if positions.empty:
-        st.info("No positions snapshot stored (no positions file at the last run).")
+        st.info("No positions snapshot stored yet.")
     else:
         shown = positions.assign(managed=positions["managed"].map({1: "yes", 0: "no: outside the pool"}))
         st.dataframe(shown[["symbol", "quantity", "cost_basis", "managed"]], hide_index=True)
+        st.caption("The holdings the signals were computed against: in a broker run, your Trading 212 and IBKR "
+                   "accounts (each at its latest snapshot); before that, `data/positions.csv` or run 1's trade log.")
 
 
 def _quotes_table(quotes: pd.DataFrame, show_ticker: bool = True):
@@ -396,7 +398,7 @@ def page_broker_accounts(engine, settings):
     overview = data.broker_overview(engine)
     if overview is None:
         st.info("No broker snapshot yet: put your read-only API credentials in `.env` (see `.env.example`), then run "
-                "`python -m quant broker sync-accounts` after a US close.")
+                "`python -m quant run-daily` after a US close.")
         return
     accounts, positions = overview.accounts, overview.positions
     total = float(accounts["value_usd"].sum())
@@ -410,8 +412,8 @@ def page_broker_accounts(engine, settings):
                       border=True,
                       help=f"cash ${0 if pd.isna(row.cash_usd) else row.cash_usd:,.0f}; read {row.fetched_at:%Y-%m-%d %H:%M} UTC")
     if accounts["session"].nunique() > 1:
-        st.caption("The two accounts are from different sessions (IBKR's statement of a session arrives the next "
-                   "morning); run `quant broker sync-accounts` again to bring them level.")
+        st.caption("The two accounts are from different sessions. That is normal after an evening run: IBKR's "
+                   "statement of a session arrives the next morning, and the next evening's run-daily stores it.")
 
     in_pool = float(positions.loc[positions["in_pool"] == 1, "value_usd"].sum())
     outside = float(positions.loc[positions["in_pool"] != 1, "value_usd"].sum())
@@ -456,8 +458,8 @@ def page_broker_accounts(engine, settings):
                              "session": st.column_config.DateColumn("counts from"),
                              "amount": st.column_config.NumberColumn(format="%.2f"),
                              "amount_usd": st.column_config.NumberColumn("USD", format="$%.2f")})
-    st.caption("Read-only snapshots from `quant broker sync-accounts`. Holdings outside the pool are valued at the "
-               "broker's prices; they are never traded by the system.")
+    st.caption("Read-only snapshots, stored by `quant run-daily` (its broker sync-accounts stage). Holdings outside "
+               "the pool are valued at the broker's prices; they are never traded by the system.")
 
 
 def _session_axis(dates, labels: bool = True) -> alt.Axis:
@@ -490,9 +492,9 @@ def _score_table(scores: pd.DataFrame) -> pd.DataFrame:
 def page_forward(engine, settings):
     runs = data.forward_runs(engine)
     if runs.empty:
-        st.info("The forward test has not started. Run `python -m quant broker sync-accounts` after a close and "
-                "again the next morning, then `python -m quant forward-test --start` before the next open. From "
-                "then on `run-daily` freezes every evening, and `real` is read from your broker accounts.")
+        st.info("The forward test has not started. Run `python -m quant run-daily` after a close, and once more the "
+                "next day for IBKR's statement; then `python -m quant forward-test --start` before the next open. "
+                "From then on `run-daily` freezes every evening, and `real` is read from your broker accounts.")
         return
     labels = {int(r.run_id): f"Run {int(r.run_id)}: since {r.started_on}"
               + (f" (ended {r.ended_at:%Y-%m-%d})" if pd.notna(r.ended_at) else " (running)")
@@ -519,9 +521,9 @@ def page_forward(engine, settings):
         if report.real_contributions is not None and not report.real_contributions.empty:
             total = report.real_contributions.sum().map(lambda v: f"{v:+.2%}")
             st.table(total.rename("contribution to real's return").rename_axis("part").to_frame())
-        if report.real_incomplete:
-            st.warning(f"{len(report.real_incomplete)} session(s) with a broker snapshot carried forward: run "
-                       "`quant broker sync-accounts` after each close and again the next morning.")
+        if report.real_awaiting_ibkr_statement is not None:
+            st.caption(f"{report.real_awaiting_ibkr_statement.date()} is provisional for `real`: IBKR's statement of "
+                       "it arrives the next morning, and the next evening's run-daily completes it.")
 
     curves = data.growth_and_drawdown(report.values)
     if len(report.values) > 1:
@@ -553,7 +555,9 @@ def page_forward(engine, settings):
                       help="sum over stocks of min(your weight, the live target weight)")
     with right:
         st.markdown("**Execution against the open**")
-        if report.costs.empty:
+        if report.real_from_brokers:
+            st.caption("Not measured in a broker run: there is no trade log, and you do not trade the signals.")
+        elif report.costs.empty:
             st.caption("No trades recorded in `data/trades.csv` for this run.")
         else:
             costs = report.costs.assign(date=report.costs["date"].dt.date)
@@ -585,8 +589,10 @@ def page_forward(engine, settings):
                         "score": st.column_config.NumberColumn("probability", format="%.2f")})
     for warning in report.warnings:
         st.warning(warning)
-    st.caption("Paper portfolios trade their frozen targets at the next open with the backtest's costs; `real` is "
-               "your trade log at as-traded closes. A short forward record is mostly noise.")
+    real_text = ("`real` is your broker accounts at their own prices" if report.real_from_brokers
+                 else "`real` is your trade log at as-traded closes")
+    st.caption(f"Paper portfolios trade their frozen targets at the next open with the backtest's costs; {real_text}. "
+               "A short forward record is mostly noise.")
 
 
 def main():

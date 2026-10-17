@@ -2332,6 +2332,11 @@ Implementation (step 5, `quant/forward/report.py`, `quant forward-report`): read
 - **Dashboard:** a new "Broker accounts" page. The Forward test page shows the parts for a broker run.
 - **Tests:** `test_broker_clients.py`, `test_broker_sync.py`, `test_forward_broker_real.py`, and a broker-run start in `test_forward_freeze.py`.
 
+**Run 1 ended, run 2 started (2026-10-17, owner):**
+- **Run 1** (2026-10-12 .. 10-16, 5 frozen sessions, 0 missed) was ended with the reason "real now read from the broker APIs". It is kept (`quant forward-report --run 1`).
+- **Run 2** started on session **2026-10-16** with **29,854.19 USD**: Trading 212 $12,399 plus IBKR $17,455, both snapshots of 2026-10-16. 2026-10-16 was frozen for `live` and the three shadows before the deadline (2026-10-19 13:30 UTC). A database backup was recommended before the switch.
+- **Daily routine:** one `run-daily` every evening after the close. It stores that session's Trading 212 snapshot and the IBKR statement of the session before, so `real` is complete one day later.
+
 ---
 
 # 30. Future Extensions

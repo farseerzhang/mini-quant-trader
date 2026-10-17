@@ -75,7 +75,7 @@ def broker_start(engine: Engine, session: pd.Timestamp) -> tuple[float, str, lis
     today = accounts[accounts["session"] == session]
     missing = [b for b in BROKERS if b not in set(today["broker"])]
     if missing:
-        raise ValueError(f"no {' and '.join(missing)} snapshot of {session.date()}: run `quant broker sync-accounts` "
+        raise ValueError(f"no {' and '.join(missing)} snapshot of {session.date()}: run `quant run-daily` "
                          "(IBKR's statement of a session arrives the next morning; start before that day's open)")
     positions = _positions(engine)
     held = positions[positions["session"] == session].groupby("symbol")["quantity"].sum()
@@ -92,8 +92,11 @@ class BrokerReal:
     contributions: pd.DataFrame  # session x {in the pool, outside the pool, cash, FX (inside the others)}
     weights: pd.DataFrame  # session x pool symbol: weight of the combined value (for the followed share)
     invested: pd.Series
-    incomplete: list[pd.Timestamp] = field(default_factory=list)
+    incomplete: list[pd.Timestamp] = field(default_factory=list)  # carried forward, the latest session aside
     warnings: list[str] = field(default_factory=list)
+    # The latest session with only IBKR carried: its statement arrives the next morning, so the next
+    # evening's run-daily completes it. Normal every day, not a gap.
+    awaiting_ibkr_statement: pd.Timestamp | None = None
 
 
 def _carried(frame: pd.DataFrame, sessions: pd.DatetimeIndex, broker: str) -> tuple[pd.DataFrame, list]:
@@ -116,11 +119,12 @@ def _carried(frame: pd.DataFrame, sessions: pd.DatetimeIndex, broker: str) -> tu
 
 def broker_real(engine: Engine, settings: Settings, sessions: pd.DatetimeIndex, start_value: float) -> BrokerReal:
     accounts, positions, flows = _accounts(engine), _positions(engine), _flows(engine)
-    account_rows, position_rows, incomplete = [], [], set()
+    account_rows, position_rows, incomplete, carried_by_broker = [], [], set(), {}
     for broker in BROKERS:
         rows, carried = _carried(accounts, sessions, broker)
         account_rows.append(rows)
         incomplete |= set(carried)
+        carried_by_broker[broker] = set(carried)
         position_rows.append(_carried(positions, sessions, broker)[0])
     account = pd.concat(account_rows, ignore_index=True)
     held = pd.concat(position_rows, ignore_index=True)
@@ -149,11 +153,17 @@ def broker_real(engine: Engine, settings: Settings, sessions: pd.DatetimeIndex, 
     invested = held.groupby("session")["value_usd"].sum().reindex(sessions) / value
     grown = start_value * (1 + returns.fillna(0.0)).cumprod()
     real_value = pd.concat([pd.Series([start_value], index=sessions[:1]), grown])
+    latest = sessions[-1]
+    awaiting = None
+    if latest in carried_by_broker["ibkr"] and latest not in carried_by_broker["trading212"]:
+        awaiting = latest
+        incomplete.discard(latest)
     warnings = []
     if incomplete:
         warnings.append(f"{len(incomplete)} session(s) with a broker snapshot carried forward (no snapshot of that "
-                        "session); run `quant broker sync-accounts` after each close and the next morning")
-    return BrokerReal(real_value, value, returns, contributions, weights, invested, sorted(incomplete), warnings)
+                        "session); run `quant run-daily` every evening after the close")
+    return BrokerReal(real_value, value, returns, contributions, weights, invested, sorted(incomplete), warnings,
+                      awaiting)
 
 
 def _fx_contribution(account: pd.DataFrame, before: pd.DataFrame, previous, session) -> float:

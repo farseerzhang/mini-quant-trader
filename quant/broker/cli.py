@@ -18,7 +18,7 @@ def add_parser(commands, db_help: str) -> None:
     sync = sub.add_parser(
         "sync-accounts", help="store today's snapshot of each account (positions, cash, value in USD) and any new "
         "deposits or withdrawals. Trading 212: after the US close, before 07:00 UTC; IBKR: its latest statement "
-        "(the previous session), so run it again the next morning")
+        "(the previous session). `quant run-daily` runs it every evening")
     sync.add_argument("--only", choices=["trading212", "ibkr"], help="sync one broker only")
     sync.add_argument("--db", help=db_help)
 

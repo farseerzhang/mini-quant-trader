@@ -54,6 +54,7 @@ class ForwardReport:
     real_from_brokers: bool = False  # run 2 design: real = both broker accounts, combined, in USD
     real_contributions: pd.DataFrame | None = None  # session x part (in / outside the pool, cash, FX)
     real_incomplete: list | None = None  # sessions with a broker snapshot carried forward
+    real_awaiting_ibkr_statement: pd.Timestamp | None = None  # the latest session, completed by the next run
 
     @property
     def started(self) -> bool:
@@ -88,14 +89,14 @@ def build_report(engine: Engine, settings: Settings, run_id: int | None = None) 
     from quant.forward.broker_real import broker_real, is_broker_run
 
     from_brokers = is_broker_run(run)
-    contributions, incomplete = None, None
+    contributions, incomplete, awaiting = None, None, None
     real = None if from_brokers else real_portfolio(engine, settings, paper.sessions, paper.run_id)
     if from_brokers:
         brokers = broker_real(engine, settings, paper.sessions, paper.start_value)
         warnings += brokers.warnings
         values["real"] = brokers.value
         followed = followed_share(brokers.weights, queries.load_forward_targets(engine, "live", paper.run_id))
-        contributions, incomplete = brokers.contributions, brokers.incomplete
+        contributions, incomplete, awaiting = brokers.contributions, brokers.incomplete, brokers.awaiting_ibkr_statement
     if real is not None:
         _, ledger, valued, real_warnings = real
         warnings += real_warnings
@@ -113,7 +114,7 @@ def build_report(engine: Engine, settings: Settings, run_id: int | None = None) 
     ended = (run["ended_at"], run["end_reason"]) if run["ended_at"] is not None else None
     return ForwardReport(paper.started_on, paper.start_value, paper.sessions[-1], len(paper.sessions) - 1,
                          scores, values, followed, costs, assumed, warnings, paper.run_id, runs, ended,
-                         from_brokers, contributions, incomplete)
+                         from_brokers, contributions, incomplete, awaiting)
 
 
 def _history(report: ForwardReport) -> list[str]:
@@ -132,8 +133,8 @@ def _history(report: ForwardReport) -> list[str]:
 def format_report(report: ForwardReport) -> str:
     history = _history(report)
     if not report.started:
-        return "\n".join(["The forward test is not running: run `quant broker sync-accounts` after a close and again "
-                          "the next morning, then `quant forward-test --start` (before the next open).", *history])
+        return "\n".join(["The forward test is not running: run `quant run-daily` after a close, and once more the next day (IBKR's statement of a session arrives the next morning), "
+                          "then `quant forward-test --start` (before the next open).", *history])
     title = f"Forward test run {report.run_id}" + (" (ENDED)" if report.ended else "")
     lines = [f"{title} since {report.started_on.date()} (start value {report.start_value:,.2f}), "
              f"through {report.last_session.date()}"]
@@ -160,6 +161,9 @@ def format_report(report: ForwardReport) -> str:
             lines.append(f"real's return by part (sum of daily contributions): {parts}")
         if report.real_incomplete:
             lines.append(f"{len(report.real_incomplete)} session(s) with a broker snapshot carried forward")
+        if report.real_awaiting_ibkr_statement is not None:
+            lines.append(f"{report.real_awaiting_ibkr_statement.date()} is provisional: IBKR's statement of it arrives "
+                         "the next morning, and the next evening's run-daily completes it")
     elif not report.costs.empty:
         weighted = (report.costs["cost_bps"] * report.costs["notional"]).sum() / report.costs["notional"].sum()
         lines.append(f"Execution: {len(report.costs)} trades, {weighted:+.1f} bp against the open on average "
