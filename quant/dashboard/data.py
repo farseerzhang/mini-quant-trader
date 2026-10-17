@@ -80,6 +80,48 @@ def market_overview(engine: Engine, settings: Settings, years: int = 5) -> Marke
     )
 
 
+@dataclass(frozen=True)
+class RegimeChoice:
+    label: str  # shown in the chooser and on the ribbon
+    regimes: pd.Series  # regime per session
+    note: str  # how it is computed, and from when it is out of sample
+
+
+def regime_choices(engine: Engine, settings: Settings) -> list[RegimeChoice]:
+    """The regime in use plus the regime of every forward-test shadow that has its own (read-only).
+
+    The HMM is its saved final fit run forward over the stored observations (filtered, the same
+    dwell as everywhere): what the shadow sees. That fit was trained up to its training end, so
+    its regime before that date is in sample. Rule-based variants have nothing fitted.
+    """
+    from quant.forward.freeze import _model_row
+    from quant.regime.active import active_hmm_regime, load_active_hmm
+    from quant.regime.hmm import load_observations
+
+    in_use = regime_in_use(engine, settings)
+    choices = [RegimeChoice(f"{in_use.model_version} (in use)", in_use.regimes,
+                            "the regime the signals use; rule-based, nothing fitted")]
+    for name, shadow in settings.forward_test.shadows.items():
+        try:  # a shadow whose model or data is not available here is left out, not an error
+            if shadow.regime_model is not None:
+                row = _model_row(engine, shadow.regime_model)
+                fit = load_active_hmm(row, settings)
+                regimes, _ = active_hmm_regime(fit, load_observations(engine, settings),
+                                               settings.regime.min_dwell_days)
+                choices.append(RegimeChoice(
+                    f"HMM {shadow.regime_model} ({name})", regimes,
+                    f"the HMM's final fit, filtered; trained up to {row['training_end']}, so in sample before "
+                    "that date"))
+            elif shadow.regime_rule is not None:
+                from quant.regime.rule_bonds import rule_bonds_regime
+
+                choices.append(RegimeChoice(f"{shadow.regime_rule} ({name})", rule_bonds_regime(engine, settings),
+                                            "rule-based with the bond inputs of section 12.5; nothing fitted"))
+        except ValueError:  # ActiveModelError is a ValueError
+            continue
+    return choices
+
+
 def regime_runs(history: pd.DataFrame) -> pd.DataFrame:
     """Consecutive sessions with the same regime: start, end, regime (for the ribbon)."""
     frame = history.dropna(subset=["regime"])

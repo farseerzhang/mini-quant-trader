@@ -91,17 +91,26 @@ def page_status(engine, settings):
                f"Quarantined rows: {report.quarantined_total}.")
 
 
-def _ribbon_chart(history: pd.DataFrame, title: str):
-    runs = data.regime_runs(history)
+def _ribbon_chart(history: pd.DataFrame, title: str, ribbons: dict[str, pd.Series] | None = None):
+    """SPY on a log scale above one regime ribbon per entry of ``ribbons`` (label -> regime per
+    session); by default the single ribbon of ``history['regime']``."""
+    ribbons = ribbons or {"Regime": history.set_index("date")["regime"]}
     low, high = float(history["close"].min()) * 0.95, float(history["close"].max()) * 1.05
     base = alt.Chart(history).encode(x=alt.X("date:T", title=None))
     line = base.mark_line(strokeWidth=2, color="#52514e").encode(
         y=alt.Y("close:Q", scale=alt.Scale(type="log", domain=[low, high], nice=False), title=title),
-        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("close:Q", format=",.2f"), alt.Tooltip("regime:N")])
-    ribbon = alt.Chart(runs).mark_rect(height=18).encode(
-        x=alt.X("start:T", axis=None), x2="end:T", color=alt.Color("regime:N", scale=REGIME_COLORS, title="Regime"),
-        tooltip=[alt.Tooltip("regime:N"), alt.Tooltip("start:T"), alt.Tooltip("end:T")])
-    return alt.vconcat(line.properties(height=300), ribbon.properties(height=24), spacing=4).resolve_scale(x="shared")
+        tooltip=[alt.Tooltip("date:T"), alt.Tooltip("close:Q", format=",.2f")])
+    rows = [line.properties(height=300)]
+    for label, regimes in ribbons.items():
+        frame = pd.DataFrame({"date": history["date"], "regime": regimes.reindex(history["date"]).to_numpy()})
+        runs = data.regime_runs(frame).assign(ribbon=label)
+        rows.append(alt.Chart(runs).mark_rect(height=18).encode(
+            x=alt.X("start:T", axis=None), x2="end:T",
+            y=alt.Y("ribbon:N", title=None, axis=alt.Axis(labelLimit=320, ticks=False, domain=False)),
+            color=alt.Color("regime:N", scale=REGIME_COLORS, title="Regime"),
+            tooltip=[alt.Tooltip("ribbon:N", title="regime source"), alt.Tooltip("regime:N"),
+                     alt.Tooltip("start:T"), alt.Tooltip("end:T")]).properties(height=24))
+    return alt.vconcat(*rows, spacing=4).resolve_scale(x="shared")
 
 
 def page_market(engine, settings):
@@ -115,8 +124,15 @@ def page_market(engine, settings):
                    delta_color="inverse" if symbol == "^VIX" else "normal")
     st.dataframe(overview.quotes.style.format({"close": "{:,.2f}", "1 day": "{:+.2%}", "1 month": "{:+.1%}",
                                                "1 year": "{:+.1%}"}), width="stretch")
-    st.subheader("SPY with the regime in use, last 5 years")
-    st.altair_chart(_ribbon_chart(overview.history, "SPY total-return price (log)"), width="stretch")
+    st.subheader("SPY with the regimes, last 5 years")
+    choices = {choice.label: choice for choice in data.regime_choices(engine, settings)}
+    in_use = next(iter(choices))
+    shown = st.multiselect("Regimes to show (one ribbon each)", list(choices), default=[in_use],
+                           help="The regime in use, and the regime each forward-test shadow uses")
+    ribbons = {label: choices[label].regimes for label in shown} or {in_use: choices[in_use].regimes}
+    st.altair_chart(_ribbon_chart(overview.history, "SPY total-return price (log)", ribbons), width="stretch")
+    for label in ribbons:
+        st.caption(f"{label}: {choices[label].note}.")
     st.caption("Changes and the chart include dividends (total return); the close is as traded.")
 
 
