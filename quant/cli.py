@@ -29,6 +29,7 @@ from quant.regime.active import calculate_and_store_active_regime
 from quant.regime.pipeline import calculate_and_store_regimes
 from quant.regime.retrain import run_regime_retrain
 from quant.altdata import cli as altdata_cli
+from quant.broker import cli as broker_cli
 from quant.sentiment import cli as sentiment_cli
 from quant.signals.pipeline import generate_and_store_signals
 from quant.signals.positions import PositionsError
@@ -228,6 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sentiment_cli.add_parser(commands, db_help)
     altdata_cli.add_parser(commands, db_help)
+    broker_cli.add_parser(commands, db_help)
     return parser
 
 
@@ -900,6 +902,7 @@ COMMANDS = {
     "retrain": lambda args, settings: _run_retrain(args, settings),
     "sentiment": sentiment_cli.run,
     "altdata": altdata_cli.run,
+    "broker": broker_cli.run,
 }
 
 
