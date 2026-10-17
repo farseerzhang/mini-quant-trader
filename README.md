@@ -236,7 +236,11 @@ The only clean evidence left is what happens from now on. Every evening the syst
   - Trading 212 is read with live prices, so its snapshot of a session is stored only between the US close and 07:00 UTC the next weekday.
   - IBKR's statement of a session arrives the next morning.
 
-  So run `run-daily` after the close (it freezes the session), and once more the next morning before 07:00 UTC (08:00 German winter time, 09:00 summer time) to store IBKR's statement; the second run leaves frozen sessions as they are. Without credentials in `.env` the stage is skipped; a broker that fails is reported, and `run-daily` goes on.
+  So **run `run-daily` every evening after the close**:
+  - it freezes the session and stores that session's Trading 212 snapshot;
+  - it picks up IBKR's statement of the session before, so `real` is complete one day later.
+
+  Extra runs at any other time are harmless: frozen sessions and an already stored Trading 212 snapshot are kept, and IBKR's latest statement is stored again. A session that ends up without one broker's snapshot carries that broker's previous one forward and is listed as incomplete. Without credentials in `.env` the stage is skipped; a broker that fails is reported, and `run-daily` goes on.
 
 - **Starting such a run:** run, before the next open, once both snapshots of the latest session are stored:
 

@@ -44,6 +44,8 @@ def _sync_accounts(args: argparse.Namespace, settings: Settings) -> int:
         result = sync_accounts(engine, settings, args.only)
         for line in result.stored:
             print(f"  stored {line}")
+        for note in result.notes:
+            print(f"  {note}")
         print(f"  {result.flows_added} new deposit(s) / withdrawal(s) stored")
         for broker, error in result.failed.items():
             print(f"  {broker}: FAILED: {error}", file=sys.stderr)

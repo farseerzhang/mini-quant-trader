@@ -41,11 +41,20 @@ class SyncError(RuntimeError):
     pass
 
 
+class OutsideWindowError(SyncError):
+    """Trading 212 read outside its live-price window (after 07:00 UTC of the next weekday)."""
+
+    def __init__(self, message: str, session: date):
+        super().__init__(message)
+        self.session = session
+
+
 @dataclass
 class SyncResult:
     stored: list[str] = field(default_factory=list)  # "trading212 2026-10-16: 8 positions, $12,900"
     flows_added: int = 0
     failed: dict[str, str] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)  # nothing stored, nothing wrong
 
 
 def fx_to_usd(engine: Engine, currency: str, session: date) -> float:
@@ -73,9 +82,10 @@ def trading212_session(now: datetime, calendar: str) -> date:
         following += timedelta(days=1)
     deadline = datetime.combine(following, EUROPE_OPENS_UTC, tzinfo=timezone.utc)
     if now >= deadline:
-        raise SyncError(f"Trading 212 is read with live prices, so its snapshot of {session} must be taken between "
-                        f"that session's close and {deadline:%Y-%m-%d %H:%M} UTC (before European exchanges open); "
-                        "run sync-accounts after the next US close")
+        raise OutsideWindowError(
+            f"Trading 212 is read with live prices, so its snapshot of {session} must be taken between that "
+            f"session's close and {deadline:%Y-%m-%d %H:%M} UTC (before European exchanges open); run "
+            "sync-accounts after the next US close", session)
     return session
 
 
@@ -84,6 +94,13 @@ def first_session_on_or_after(day: date, calendar: str) -> date:
     if not sessions:
         raise SyncError(f"no NYSE session within two weeks after {day}")
     return sessions[0]
+
+
+def _has_snapshot(engine: Engine, session: date, broker: str) -> bool:
+    a = broker_account_snapshots
+    with engine.connect() as conn:
+        return conn.execute(select(a.c.session).where(and_(a.c.session == session, a.c.broker == broker))
+                            ).first() is not None
 
 
 def _store_snapshot(engine: Engine, account: dict, positions: list[dict]) -> None:
@@ -239,6 +256,12 @@ def sync_accounts(engine: Engine, settings: Settings, only: str | None = None, n
             line, added = sync_trading212(engine, settings, trading212_client, now)
             result.stored.append(line)
             result.flows_added += added
+        except OutsideWindowError as exc:  # e.g. a morning run after the evening one: nothing is lost
+            if _has_snapshot(engine, exc.session, TRADING212):
+                result.notes.append(f"trading212 {exc.session}: already stored earlier, kept (outside the "
+                                    "live-price window now)")
+            else:
+                result.failed[TRADING212] = f"{exc} (no snapshot of {exc.session}: it is carried forward)"
         except Exception as exc:  # noqa: BLE001  report and continue with the other broker
             result.failed[TRADING212] = f"{type(exc).__name__}: {exc}"
     if only in (None, IBKR):

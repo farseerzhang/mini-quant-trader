@@ -116,8 +116,12 @@ class SyncTest(unittest.TestCase):
         with self.assertRaisesRegex(SyncError, "before European exchanges open"):
             trading212_session(monday_morning, "XNYS")
         result = self.sync(now=monday_morning)
-        self.assertIn("trading212", result.failed)  # Trading 212 refused ...
-        self.assertEqual([r["broker"] for r in self.rows(broker_account_snapshots)], ["ibkr"])  # ... IBKR stored
+        self.assertIn("trading212", result.failed)  # Trading 212 refused, and none stored before: a failure
+        self.assertEqual([r["broker"] for r in self.rows(broker_account_snapshots)], ["ibkr"])  # IBKR stored
+        self.sync(now=FRIDAY_EVENING)  # the evening run stores Friday's Trading 212 snapshot ...
+        later = self.sync(now=monday_morning)  # ... so a late morning run is fine
+        self.assertEqual(later.failed, {})
+        self.assertIn("trading212 2026-10-16: already stored earlier, kept", later.notes[0])
 
     def test_symbols(self):
         self.assertEqual(project_symbol_trading212("FB_US_EQ", INSTRUMENTS["FB_US_EQ"]), ("META", True))
