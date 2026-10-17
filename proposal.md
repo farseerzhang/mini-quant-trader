@@ -1921,7 +1921,7 @@ market:
     materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
-  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG, ^TNX, ^IRX]   # TLT / IEF / HYG: bond inputs (12.5); ^TNX / ^IRX: 10-year and 3-month Treasury yields in percent (12.7); research only
+  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG, ^TNX, ^IRX, EURUSD=X]   # TLT / IEF / HYG: bond inputs (12.5); ^TNX / ^IRX: Treasury yields in percent (12.7); EURUSD=X: USD per EUR for the broker snapshots (run 2)
 
 features:
   version: 1
@@ -2312,6 +2312,24 @@ Implementation (step 5, `quant/forward/report.py`, `quant forward-report`): read
 - `quant broker sync-accounts` (run with or after `run-daily`, and once more before the next open for IBKR);
 - `real` computed from the snapshots instead of from the trade log;
 - the report and the dashboard updated, plus the "Broker accounts" page.
+
+**As built (2026-10-17, before run 2 starts):**
+- **Clients** (read-only): `quant/broker/trading212.py` and `quant/broker/ibkr_flex.py`.
+  - Credentials come from `.env` (template `.env.example`).
+  - Trading 212's instrument metadata gives each holding's current ticker (FB_US_EQ -> META) and currency; it is cached in `data/broker/`.
+- **Snapshots:** `quant/broker/tables.py` adds three new tables, `broker_account_snapshots`, `broker_position_snapshots` and `broker_cash_flows`; `quant/broker/sync.py` fills them via `quant broker sync-accounts`.
+  - **Trading 212** is stored only between the US close and 07:00 UTC of the next weekday. Outside that window it is refused, and IBKR is still stored.
+  - **USD rates:** `EURUSD=X` was added to `market.market_symbols`. 126 of its 5,652 Yahoo days were quarantined (a close outside the day's high/low); the rate lookup takes the latest stored day within 5 days.
+- **`real`:** `quant/forward/broker_real.py` holds the start, the value, the time-weighted returns, the three parts, the FX contribution, the carried-forward sessions, and the holdings for the signals.
+  - A run is a broker run when its `value_source` is `BROKER_VALUE_SOURCE`, so no existing table changes.
+  - It is started with `quant forward-test --start`. Since 2026-10-17 every new run starts this way (owner's decision: only one kind of forward test from run 2 on); run 1's positions file and trade log stay only for reading run 1.
+- **First real snapshot (session 2026-10-16):**
+  - Trading 212 $12,399 (EUR 11,058 at 1.1213), IBKR $17,455, so $29,854 combined.
+  - Positions plus cash match each broker's own total exactly for IBKR, and within $10 (0.08%, the brokers' own exchange rates) for Trading 212.
+  - 15 deposits and withdrawals were stored (2020-11 .. 2026-10).
+  - The parts: in the pool $7,159 (24%), outside the pool $17,373 (58%), cash $5,322 (18%).
+- **Dashboard:** a new "Broker accounts" page. The Forward test page shows the parts for a broker run.
+- **Tests:** `test_broker_clients.py`, `test_broker_sync.py`, `test_forward_broker_real.py`, and a broker-run start in `test_forward_freeze.py`.
 
 ---
 

@@ -246,6 +246,10 @@ def start_is_ended(engine: Engine, run_id: int | None) -> bool:
 
 def holdings_at(engine: Engine, settings: Settings, session: pd.Timestamp) -> Holdings | None:
     """The account at the close of ``session`` as the signals need it; None before the start."""
+    from quant.forward.broker_real import broker_holdings, is_broker_run
+
+    if is_broker_run(queries.forward_run(engine)):  # run 2 design: read from the broker snapshots
+        return broker_holdings(engine, settings, session)
     start = load_start(engine)
     if start is None:
         return None

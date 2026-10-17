@@ -185,7 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     freeze_command.add_argument(
         "--start", action="store_true",
-        help="ONCE, after the close: start the forward test with data/positions.csv as your real account",
+        help="ONCE, before the next open: start a forward-test run with your Trading 212 and IBKR accounts, "
+        "combined in USD, as real (both brokers' snapshots of the latest session are needed: run "
+        "`quant broker sync-accounts` after the close and again the next morning)",
     )
     freeze_command.add_argument(
         "--end", action="store_true",
@@ -758,8 +760,8 @@ def _end_forward(args: argparse.Namespace, settings: Settings) -> int:
         engine.dispose()
     print(f"Forward test run {run['run_id']} (since {run['started_on']}, {frozen} frozen sessions) ENDED: {reason}. "
           f"It is kept: `quant forward-report --run {run['run_id']}`.")
-    print("To start a new run: put the real account in data/positions.csv (trades.csv can stay: only trades after "
-          "the new start count), then `quant forward-test --start` after a close.")
+    print("To start a new run: store both brokers' snapshots of a session (`quant broker sync-accounts` after its "
+          "close and again the next morning), then `quant forward-test --start` before the next open.")
     return 0
 
 
@@ -770,10 +772,12 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
         before = queries.forward_start(engine)
-        result = freeze_session(engine, settings, start=start)
+        # Every new run reads real from the brokers (run 2 design); run 1 (positions file + trade log)
+        # stays readable in the reports but is no longer started.
+        result = freeze_session(engine, settings, start=start, real_from_brokers=True)
         if not result.started:
-            print("Forward test not started: put your real account in data/positions.csv, then run "
-                  "`python -m quant forward-test --start` after a close (before the next open).")
+            print("Forward test not started: run `python -m quant broker sync-accounts` after a close and again "
+                  "the next morning, then `python -m quant forward-test --start` (before the next open).")
             return 0
         if start and before is not None:
             print(f"Forward test run {before['run_id']} is already running (since {before['started_on']}); "
@@ -782,8 +786,8 @@ def _run_forward(args: argparse.Namespace, settings: Settings) -> int:
             begun = queries.forward_start(engine)
             print(f"Forward test run {begun['run_id']} STARTED on {begun['started_on']} with "
                   f"{begun['start_value']:,.2f} "
-                  f"({begun['value_source']}). From now on record trades in {settings.positions.trades_path}; "
-                  "data/positions.csv is not read again.")
+                  f"({begun['value_source']}). real is read from the broker snapshots: run "
+                  "`quant broker sync-accounts` after each close and again the next morning (IBKR's statement).")
         paper = update_paper_equity(engine, settings)
     except (TradesError, ValueError) as exc:
         _error(f"Forward test failed: {exc}")

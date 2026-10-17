@@ -29,7 +29,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.market.initial_history, date(2005, 1, 1))
         self.assertGreaterEqual(len(settings.market.stocks), 30)
         self.assertEqual(settings.market.stocks[:2], ("AAPL", "MSFT"))
-        self.assertEqual(settings.market.universe[-8:], ["SPY", "QQQ", "^VIX", "TLT", "IEF", "HYG", "^TNX", "^IRX"])
+        self.assertEqual(settings.market.universe[-9:], ["SPY", "QQQ", "^VIX", "TLT", "IEF", "HYG", "^TNX", "^IRX", "EURUSD=X"])
         self.assertEqual(len(settings.market.symbols), 11)  # every GICS sector is represented
         self.assertEqual(settings.market.sectors["XOM"], "energy")
         self.assertEqual(settings.risk.max_sector_weight, 0.30)
@@ -83,7 +83,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.features.feature_version, "technical-v2")
         self.assertEqual(settings.features.market_feature_version, "market-v2")
         self.assertEqual(settings.market.request_timeout_seconds, 7)
-        self.assertEqual(settings.market.universe, ["NVDA", "SPY", "QQQ", "^VIX", "TLT", "IEF", "HYG", "^TNX", "^IRX"])
+        self.assertEqual(settings.market.universe, ["NVDA", "SPY", "QQQ", "^VIX", "TLT", "IEF", "HYG", "^TNX", "^IRX", "EURUSD=X"])
 
     def test_symbols_map_gics_sectors_to_stocks(self):
         def pool(document):
@@ -93,7 +93,7 @@ class SettingsTests(unittest.TestCase):
             settings = load_settings(_variant(directory, pool))
         self.assertEqual(settings.market.stocks, ("XOM", "CVX", "AAPL"))
         self.assertEqual(settings.market.sectors, {"XOM": "energy", "CVX": "energy", "AAPL": "information_technology"})
-        self.assertEqual(settings.market.universe, ["XOM", "CVX", "AAPL", "SPY", "QQQ", "^VIX", "TLT", "IEF", "HYG", "^TNX", "^IRX"])
+        self.assertEqual(settings.market.universe, ["XOM", "CVX", "AAPL", "SPY", "QQQ", "^VIX", "TLT", "IEF", "HYG", "^TNX", "^IRX", "EURUSD=X"])
 
     def test_rejects_invalid_sector_pools(self):
         def pool(value):

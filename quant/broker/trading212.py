@@ -103,6 +103,26 @@ class Trading212Client:
             return response.json()
         raise Trading212Error(f"{path}: still rate-limited after {len(RETRY_PAUSES_SECONDS)} retries")
 
+    def instruments(self) -> dict[str, dict]:
+        """Trading 212's instrument list (ticker -> shortName, name, currencyCode, isin, type). Large
+        and rate-limited (about one request a minute), so callers cache it."""
+        return {item["ticker"]: item for item in self.get("/equity/metadata/instruments") or [] if item.get("ticker")}
+
+    def transactions(self, known_references: set[str] | None = None, limit: int = 50) -> list[dict]:
+        """Cash transactions, newest first, page by page; stops at the first page that reaches a
+        reference already stored (``known_references``), so later runs read only what is new."""
+        known = known_references or set()
+        items, path = [], f"/history/transactions?limit={limit}"
+        while path:
+            page = self.get(path)
+            batch = page.get("items") or []
+            items += batch
+            if not batch or any(str(i.get("reference")) in known for i in batch):
+                break
+            next_path = page.get("nextPagePath")
+            path = next_path.removeprefix("/api/v0") if next_path else None
+        return items
+
     def account(self) -> Trading212Account:
         info = self.get("/equity/account/info")
         cash = self.get("/equity/account/cash")

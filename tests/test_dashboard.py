@@ -144,7 +144,7 @@ class DashboardAppTests(unittest.TestCase):
             argv = sys.argv
             sys.argv = ["app.py", "--config", str(config)]
             try:
-                for page in ("Status", "Market", "Signals", "Sentiment", "Forward test", "Stock detail", "Models",
+                for page in ("Status", "Market", "Signals", "Sentiment", "Forward test", "Broker accounts", "Stock detail", "Models",
                              "Backtest"):
                     with self.subTest(page):
                         at = AppTest.from_file(app, default_timeout=60)

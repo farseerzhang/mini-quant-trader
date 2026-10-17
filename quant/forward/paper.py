@@ -76,8 +76,16 @@ def update_paper_equity(engine: Engine, settings: Settings) -> PaperResult | Non
         for name, simulation in result.simulations.items()
         for date, value in simulation.value.items()
     ]
+    from quant.forward.broker_real import broker_real, is_broker_run
     from quant.forward.real import real_portfolio
 
+    if is_broker_run(queries.forward_run(engine, result.run_id)):  # run 2 design: from the broker snapshots
+        real = broker_real(engine, settings, result.sessions, result.start_value)
+        rows += [{"date": date.date(), "portfolio": "real", "value": float(value),
+                  "invested": None if pd.isna(real.invested.get(date)) else float(real.invested.get(date))}
+                 for date, value in real.value.items() if not pd.isna(value)]
+        queries.replace_forward_equity(engine, rows)
+        return result
     real = real_portfolio(engine, settings, result.sessions, result.run_id)
     if real is not None:
         _, _, valued, _ = real

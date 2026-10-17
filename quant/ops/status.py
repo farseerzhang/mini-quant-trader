@@ -232,6 +232,10 @@ def forward_status(engine: Engine, settings: Settings, now: datetime, prices_as_
     if missed:
         shown = ", ".join(str(d) for d in missed[-5:]) + (" ..." if len(missed) > 5 else "")
         warnings.append(f"forward test: {len(missed)} missed session(s) since {started_on} ({shown})")
+    from quant.forward.broker_real import is_broker_run
+
+    if is_broker_run(start):  # real comes from the broker snapshots: no trade log, no positions file
+        return ForwardStatus(started_on, len(frozen), missed, warnings)
     try:
         ledger_start = load_start(engine)
         if sessions:

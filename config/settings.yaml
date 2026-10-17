@@ -28,7 +28,7 @@ market:
     materials: [SHW, NEM, LIN]
     utilities: [NEE, SO, AEP]
     real_estate: [O, PSA]
-  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG, ^TNX, ^IRX]   # TLT / IEF / HYG: bond inputs (12.5); ^TNX / ^IRX: 10-year and 3-month Treasury yields in percent (12.7); research only
+  market_symbols: [SPY, QQQ, ^VIX, TLT, IEF, HYG, ^TNX, ^IRX, EURUSD=X]   # TLT / IEF / HYG: bond inputs (12.5); ^TNX / ^IRX: Treasury yields in percent (12.7); EURUSD=X: USD per EUR for the broker snapshots (run 2)
 
 features:
   version: 1

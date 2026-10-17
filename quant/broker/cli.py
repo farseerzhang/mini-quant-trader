@@ -15,12 +15,43 @@ def add_parser(commands, db_help: str) -> None:
     check = sub.add_parser("check-connection", help="read each configured account once and print a summary "
                            "(positions, cash, currency); stores nothing")
     check.add_argument("--only", choices=["trading212", "ibkr"], help="check one broker only")
+    sync = sub.add_parser(
+        "sync-accounts", help="store today's snapshot of each account (positions, cash, value in USD) and any new "
+        "deposits or withdrawals. Trading 212: after the US close, before 07:00 UTC; IBKR: its latest statement "
+        "(the previous session), so run it again the next morning")
+    sync.add_argument("--only", choices=["trading212", "ibkr"], help="sync one broker only")
+    sync.add_argument("--db", help=db_help)
 
 
 def run(args: argparse.Namespace, settings: Settings) -> int:
     if args.broker_command == "check-connection":
         return _check_connection(args, settings)
+    if args.broker_command == "sync-accounts":
+        return _sync_accounts(args, settings)
     raise ValueError(f"unknown broker command {args.broker_command!r}")
+
+
+def _sync_accounts(args: argparse.Namespace, settings: Settings) -> int:
+    import quant.broker.tables  # noqa: F401  registers the broker tables before init_db
+    from quant.broker.sync import sync_accounts
+    from quant.persistence import queries
+    from quant.persistence.database import create_db_engine, init_db
+
+    engine = create_db_engine(args.db or settings.database.path, settings.database.busy_timeout_ms)
+    init_db(engine)
+    try:
+        print("Reading the broker accounts (read-only)...", flush=True)
+        result = sync_accounts(engine, settings, args.only)
+        for line in result.stored:
+            print(f"  stored {line}")
+        print(f"  {result.flows_added} new deposit(s) / withdrawal(s) stored")
+        for broker, error in result.failed.items():
+            print(f"  {broker}: FAILED: {error}", file=sys.stderr)
+        queries.record_pipeline_run(engine, "broker-sync-accounts", "sync", "FAILED" if result.failed else "OK",
+                                    message="; ".join(result.stored + [f"{b} failed" for b in result.failed]))
+        return 1 if result.failed else 0
+    finally:
+        engine.dispose()
 
 
 def _check_connection(args: argparse.Namespace, settings: Settings) -> int:

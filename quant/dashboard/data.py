@@ -384,3 +384,36 @@ def opinion_marks(opinions: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
         count=("channel", "size"), creators=("channel", lambda c: ", ".join(dict.fromkeys(c))))
     marks = grouped.merge(prices[["date", "close"]], on="date", how="inner")
     return marks[columns].sort_values(["date", "stance"]).reset_index(drop=True)
+
+
+# Broker accounts (forward-test run 2 design): the snapshots of `quant broker sync-accounts`.
+
+@dataclass(frozen=True)
+class BrokerOverview:
+    accounts: pd.DataFrame  # the latest snapshot of each broker
+    positions: pd.DataFrame  # the positions of those snapshots
+    history: pd.DataFrame  # session, broker, value_usd: every snapshot
+    flows: pd.DataFrame  # deposits and withdrawals, newest first
+
+
+def broker_overview(engine: Engine) -> BrokerOverview | None:
+    """None until `quant broker sync-accounts` has stored a snapshot."""
+    if not inspect(engine).has_table("broker_account_snapshots"):
+        return None
+    from quant.broker.tables import broker_account_snapshots, broker_cash_flows, broker_position_snapshots
+
+    with engine.connect() as conn:
+        accounts = pd.DataFrame([dict(r) for r in conn.execute(select(broker_account_snapshots)).mappings()])
+        positions = pd.DataFrame([dict(r) for r in conn.execute(select(broker_position_snapshots)).mappings()])
+        flows = pd.DataFrame([dict(r) for r in conn.execute(select(broker_cash_flows)).mappings()])
+    if accounts.empty:
+        return None
+    latest = accounts.sort_values("session").groupby("broker").tail(1).sort_values("broker").reset_index(drop=True)
+    keys = set(zip(latest["session"], latest["broker"]))
+    held = positions[[k in keys for k in zip(positions["session"], positions["broker"])]] if not positions.empty \
+        else positions
+    history = accounts[["session", "broker", "value_usd"]].assign(session=lambda f: pd.to_datetime(f["session"]))
+    if not flows.empty:
+        flows = flows.sort_values("happened_at", ascending=False).reset_index(drop=True)
+    return BrokerOverview(latest, held.sort_values("value_usd", ascending=False).reset_index(drop=True),
+                          history.sort_values("session"), flows)

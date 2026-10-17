@@ -151,6 +151,40 @@ class FreezeTests(unittest.TestCase):
         self.assertEqual(list(queries.frozen_sessions(self.engine)["portfolio"]), ["live"])
 
 
+    def test_a_run_started_from_the_broker_snapshots(self):
+        import pandas as pd
+
+        from quant.broker.tables import broker_account_snapshots, broker_position_snapshots
+        from quant.forward.broker_real import BROKER_VALUE_SOURCE
+        from quant.forward.paper import update_paper_equity
+        from quant.forward.report import build_report, format_report
+        from quant.persistence.database import init_db
+
+        init_db(self.engine)  # the broker tables (new tables only)
+        session = LAST.date()
+        snapshot = {"session": session, "account_id": "x", "fx_to_usd": 1.0, "statement_date": str(session),
+                    "fetched_at": pd.Timestamp(EVENING).tz_localize(None)}
+        with self.engine.begin() as conn:
+            conn.execute(broker_account_snapshots.insert(), [
+                {**snapshot, "broker": "ibkr", "account_currency": "USD", "value_account_currency": 6000.0,
+                 "cash_account_currency": 1000.0, "value_usd": 6000.0, "cash_usd": 1000.0},
+                {**snapshot, "broker": "trading212", "account_currency": "USD", "value_account_currency": 4000.0,
+                 "cash_account_currency": 500.0, "value_usd": 4000.0, "cash_usd": 500.0}])
+            conn.execute(broker_position_snapshots.insert(), [
+                {"session": session, "broker": "ibkr", "broker_ticker": "AAPL", "symbol": "AAPL", "name": "Apple",
+                 "asset_type": "STK", "in_pool": 1, "quantity": 10.0, "price": 500.0, "price_currency": "USD",
+                 "value_usd": 5000.0}])
+        settings = self.settings
+        freeze_session(self.engine, settings, now=EVENING, start=True, real_from_brokers=True)
+        run = queries.forward_run(self.engine)
+        self.assertEqual((run["start_value"], run["value_source"]), (10000.0, BROKER_VALUE_SOURCE))
+        update_paper_equity(self.engine, settings)
+        report = build_report(self.engine, settings)
+        self.assertTrue(report.real_from_brokers)
+        self.assertEqual(report.values["real"].iloc[0], 10000.0)
+        self.assertIn("real = your own portfolio, both broker accounts", format_report(report))
+
+
 class ShadowSettingsTests(unittest.TestCase):
     def test_project_shadows(self):
         shadows = load_settings(PROJECT_SETTINGS).forward_test.shadows

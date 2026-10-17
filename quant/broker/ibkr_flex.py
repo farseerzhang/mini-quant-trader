@@ -61,6 +61,19 @@ class IbkrPosition:
     position_value: float | None
     cost_basis_price: float | None
     currency: str | None
+    fx_rate_to_base: float | None = None  # base currency per unit of the position's currency
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class IbkrCashFlow:
+    """A deposit or withdrawal from the Cash Transactions section (type Deposits/Withdrawals)."""
+
+    reference: str  # transactionID
+    date: str  # YYYYMMDD (or YYYYMMDD;HHMMSS)
+    amount: float  # signed: + into the account
+    currency: str
+    fx_rate_to_base: float | None
 
 
 @dataclass(frozen=True)
@@ -70,6 +83,7 @@ class IbkrAccount:
     report_date: str | None  # the statement's "to" date, YYYYMMDD
     ending_cash_base: float | None  # cash in the base currency (the BASE_SUMMARY line of the Cash Report)
     positions: list[IbkrPosition] = field(default_factory=list)
+    cash_flows: list[IbkrCashFlow] = field(default_factory=list)
 
 
 def _number(value) -> float | None:
@@ -94,15 +108,29 @@ def parse_statement(xml_text: str) -> IbkrAccount:
             symbol=p.get("symbol", ""), asset_category=p.get("assetCategory"),
             quantity=_number(p.get("position")) or 0.0, mark_price=_number(p.get("markPrice")),
             position_value=_number(p.get("positionValue")), cost_basis_price=_number(p.get("costBasisPrice")),
-            currency=p.get("currency")))
+            currency=p.get("currency"), fx_rate_to_base=_number(p.get("fxRateToBase")),
+            description=p.get("description")))
     cash = None
     for line in statement.findall("./CashReport/CashReportCurrency"):
         if line.get("currency") == "BASE_SUMMARY":
             cash = _number(line.get("endingCash"))
+    flows = []
+    for t in statement.findall("./CashTransactions/CashTransaction"):
+        if "deposit" not in (t.get("type") or "").lower() and "withdraw" not in (t.get("type") or "").lower():
+            continue  # dividends, interest and fees are part of the return
+        if t.get("levelOfDetail") not in (None, "", "DETAIL"):
+            continue  # summary lines repeat the detail lines
+        amount = _number(t.get("amount"))
+        if amount is None:
+            continue
+        flows.append(IbkrCashFlow(
+            reference=t.get("transactionID") or f"{t.get('dateTime') or t.get('settleDate')}:{amount}",
+            date=t.get("dateTime") or t.get("settleDate") or t.get("reportDate") or "",
+            amount=amount, currency=t.get("currency") or "", fx_rate_to_base=_number(t.get("fxRateToBase"))))
     return IbkrAccount(
         account_id=statement.get("accountId") or (info.get("accountId") if info is not None else None),
         base_currency=info.get("currency") if info is not None else None,
-        report_date=statement.get("toDate"), ending_cash_base=cash, positions=positions)
+        report_date=statement.get("toDate"), ending_cash_base=cash, positions=positions, cash_flows=flows)
 
 
 class IbkrFlexClient:

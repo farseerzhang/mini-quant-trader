@@ -224,6 +224,29 @@ A read-only view of the database in the browser (it never writes or triggers any
 
 The only clean evidence left is what happens from now on. Every evening the system freezes what each strategy wanted at that close, and later scores it against what actually happened. The rules were fixed before any forward data (Phase 10 in section 29 of `proposal.md`).
 
+**Your accounts read from the brokers (run 2 design).** Instead of typing positions and trades, `real` can be your Trading 212 and IBKR accounts, combined in USD, read through their read-only APIs.
+
+- **Setup:** put your read-only credentials in `.env`; `.env.example` lists the variables. Check the connection with:
+
+  ```bash
+  python -m quant broker check-connection
+  ```
+
+- **Each trading day:** take the snapshot twice: after the US close, together with `run-daily` (Trading 212), and again the next morning before 07:00 UTC (IBKR's statement of that session):
+
+  ```bash
+  python -m quant broker sync-accounts
+  ```
+
+- **Starting such a run:** run, before the next open, once both snapshots of the latest session are stored:
+
+  ```bash
+  python -m quant forward-test --start
+  ```
+
+- **How `real` is computed:** deposits and withdrawals are excluded (time-weighted returns). The report splits `real`'s return into holdings in the pool, holdings outside it (European listings, ETFs, ...) and cash, and shows the EUR/USD effect separately.
+- **Browsing:** the dashboard page **Broker accounts** shows both accounts, the split and every position.
+
 | Portfolio | What it is |
 |---|---|
 | `live` | `regime_switch` with the regime in use: the signals you see |

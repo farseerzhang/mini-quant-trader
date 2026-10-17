@@ -119,7 +119,8 @@ class NotStartedError(ActiveModelError):
 
 
 def freeze_session(
-    engine: Engine, settings: Settings, now: datetime | None = None, start: bool = False
+    engine: Engine, settings: Settings, now: datetime | None = None, start: bool = False,
+    real_from_brokers: bool = False,
 ) -> FreezeResult:
     """Freeze live and every shadow for the latest stored session, if still before the next open.
 
@@ -156,7 +157,12 @@ def freeze_session(
         return FreezeResult(session, [], sorted(done), deadline, missed=bool(missing))
 
     if queries.forward_start(engine) is None:
-        value, source, rows = start_value(engine, settings, session)
+        if real_from_brokers:  # run 2 design: the combined broker accounts of the start session, in USD
+            from quant.forward.broker_real import broker_start
+
+            value, source, rows = broker_start(engine, session)
+        else:
+            value, source, rows = start_value(engine, settings, session)
         queries.record_forward_start(engine, session.date(), value, source, rows)
         log.info("forward test starts %s with %.2f from %s", session.date(), value, source)
 

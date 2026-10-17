@@ -69,6 +69,18 @@ class RunTests(PaperFixture):
                          [{"symbol": "CASH", "quantity": 1000.0, "cost_basis": None}])
 
 
+    def test_a_broker_start_needs_both_snapshots(self):
+        """`quant forward-test --start` always starts from the brokers (since 2026-10-17); without
+        snapshots of the session it is refused, whatever the positions file holds."""
+        import quant.broker.tables  # noqa: F401  the broker tables exist, empty
+
+        init_db(self.engine)
+        Path(self.settings.positions.path).write_text("symbol,quantity\nCASH,1000\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no trading212 and ibkr snapshot.*sync-accounts"):
+            freeze_session(self.engine, self.settings, now=EVENING, start=True, real_from_brokers=True)
+        self.assertIsNone(queries.forward_run(self.engine))
+
+
 class CommandTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

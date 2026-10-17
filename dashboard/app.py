@@ -28,7 +28,9 @@ SIGNAL_ICONS = {"BUY": "▲ BUY", "REDUCE": "▼ REDUCE", "EXIT": "✕ EXIT", "H
 PORTFOLIO_COLORS = {"regime_switch": "#2a78d6", "SPY": "#52514e", "equal_weight": "#eb6834", "trend": "#1baf7a",
                     "mean_reversion": "#9a55d4", "regime_switch_bear50": "#d4a20b"}
 OTHER_COLORS = ["#c94f8a", "#4a9fb5", "#7d7a6f"]
-PAGES = ("Status", "Market", "Signals", "Sentiment", "Forward test", "Stock detail", "Models", "Backtest")
+PAGES = ("Status", "Market", "Signals", "Sentiment", "Forward test", "Broker accounts", "Stock detail", "Models",
+         "Backtest")
+BROKER_LABELS = {"trading212": "Trading 212", "ibkr": "IBKR"}
 # Creator stances: the report's marks; up/down in the green/orange of the MACD bars.
 STANCES = ["▲ bullish", "▼ bearish", "◆ conditional", "● neutral"]
 STANCE_COLORS = alt.Scale(domain=STANCES, range=["#1baf7a", "#eb6834", "#d4a20b", "#898781"])
@@ -390,6 +392,74 @@ def _forward_scale(names):
     return alt.Scale(domain=list(names), range=[FORWARD_COLORS.get(n) or next(others) for n in names])
 
 
+def page_broker_accounts(engine, settings):
+    overview = data.broker_overview(engine)
+    if overview is None:
+        st.info("No broker snapshot yet: put your read-only API credentials in `.env` (see `.env.example`), then run "
+                "`python -m quant broker sync-accounts` after a US close.")
+        return
+    accounts, positions = overview.accounts, overview.positions
+    total = float(accounts["value_usd"].sum())
+    with st.container(horizontal=True):
+        st.metric("combined (USD)", f"${total:,.0f}", border=True,
+                  help="both accounts, each at its latest snapshot, converted with that session's rate")
+        for row in accounts.itertuples():
+            native = (f", {row.account_currency} {row.value_account_currency:,.0f} at {row.fx_to_usd:.4f}"
+                      if row.account_currency != "USD" else "")
+            st.metric(f"{BROKER_LABELS.get(row.broker, row.broker)} ({row.session}{native})", f"${row.value_usd:,.0f}",
+                      border=True,
+                      help=f"cash ${0 if pd.isna(row.cash_usd) else row.cash_usd:,.0f}; read {row.fetched_at:%Y-%m-%d %H:%M} UTC")
+    if accounts["session"].nunique() > 1:
+        st.caption("The two accounts are from different sessions (IBKR's statement of a session arrives the next "
+                   "morning); run `quant broker sync-accounts` again to bring them level.")
+
+    in_pool = float(positions.loc[positions["in_pool"] == 1, "value_usd"].sum())
+    outside = float(positions.loc[positions["in_pool"] != 1, "value_usd"].sum())
+    cash = total - in_pool - outside
+    st.subheader("In the pool, outside it, cash")
+    parts = pd.DataFrame({"part": ["in the pool", "outside the pool", "cash"], "value": [in_pool, outside, cash]})
+    parts["share"] = parts["value"] / total
+    st.table(parts.assign(value=parts["value"].map(lambda v: f"${v:,.0f}"),
+                          share=parts["share"].map(lambda v: f"{v:.0%}")).set_index("part"))
+
+    st.subheader("Positions")
+    shown = positions.assign(broker=positions["broker"].map(BROKER_LABELS),
+                             pool=positions["in_pool"].map({1: "★", 0: ""}),
+                             weight=positions["value_usd"] / total)
+    st.dataframe(shown[["broker", "symbol", "name", "pool", "quantity", "price", "price_currency", "value_usd",
+                        "weight", "broker_ticker"]], hide_index=True, width="stretch", column_config={
+        "pool": st.column_config.TextColumn(help="★ = in your stock pool (the system could hold it)"),
+        "quantity": st.column_config.NumberColumn(format="%.4f"),
+        "price": st.column_config.NumberColumn(format="%.2f"),
+        "price_currency": st.column_config.TextColumn("currency"),
+        "value_usd": st.column_config.NumberColumn("value (USD)", format="$%.0f"),
+        "weight": st.column_config.NumberColumn(format="percent"),
+        "broker_ticker": st.column_config.TextColumn("broker ticker")})
+
+    history = overview.history
+    if history["session"].nunique() > 1:
+        st.subheader("Value over time (USD, deposits included)")
+        chart = alt.Chart(history.assign(broker=history["broker"].map(BROKER_LABELS))).mark_area(opacity=0.8).encode(
+            x=alt.X("session:T", title=None, axis=_session_axis(history["session"])),
+            y=alt.Y("value_usd:Q", stack="zero", title="USD", axis=alt.Axis(format="$,.0f")),
+            color=alt.Color("broker:N", title=None, legend=alt.Legend(orient="top"),
+                            scale=alt.Scale(range=["#2a78d6", "#1baf7a"])),
+            tooltip=[alt.Tooltip("session:T", format="%Y-%m-%d"), "broker:N",
+                     alt.Tooltip("value_usd:Q", format="$,.0f")]).properties(height=220)
+        st.altair_chart(chart, width="stretch")
+    if not overview.flows.empty:
+        with st.expander(f"Deposits and withdrawals ({len(overview.flows)})"):
+            flows = overview.flows.assign(broker=overview.flows["broker"].map(BROKER_LABELS))
+            st.dataframe(flows[["happened_at", "session", "broker", "kind", "amount", "currency", "amount_usd"]],
+                         hide_index=True, width="stretch", column_config={
+                             "happened_at": st.column_config.DatetimeColumn("date", format="YYYY-MM-DD"),
+                             "session": st.column_config.DateColumn("counts from"),
+                             "amount": st.column_config.NumberColumn(format="%.2f"),
+                             "amount_usd": st.column_config.NumberColumn("USD", format="$%.2f")})
+    st.caption("Read-only snapshots from `quant broker sync-accounts`. Holdings outside the pool are valued at the "
+               "broker's prices; they are never traded by the system.")
+
+
 def _session_axis(dates, labels: bool = True) -> alt.Axis:
     """An x axis for daily data: one label per day while the record is short (never hours of the
     day, which Vega picks for a span of a few days), month labels once it is long."""
@@ -420,9 +490,9 @@ def _score_table(scores: pd.DataFrame) -> pd.DataFrame:
 def page_forward(engine, settings):
     runs = data.forward_runs(engine)
     if runs.empty:
-        st.info("The forward test has not started. Put your real account in `data/positions.csv`, then run "
-                "`python -m quant forward-test --start` after a close (before the next open). From then on "
-                "`run-daily` freezes every evening and you record fills in `data/trades.csv`.")
+        st.info("The forward test has not started. Run `python -m quant broker sync-accounts` after a close and "
+                "again the next morning, then `python -m quant forward-test --start` before the next open. From "
+                "then on `run-daily` freezes every evening, and `real` is read from your broker accounts.")
         return
     labels = {int(r.run_id): f"Run {int(r.run_id)}: since {r.started_on}"
               + (f" (ended {r.ended_at:%Y-%m-%d})" if pd.notna(r.ended_at) else " (running)")
@@ -442,6 +512,16 @@ def page_forward(engine, settings):
                            + ("" if pd.isna(row["missed"]) else f"; {int(row['missed'])} missed session(s)"))
     # A static table (not a scrollable grid), so it fits the page width on screen and in print.
     st.table(_score_table(report.scores))
+    if report.real_from_brokers:
+        st.caption("real = your own portfolio: both broker accounts combined in USD, deposits and withdrawals "
+                   "excluded (time-weighted). You do not follow the signals; this compares your choices with the "
+                   "system's.")
+        if report.real_contributions is not None and not report.real_contributions.empty:
+            total = report.real_contributions.sum().map(lambda v: f"{v:+.2%}")
+            st.table(total.rename("contribution to real's return").rename_axis("part").to_frame())
+        if report.real_incomplete:
+            st.warning(f"{len(report.real_incomplete)} session(s) with a broker snapshot carried forward: run "
+                       "`quant broker sync-accounts` after each close and again the next morning.")
 
     curves = data.growth_and_drawdown(report.values)
     if len(report.values) > 1:
@@ -526,7 +606,7 @@ def main():
     st.caption(data.NOTICE)
     {"Status": page_status, "Market": page_market, "Signals": page_signals, "Sentiment": page_sentiment,
      "Stock detail": page_stock,
-     "Models": page_models, "Backtest": page_backtest, "Forward test": page_forward}[page](engine, settings)
+     "Models": page_models, "Backtest": page_backtest, "Forward test": page_forward, "Broker accounts": page_broker_accounts}[page](engine, settings)
 
 
 main()
