@@ -2291,7 +2291,7 @@ Implementation (step 5, `quant/forward/report.py`, `quant forward-report`): read
 **Rules** (confirmed by the owner 2026-10-17):
 1. **Snapshot per session.** Positions, cash and each broker's own valuation for session T. The two brokers report at different times:
    - Trading 212 answers with live prices, so it is read after the US close of T.
-   - IBKR's Flex statement for T is only available the next morning (its "Last Business Day" report covers the previous session).
+   - IBKR's Flex statement for T is only available the next morning (its report ends at the previous session). Its period was changed to "Last 365 Calendar Days" on 2026-10-17, so deposits and withdrawals of missed evenings are still read (positions and cash stay those of the period's last day).
    - The `real` value of T therefore exists once both snapshots of T are stored, at the latest before the next open. A broker missing for a session carries its last value forward, and the session is counted as incomplete.
 2. **Currency.** Trading 212 values are converted to USD with the close of `EURUSD=X` on T, stored with the snapshot. The report also shows the part of `real`'s return that comes from EUR/USD (the EUR value times the rate change), so FX is visible rather than mixed in.
 3. **Deposits and withdrawals** must not count as gains or losses.

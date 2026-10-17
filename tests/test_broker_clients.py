@@ -87,6 +87,22 @@ class IbkrFlexTest(unittest.TestCase):
         self.assertEqual([p.symbol for p in account.positions], ["NVDA", "BRK B"])  # lot lines skipped
         self.assertEqual(account.ending_cash_base, 5000.25)
 
+    def test_a_long_period_reads_the_end_and_every_deposit(self):
+        statement = (STATEMENT.replace('fromDate="20261016"', 'fromDate="20251017"')
+                     .replace("</CashReport>", "</CashReport><CashTransactions>"
+                              '<CashTransaction type="Deposits/Withdrawals" amount="2916.19" currency="USD" '
+                              'dateTime="20261008" transactionID="43299206406" levelOfDetail="DETAIL"/>'
+                              '<CashTransaction type="Deposits/Withdrawals" amount="2916.19" currency="USD" '
+                              'dateTime="20261008" levelOfDetail="SUMMARY"/>'
+                              '<CashTransaction type="Dividends" amount="12" currency="USD" dateTime="20260601" '
+                              'transactionID="9" levelOfDetail="DETAIL"/>'
+                              "</CashTransactions>"))
+        account = parse_statement(statement)
+        self.assertEqual(account.report_date, "20261016")  # the snapshot is the period's last day
+        self.assertEqual(account.ending_cash_base, 5000.25)
+        self.assertEqual([(f.reference, f.date, f.amount) for f in account.cash_flows],
+                         [("43299206406", "20261008", 2916.19)])  # no summary line, no dividend
+
     def test_two_steps_with_a_wait_while_generating(self):
         session = FakeSession([
             FakeResponse(200, text="<FlexStatementResponse><Status>Success</Status><ReferenceCode>99</ReferenceCode>"

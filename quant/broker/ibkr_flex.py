@@ -3,8 +3,12 @@
 Flex reports cannot place orders and need no running TWS or gateway. One-time setup in the IBKR
 portal (Client Portal -> Performance & Reports -> Flex Queries):
 
-1. Create an Activity Flex Query with the sections Open Positions (Summary), Cash Report and
-   Account Information; format XML; period "Last Business Day". Note its Query ID.
+1. Create an Activity Flex Query with the sections Open Positions (Summary), Cash Report, Cash
+   Transactions and Account Information; format XML; period "Last 365 Calendar Days" (or 30).
+   Note its Query ID. Positions and cash are read at the period's end (the last business day);
+   the long period is for the deposits and withdrawals, so a missed evening loses none (the
+   ones already stored are skipped). A period of "Last Business Day" would show only that
+   day's, and a deposit on a day without a sync would count as a return.
 2. Under Flex Web Service configuration, enable the service and generate a token.
 
 Credentials come from the environment (the project's `.env`, git-ignored): IBKR_FLEX_TOKEN and
