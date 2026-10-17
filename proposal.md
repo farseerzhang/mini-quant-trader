@@ -2279,6 +2279,40 @@ Implementation (step 5, `quant/forward/report.py`, `quant forward-report`): read
 
 **Checkpoints.** A first look after **6 months** (about 126 forward sessions); no promotion, retirement or rule change is made on forward evidence before it. A verdict after **12 months** (about 252 sessions). One year's Sharpe has an uncertainty of about +/-1, so even then a difference is evidence, not proof. A shadow becomes a candidate to replace `live` only if, over the 12 months, its Sharpe is higher **and** its max drawdown no deeper than `live`'s; the decision stays the owner's.
 
+### Forward-test run 2 design: `real` read from the brokers (registered 2026-10-17, before run 2 starts)
+
+**Why a new run.** Run 1 needs the start positions and every trade typed in by hand (`data/positions.csv`, `data/trades.csv`). Run 2 reads the owner's two accounts through their read-only APIs (Trading 212, EUR; IBKR, USD; connection checked 2026-10-17). This is a changed setup, which the restart rule allows; the results of run 1 play no part in the decision.
+
+**What `real` means in run 2 (owner's decisions, 2026-10-17):**
+- `real` is the owner's **own, discretionary portfolio**: both accounts **combined, in USD**. The owner does **not** follow the signals.
+- Run 2 compares that portfolio with what the system would have done (`live`) and with the shadows. It does not measure execution of the signals.
+- **Daily holdings snapshots only**: no trade import, so no execution cost. The followed share stays as a descriptive overlap measure (how much the owner's holdings resemble the live targets).
+
+**Rules** (confirmed by the owner 2026-10-17):
+1. **Snapshot per session.** Positions, cash and each broker's own valuation for session T. The two brokers report at different times:
+   - Trading 212 answers with live prices, so it is read after the US close of T.
+   - IBKR's Flex statement for T is only available the next morning (its "Last Business Day" report covers the previous session).
+   - The `real` value of T therefore exists once both snapshots of T are stored, at the latest before the next open. A broker missing for a session carries its last value forward, and the session is counted as incomplete.
+2. **Currency.** Trading 212 values are converted to USD with the close of `EURUSD=X` on T, stored with the snapshot. The report also shows the part of `real`'s return that comes from EUR/USD (the EUR value times the rate change), so FX is visible rather than mixed in.
+3. **Deposits and withdrawals** must not count as gains or losses.
+   - Read them from the brokers: Trading 212's transaction history, and IBKR's Flex section "Deposits & Withdrawals" (to add to the query).
+   - The daily return of `real` is (value at T - net deposits on T) / value at T-1 - 1 (time-weighted). Dividends and interest stay part of the return.
+4. **Holdings outside the pool** (European listings, ETFs, BEKE) count in `real`'s value at the broker's prices; they are unmanaged.
+   - **They are not added to the stock pool** (owner's decision, 2026-10-17). The system is built for US listings: NYSE calendar, USD, next-open execution, SPY benchmark, US sectors. The UCITS ETFs SXR8 and EQQQ duplicate SPY and QQQ. Adding BEKE because it is held would break the pool-expansion rule (section 17.1.3). Changing the pool would also change `live`, the system being compared with.
+   - **`real` split into three parts, descriptive.** The report shows each part's value, weight and return contribution per session:
+     - **in the pool**: holdings the system could also hold (e.g. MSFT, META, XYZ, BRK-B), to compare stock choices on the same universe;
+     - **outside the pool**: the European listings, the ETFs, BEKE;
+     - **cash**, in both accounts, in USD.
+   - This shows whether `real`'s lead or lag against `live` comes from choices inside the pool or from assets the system never holds. The split decides nothing.
+5. **Start.** The start value of the paper portfolios (`live`, the shadows, SPY) is `real`'s USD value at the start session, as in run 1. The ending of run 1 and the start of run 2 happen on the same evening, once the new code is built and tested; until then run 1 continues unchanged.
+6. **Unchanged:** the freeze, the shadows, the checkpoints (6 and 12 months), and the comparison rule for the shadows.
+
+**To build:**
+- tables for the broker snapshots, the FX rate and the cash flows (new tables only);
+- `quant broker sync-accounts` (run with or after `run-daily`, and once more before the next open for IBKR);
+- `real` computed from the snapshots instead of from the trade log;
+- the report and the dashboard updated, plus the "Broker accounts" page.
+
 ---
 
 # 30. Future Extensions
