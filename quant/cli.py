@@ -855,6 +855,24 @@ def _run_daily(args: argparse.Namespace, settings: Settings) -> int:
     return code
 
 
+def _run_daily_broker_sync(args: argparse.Namespace, settings: Settings) -> int:
+    """The broker snapshots inside run-daily: never stops the run. Without credentials in .env it
+    is skipped; a broker that fails (or Trading 212 outside its window) is reported and the other
+    stages go on, because a missing snapshot is only carried forward in `real`."""
+    import os
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    if not (os.environ.get("TRADING212_API_KEY") or os.environ.get("IBKR_FLEX_TOKEN")):
+        print("  skipped: no broker credentials in .env (see .env.example)")
+        return 0
+    sync_args = argparse.Namespace(only=None, db=getattr(args, "db", None))
+    if broker_cli.run(argparse.Namespace(broker_command="sync-accounts", **vars(sync_args)), settings) != 0:
+        _error("  a broker snapshot was not stored (see above); run-daily continues")
+    return 0
+
+
 def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     """Run the pipeline stages in order (proposal section 23, steps 1-13).
 
@@ -864,7 +882,7 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     fail to download do not stop it: features and the regime are calculated
     from the data that is stored, and the exit code still reports the failure.
     """
-    print("[1/5] update-market-data")
+    print("[1/6] update-market-data")
     market_data = _update_market_data(args, settings)
     if market_data == _FAILED:
         _error("run-daily stopped: market data update failed")
@@ -872,10 +890,11 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     for step, name, run in (
         (2, "calculate-features", _run_features),
         (3, "calculate-regime", _run_regime),
-        (4, "generate-signals", _run_signals),
-        (5, "forward-test", _run_forward),
+        (4, "broker sync-accounts", _run_daily_broker_sync),
+        (5, "generate-signals", _run_signals),
+        (6, "forward-test", _run_forward),
     ):
-        print(f"[{step}/5] {name}")
+        print(f"[{step}/6] {name}")
         if run(args, settings) != 0:
             _error(f"run-daily stopped: {name} failed")
             return 1

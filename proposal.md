@@ -2328,6 +2328,7 @@ Implementation (step 5, `quant/forward/report.py`, `quant forward-report`): read
   - Positions plus cash match each broker's own total exactly for IBKR, and within $10 (0.08%, the brokers' own exchange rates) for Trading 212.
   - 15 deposits and withdrawals were stored (2020-11 .. 2026-10).
   - The parts: in the pool $7,159 (24%), outside the pool $17,373 (58%), cash $5,322 (18%).
+- **In `run-daily`:** stage 4 of 6, after the regime and before the signals. It never stops the run; without credentials it is skipped. The run-daily tests replace it with a stand-in: a first version without that let the test suite call the real broker APIs and rewrite the 2026-10-16 snapshot (with identical values) four times; fixed the same day.
 - **Dashboard:** a new "Broker accounts" page. The Forward test page shows the parts for a broker run.
 - **Tests:** `test_broker_clients.py`, `test_broker_sync.py`, `test_forward_broker_real.py`, and a broker-run start in `test_forward_freeze.py`.
 

@@ -232,11 +232,11 @@ The only clean evidence left is what happens from now on. Every evening the syst
   python -m quant broker check-connection
   ```
 
-- **Each trading day:** take the snapshot twice: after the US close, together with `run-daily` (Trading 212), and again the next morning before 07:00 UTC (IBKR's statement of that session):
+- **Each trading day:** `run-daily` takes the snapshots itself (stage 4, after the regime). Two times matter:
+  - Trading 212 is read with live prices, so its snapshot of a session is stored only between the US close and 07:00 UTC the next weekday.
+  - IBKR's statement of a session arrives the next morning.
 
-  ```bash
-  python -m quant broker sync-accounts
-  ```
+  So run `run-daily` after the close (it freezes the session), and once more the next morning before 07:00 UTC (08:00 German winter time, 09:00 summer time) to store IBKR's statement; the second run leaves frozen sessions as they are. Without credentials in `.env` the stage is skipped; a broker that fails is reported, and `run-daily` goes on.
 
 - **Starting such a run:** run, before the next open, once both snapshots of the latest session are stored:
 

@@ -49,6 +49,8 @@ class RunDailyStageOrderTests(unittest.TestCase):
         with patch.object(cli, "_update_market_data", stage("update", update)), patch.object(
             cli, "_run_features", stage("features", features)
         ), patch.object(cli, "_run_regime", stage("regime", regime)), patch.object(
+            cli, "_run_daily_broker_sync", stage("broker", 0)  # never the real broker APIs in tests
+        ), patch.object(
             cli, "_run_signals", stage("signals", signals)
         ), patch.object(cli, "_run_forward", stage("forward", forward)), patch.object(  # these runs use the project settings: never log into the real database
             cli, "_record_daily", lambda args, settings, status, message: calls.append(f"logged {status}")
@@ -59,7 +61,7 @@ class RunDailyStageOrderTests(unittest.TestCase):
         return code, calls
 
     def test_runs_every_stage_in_order(self):
-        self.assertEqual(self.run_daily(), (0, ["update", "features", "regime", "signals", "forward", "logged OK"]))
+        self.assertEqual(self.run_daily(), (0, ["update", "features", "regime", "broker", "signals", "forward", "logged OK"]))
 
     def test_a_failed_market_data_update_stops_the_run(self):
         self.assertEqual(self.run_daily(update="failed"), (1, ["update", "logged FAILED"]))
@@ -68,16 +70,16 @@ class RunDailyStageOrderTests(unittest.TestCase):
         self.assertEqual(self.run_daily(features=1), (1, ["update", "features", "logged FAILED"]))
 
     def test_failed_symbols_do_not_stop_the_run_but_are_reported(self):
-        self.assertEqual(self.run_daily(update="partial"), (1, ["update", "features", "regime", "signals", "forward", "logged FAILED"]))
+        self.assertEqual(self.run_daily(update="partial"), (1, ["update", "features", "regime", "broker", "signals", "forward", "logged FAILED"]))
 
     def test_a_failed_regime_stage_stops_before_the_signals(self):
         self.assertEqual(self.run_daily(regime=1), (1, ["update", "features", "regime", "logged FAILED"]))
 
     def test_a_failed_signal_stage_fails_the_run(self):
-        self.assertEqual(self.run_daily(signals=1), (1, ["update", "features", "regime", "signals", "logged FAILED"]))
+        self.assertEqual(self.run_daily(signals=1), (1, ["update", "features", "regime", "broker", "signals", "logged FAILED"]))
 
     def test_a_failed_forward_stage_fails_the_run(self):
-        self.assertEqual(self.run_daily(forward=1), (1, ["update", "features", "regime", "signals", "forward", "logged FAILED"]))
+        self.assertEqual(self.run_daily(forward=1), (1, ["update", "features", "regime", "broker", "signals", "forward", "logged FAILED"]))
 
 
 class RunDailyEndToEndTests(unittest.TestCase):
@@ -94,15 +96,16 @@ class RunDailyEndToEndTests(unittest.TestCase):
             output = StringIO()
             with patch("quant.cli.YFinanceProvider", return_value=RisingMarketProvider()), patch(
                 "quant.data.store.last_completed_session", return_value=date(2026, 1, 30)
-            ), redirect_stdout(output), redirect_stderr(StringIO()):
+            ), patch.object(cli, "_run_daily_broker_sync", lambda args, settings: 0), redirect_stdout(
+                output), redirect_stderr(StringIO()):  # never the real broker APIs in tests
                 code = cli.main(
                     ["--config", str(config), "run-daily", "--initial-date", "2025-01-02"]
                 )
 
         self.assertEqual(code, 0)
         text = output.getvalue()
-        for stage in ("[1/5] update-market-data", "[2/5] calculate-features", "[3/5] calculate-regime",
-                      "[4/5] generate-signals", "[5/5] forward-test"):
+        for stage in ("[1/6] update-market-data", "[2/6] calculate-features", "[3/6] calculate-regime",
+                      "[4/6] broker sync-accounts", "[5/6] generate-signals", "[6/6] forward-test"):
             self.assertIn(stage, text)
         self.assertIn("Latest: BULL (score +5)", text)
         self.assertIn("BULL regime (rule_based-v1)", text)
