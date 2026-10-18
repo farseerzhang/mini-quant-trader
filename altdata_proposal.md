@@ -548,6 +548,110 @@ The first download stores the whole history with `first_seen` = that day. That h
 - **Schedule:** once a week is enough for research, because availability uses Yahoo's timestamp and `first_seen` only checks backfills. Daily only if a feature is ever used live.
 - **Tests:** `tests/test_altdata_analysts.py`, offline with a fake Yahoo. It covers normalization, the first download, new / changed / gone, a rerun on the same day, a failed stock, and the session before or after the close.
 
+## 13.5 A0c spike: option chains, "unusual options activity" (2026-10-18; data only, no returns looked at)
+
+The question (owner, 2026-10-18): can sudden large option trades, e.g. a big bet on calls or puts in one stock, be detected, as a sign that someone knows something? The spike script was kept outside the repository. Nothing is stored in the database.
+
+**Source.** `yfinance` 1.7.0: `Ticker(symbol).options` (the expiries), then `option_chain(expiry)` per expiry (Yahoo Finance's web data, personal use, as for the prices). Read on Sunday 2026-10-18 14:39 UTC, so these are Friday 2026-10-16's chains.
+
+**Fields per contract.** `contractSymbol`, `strike`, `lastPrice`, `bid`, `ask`, `volume` (that day's), `openInterest`, `impliedVolatility` (Yahoo's), `lastTradeDate`, `inTheMoney`.
+
+**What it does not have:**
+- **No history.** Only today's chains; the past would have to be collected from now on.
+- **No trades.** One volume per contract and day: no trade sizes, no times, and no side (bought at the ask or sold at the bid). A large volume in calls can be buying or selling, opening or closing, or one leg of a spread.
+- This rules out the "large trade" signals of paid services (OPRA trade data: Polygon.io; flow services: Unusual Whales, FlowAlgo, Cheddar Flow, Barchart). Only daily aggregates can be built.
+
+**Coverage and cost** (expiries within 60 days, all 81 stocks):
+- No failures. 660 requests in 19 s with 4 threads: cheap enough for `run-daily`.
+- 46,316 contracts (per stock: median 384, PSA only 12, NVDA's maximum 2,973); the raw rows are 7.3 MB a day, about 1.8 GB a year as CSV, too much to keep. All expiries (10 stocks checked): 5 to 24 expiries, up to 3,667 contracts per stock.
+- **Thin option markets in the pool:** PSA traded 99 contracts on Friday, AEP 426, SHW 477, LIN 933, RMBS 1,017. For these, a "volume spike" is a few dozen contracts.
+
+**Quality** (per stock, median and worst):
+
+```text
+volume missing (no trade)         10.8%   22.4% TJX
+open interest missing              1.1%    4.1% INTC
+open interest zero                 6.7%   24.2% AEP
+implied volatility < 1% or > 500%  1.8%    7.4% ADBE
+no bid and no ask                  1.9%   21.2% AEP
+last trade before Friday          43.0%   70.8% TMO
+```
+
+43% of the contracts did not trade on Friday at all: their `lastPrice` and Yahoo's IV are stale. Measures must use contracts that traded that day, or the bid/ask mid.
+
+**The planned measures, computed once** (expiry nearest 30 days, at-the-money = strike/spot 0.95..1.05):
+- Put/call volume ratio: median 0.76 (10%..90%: 0.34..1.20).
+- Volume / open interest: median 0.24 (0.12..0.49).
+- ATM call IV: median 40% (25%..64%). AAPL's 29.5% matches a hand Black-Scholes check from its price. The median is high because the pool has high-volatility names and because the 30-day expiry (2026-11-20) contains most Q3 earnings dates.
+- Skew, OTM put IV (0.80..0.95) minus ATM call IV (Xing, Zhang & Zhao 2010): median +1.6% (-1.0..+7.2%).
+- Call minus put IV at the same strike (Cremers & Weinbaum 2010): median **+2.3%**, positive for most stocks. The literature finds it slightly negative on average. A positive spread for most stocks points to Yahoo's IV, not to the market: put-call parity broken by the rate or dividends Yahoo uses. **This measure would need our own IVs** (from the bid/ask mid, a rate from `^IRX` and the dividends we store).
+
+**Problems a feature design must handle:**
+1. **Earnings.** Option volume and IV rise before every earnings date, for every stock. Without earnings dates (not stored today), an "unusual" reading is mostly the calendar. Yahoo has earnings dates (`Ticker.earnings_dates`); a spike would be needed first.
+2. **Timing, not checked yet (a weekend read cannot show it):**
+   - When is a session's volume final on Yahoo? It must be read after the close, before `run-daily` freezes; this needs a check on a weekday evening.
+   - Open interest is published by the OCC the next morning, so the evening's OI is most likely the previous session's. A feature may only use what is known at the close.
+3. **Contract counts change over time** (new weekly expiries, more strikes). Measures must be ratios or ranks, not raw counts.
+4. **Mega caps.** The evidence for informed option trading is strongest in small, less-followed stocks and before takeovers of smaller firms. In the 81 largest US companies, informed trades are a small part of a huge volume.
+5. **Statistical power.** With collection starting now, a first test is possible after 6-12 months: about 125-250 sessions x 81 stocks, a weak test (A4 needed years).
+
+**Assessment.** Free daily aggregates are usable, but for a narrower question than "who knows something": daily put/call volume, volume/OI, IV level and skew per stock, from the evening's chains. Trade-level signals need paid data. Expectations are low (problem 4, and section 10).
+
+**Next steps, only if decided:**
+1. A weekday-evening check of volume and open-interest timing (problem 2), and an earnings-dates spike (problem 1).
+2. A loader that stores one summary row per stock and session (`altdata_option_summaries`, about 81 rows a day) and, optionally, the day's largest contracts by volume / OI, with the read time, as a step in `run-daily`.
+3. A pre-registration after about 6 months of data, with the measures and pass criteria fixed before any feature value is computed.
+
+**Decided (owner, 2026-10-18):** steps 1 and 2. The weekday timing check is a command of the loader (section 13.7) and runs on Monday 2026-10-19 evening and Tuesday morning.
+
+## 13.6 A0d spike: earnings dates (2026-10-18; data only, no returns looked at)
+
+Needed because option volume and IV rise before every earnings report (section 13.5, problem 1). Nothing is stored.
+
+**Source.** `yfinance` 1.7.0, `Ticker(symbol).get_earnings_dates(limit=100)`; Yahoo refuses a larger limit ("Yahoo caps limit at 100"). One request per stock: all 81 answered in 15 s (4 threads), no errors.
+
+**Fields.** The report's date and time (America/New_York), `EPS Estimate`, `Reported EPS`, `Surprise(%)`. The next report is included, with its estimate and no reported EPS.
+
+**Coverage.**
+- 100 rows (25 years of quarters) for most stocks; the median first date is 2002-04-17, and 59 of the 81 start in 2006 or earlier.
+- Recent listings start with their listing, as expected: SPCX 2026-08, FIG 2025-09, SNDK 2025-05, TEM 2024-08, GEV 2024-04, PLTR 2020-11, DELL 2019-03 (its relisting), SE, XYZ, LITE.
+- **Time of day:** per stock, a median 63% of reports before the open and 35% after the close; at most 17% inside the session (FIG), which are likely placeholder times. Before the open or after the close decides the first session that can react, so the time matters.
+- Gaps over 120 days: PEP 16 and COST 17 (missing quarters in their history), a few others 1-2. Duplicate days: 18 stocks with 1-3. A loader would keep one per day.
+- No next date: HD and LOW.
+- **55 of the 81 report within the next 30 days**, so the 30-day IVs of section 13.5 are earnings IVs for most of the pool right now.
+
+**Assessment.** Good enough to mark the sessions around each report, and so to separate earnings from other unusual option activity. Like the analyst data, it is today's view, not point in time: the date of a future report can move, and old times may have been corrected. Next, only when an options feature is designed: a small loader that keeps every download's version of the next date, as in section 13.4.
+
+## 13.7 Option chains loader (designed and built 2026-10-18)
+
+**What is stored, per session (the session the chains belong to):**
+- `altdata_option_summaries`: one row per stock. The spot price, the counts of expiries and contracts (within 60 days), the contracts traded that session, call and put volume and open interest, and Yahoo's IVs on the expiry nearest 30 calendar days: mean at-the-money call and put IV (strike / spot 0.95..1.05), OTM put IV (0.80..0.95) and OTM call IV (1.05..1.20), from contracts traded that session only.
+- `altdata_option_contracts`: per stock, at most 24 contracts with every field Yahoo gives (bid, ask, last price, last trade time, volume, open interest, Yahoo's IV):
+  - **the 30-day grid:** on the expiry nearest 30 days, for calls and for puts, the strike nearest to 85, 90, 95, 100, 105, 110 and 115% of spot (14 contracts). From these, our own IVs, the skew and the call-put spread can be computed later (Yahoo's call-put spread is biased, section 13.5);
+  - **the unusual:** the 5 contracts with the largest volume, and the 5 with the largest volume / open interest among those with a volume of at least 100 (any expiry within 60 days).
+  - Each row says why it was kept (grid, top volume, top volume / OI); a contract kept for two reasons is stored once.
+- About 81 summary rows and at most about 1,950 contract rows a day (estimated from the spike's chains), roughly 80 MB a year in SQLite. All contracts would be 7.3 MB a day, about 1.8 GB a year, so they are not kept.
+
+**When a read counts:**
+- Only between a session's close and the next open. On a weekend or holiday, that is the last session's chains. A read during the session is refused (the volumes are partial).
+- **The first stored read of a session is kept.** A later read of the same session changes nothing, so the stored value is what was known that evening, not what Yahoo shows the next morning (the open interest most likely moves overnight; section 13.5, problem 2). A stock missing from the first read (a failed request) is filled in by a later one.
+- `quant altdata options --compare` reads the chains again, stores nothing, and prints what changed against the stored read. Run on Monday evening and on Tuesday morning before the open, it answers when Yahoo's volume and open interest are final.
+
+**In `run-daily`:** a last stage, after the forward test, so it never delays the freeze. It never stops the run: outside the window it is skipped with a note, and a failed stock is reported. It takes about 20 s. Research only: nothing live reads these tables.
+
+**Logging:** each read of the pool writes one row to `altdata_sync` (source `options-yahoo`, key = the session) with its counts.
+
+**As built (2026-10-18):**
+- **Code:** `quant/altdata/options.py`; tables `altdata_option_summaries` and `altdata_option_contracts` (`quant/altdata/tables.py`); the command `quant altdata options [--compare] [--symbol T ...]`; stage 7 of `run-daily` (`_run_daily_options` in `quant/cli.py`, after the forward test).
+- **Spot:** the stored as-traded close of the session (from `update-market-data`, stage 1), so strike / spot matches the session; Yahoo's last price only when no close is stored.
+- **Tests:** `tests/test_altdata_options.py`, offline with a fake Yahoo: the window, normalization, the grid and the unusual contracts, the first read kept and a failed stock filled in later, and `--compare` storing nothing. The run-daily tests replace the stage with a stand-in, so no test reads Yahoo.
+- **First read:** Sunday 2026-10-18 15:15 UTC, for session 2026-10-16: 81 stocks, 1,663 contracts (1,017 grid, 405 top volume, 379 top volume / OI; some kept for two reasons). It is a weekend read, so its open interest may already include changes from Friday; reads from 2026-10-19 on are evening reads by `run-daily`.
+- **Measured size:** 312 KB of database growth for one session, about 79 MB a year, as estimated.
+- **Found in the first read, for the feature design (not changed in the loader):**
+  - Fewer grid contracts than 14 x 81 = 1,134: on stocks with few strikes, the nearest strike repeats for neighbouring targets and is stored once.
+  - **The largest volume / open interest are mostly new contracts.** NVDA's five are weeklies expiring 2026-10-21 and 10-26 with an open interest of 0-12 against volumes of 1,300-3,600: a contract has almost no open interest on the days after it is listed. A feature on this ratio needs a minimum open interest or a contract age.
+- **Timing check (problem 2), to run:** `quant altdata options --compare` on Monday 2026-10-19 about an hour after `run-daily`, and on Tuesday 2026-10-20 before 13:30 UTC. Same volume and changed open interest on Tuesday would confirm that the evening read has the session's final volume and the previous session's open interest.
+
 ---
 
 # 14. Risks

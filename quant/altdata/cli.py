@@ -15,7 +15,8 @@ log = logging.getLogger("quant.altdata")
 
 def add_parser(commands, db_help: str) -> None:
     altdata = commands.add_parser(
-        "altdata", help="free structured alternative data (research only; not part of run-daily): SEC Form 4")
+        "altdata", help="free structured alternative data (research only): SEC Form 4, analyst changes, option "
+        "chains (the only one in run-daily)")
     sub = altdata.add_subparsers(dest="altdata_command", required=True)
     update = sub.add_parser(
         "update", help="Form 4 insider transactions for the pool: quarterly data sets not loaded yet, then live "
@@ -34,6 +35,15 @@ def add_parser(commands, db_help: str) -> None:
         "rows only, with the date first and last seen (altdata_proposal.md 13.4; about 2 minutes)")
     analysts.add_argument("--symbol", action="append", metavar="TICKER", help="only this stock (repeatable)")
     analysts.add_argument("--db", help=db_help)
+    options = sub.add_parser(
+        "options", help="the pool's option chains from Yahoo, one read per session (after the close, before the "
+        "next open): a summary row and up to 24 contracts per stock; the first read of a session is kept "
+        "(altdata_proposal.md 13.7; about 20 s; run-daily does it as its last stage)")
+    options.add_argument("--compare", action="store_true",
+                         help="read again, store nothing, and show what moved against the stored read of the session "
+                         "(when are Yahoo's volume and open interest final?)")
+    options.add_argument("--symbol", action="append", metavar="TICKER", help="only this stock (repeatable)")
+    options.add_argument("--db", help=db_help)
     research = sub.add_parser("research", help="A4: rank IC of the candidate features on the development folds, "
                               "then the model trial (pre-registered, altdata_proposal.md 8.1 and 8.2; no holdout)")
     research.add_argument("--round", type=int, choices=[1, 2], default=1, dest="round_no",
@@ -68,6 +78,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_research(args, settings)
     if args.altdata_command == "analysts":
         return _run_analysts(args, settings)
+    if args.altdata_command == "options":
+        return _run_options(args, settings)
     raise ValueError(f"unknown altdata command {args.altdata_command!r}")
 
 
@@ -217,6 +229,45 @@ def _run_analysts(args: argparse.Namespace, settings: Settings) -> int:
                                     message=f"{result.new} new, {result.changed} changed, {result.gone} gone, "
                                     f"{len(result.failed)} failed")
         return 0 if result.ok else 1
+    finally:
+        engine.dispose()
+
+
+def _run_options(args: argparse.Namespace, settings: Settings) -> int:
+    from quant.altdata.options import OutsideWindowError, compare_options, update_options
+
+    symbols = [s.upper() for s in args.symbol] if args.symbol else None
+    unknown = [s for s in symbols or [] if s not in settings.market.stocks]
+    if unknown:
+        _error(f"not in the stock pool: {', '.join(unknown)}")
+        return 1
+    engine = _engine(settings, args.db)
+    try:
+        if args.compare:
+            session, frame = compare_options(engine, settings, symbols=symbols)
+            print(f"Option chains of {session}: a new read against the stored one (nothing stored)")
+            if not frame.empty and "volume_stored" in frame:
+                moved = frame.dropna(subset=["volume_stored"])
+                print(f"  total volume: stored {moved['volume_stored'].sum():,.0f}, now {moved['volume_now'].sum():,.0f}")
+                print(f"  total open interest: stored {moved['oi_stored'].sum():,.0f}, now {moved['oi_now'].sum():,.0f}")
+                print(f"  kept contracts found again: {moved['found_again'].sum():,} of {moved['kept_contracts'].sum():,}; "
+                      f"volume changed on {moved['volume_changed'].sum():,}, open interest on {moved['oi_changed'].sum():,}")
+            print(frame.to_string(index=False))
+            return 0
+        result = update_options(engine, settings, symbols=symbols, progress=lambda line: print(f"  {line}", flush=True))
+        print(f"Option chains of {result.session}: {len(result.stored)} stock(s) stored ({result.contracts_kept:,} "
+              f"contracts kept), {result.already} already stored and kept as they were, {len(result.failed)} failed")
+        queries.record_pipeline_run(engine, "altdata-options", "options", "OK" if result.ok else "FAILED",
+                                    data_as_of_date=result.session,
+                                    message=f"{len(result.stored)} stored, {result.already} kept, "
+                                    f"{len(result.failed)} failed")
+        return 0 if result.ok else 1
+    except OutsideWindowError as exc:
+        print(f"Option chains not read: {exc}")
+        return 0
+    except ValueError as exc:
+        _error(str(exc))
+        return 1
     finally:
         engine.dispose()
 

@@ -874,6 +874,16 @@ def _run_daily_broker_sync(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _run_daily_options(args: argparse.Namespace, settings: Settings) -> int:
+    """The option chains inside run-daily (altdata_proposal.md 13.7): research only, last, never
+    stops the run. Outside the window (the market open) it is skipped with a note."""
+    options_args = argparse.Namespace(altdata_command="options", compare=False, symbol=None,
+                                      db=getattr(args, "db", None))
+    if altdata_cli.run(options_args, settings) != 0:
+        _error("  some option chains were not stored (see above); research data only, run-daily is not affected")
+    return 0
+
+
 def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     """Run the pipeline stages in order (proposal section 23, steps 1-13).
 
@@ -883,7 +893,7 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
     fail to download do not stop it: features and the regime are calculated
     from the data that is stored, and the exit code still reports the failure.
     """
-    print("[1/6] update-market-data")
+    print("[1/7] update-market-data")
     market_data = _update_market_data(args, settings)
     if market_data == _FAILED:
         _error("run-daily stopped: market data update failed")
@@ -894,8 +904,9 @@ def _run_daily_stages(args: argparse.Namespace, settings: Settings) -> int:
         (4, "broker sync-accounts", _run_daily_broker_sync),
         (5, "generate-signals", _run_signals),
         (6, "forward-test", _run_forward),
+        (7, "option chains (research)", _run_daily_options),
     ):
-        print(f"[{step}/6] {name}")
+        print(f"[{step}/7] {name}")
         if run(args, settings) != 0:
             _error(f"run-daily stopped: {name} failed")
             return 1

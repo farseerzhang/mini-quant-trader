@@ -127,11 +127,60 @@ altdata_analyst_changes = Table(
     UniqueConstraint("symbol", "grade_time", "firm", "content_hash", name="uq_altdata_analyst_changes"),
 )
 
+# Option chains from Yahoo (section 13.7), one read per session: the first stored read of a
+# session is kept, so a row is what was known that evening. IVs are Yahoo's, from contracts
+# traded that session, on the expiry nearest 30 calendar days.
+altdata_option_summaries = Table(
+    "altdata_option_summaries",
+    metadata,
+    Column("session", Date, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("read_at", DateTime, nullable=False),  # naive UTC
+    Column("spot", Float, nullable=False),
+    Column("expiries", Integer, nullable=False),  # within 60 days
+    Column("contracts", Integer, nullable=False),
+    Column("traded_contracts", Integer, nullable=False),  # volume > 0 that session
+    Column("call_volume", Float, nullable=False),
+    Column("put_volume", Float, nullable=False),
+    Column("call_open_interest", Float, nullable=False),
+    Column("put_open_interest", Float, nullable=False),
+    Column("iv_expiry", Date),  # the expiry nearest 30 days; NULL when nothing traded
+    Column("atm_call_iv", Float),  # strike / spot 0.95 .. 1.05
+    Column("atm_put_iv", Float),
+    Column("otm_put_iv", Float),  # 0.80 .. 0.95
+    Column("otm_call_iv", Float),  # 1.05 .. 1.20
+    PrimaryKeyConstraint("session", "symbol", name="pk_altdata_option_summaries"),
+)
+
+# Per stock and session, at most 24 contracts with all of Yahoo's fields: the 30-day grid (the
+# strike nearest 85 .. 115% of spot, calls and puts) and the day's unusual contracts.
+altdata_option_contracts = Table(
+    "altdata_option_contracts",
+    metadata,
+    Column("session", Date, nullable=False),
+    Column("contract_symbol", String, nullable=False),  # e.g. NVDA261019C00220000
+    Column("symbol", String, nullable=False),
+    Column("expiry", Date, nullable=False),
+    Column("side", String, nullable=False),  # call | put
+    Column("strike", Float, nullable=False),
+    Column("bid", Float),
+    Column("ask", Float),
+    Column("last_price", Float),
+    Column("last_trade_at", DateTime),  # naive UTC
+    Column("volume", Float),  # NULL: no trade that session
+    Column("open_interest", Float),
+    Column("yahoo_iv", Float),
+    Column("in_grid", Integer, nullable=False),  # 1: one of the 14 grid contracts
+    Column("top_volume", Integer, nullable=False),  # 1: among the 5 largest volumes
+    Column("top_volume_over_oi", Integer, nullable=False),  # 1: among the 5 largest volume / OI (volume >= 100)
+    PrimaryKeyConstraint("session", "contract_symbol", name="pk_altdata_option_contracts"),
+)
+
 # What has been loaded: one row per quarterly data set, and one for the live updates.
 altdata_sync = Table(
     "altdata_sync",
     metadata,
-    Column("source", String, nullable=False),  # form4-dataset | form4-live | analysts-yahoo
+    Column("source", String, nullable=False),  # form4-dataset | form4-live | analysts-yahoo | options-yahoo
     Column("key", String, nullable=False),  # 2026q2 | live | the download date
     Column("status", String, nullable=False),  # OK | FAILED
     Column("filings", Integer, nullable=False),

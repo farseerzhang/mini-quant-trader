@@ -374,6 +374,19 @@ python -m quant altdata coverage
 
 The first `update` is a backfill from 2006: one quarterly SEC data set at a time (about 1.2 GB of downloads in total; only the pool's rows are kept), then the filings since the newest quarter, one by one from EDGAR. Later runs only fetch what is new. Every request sends `altdata.user_agent` (the SEC requires a name and an email) and stays at `altdata.sec.max_requests_per_second` (5; the SEC allows 10). A filing from the quarterly data sets counts from the session after its filing date (they have no time of day); a filing fetched live from the first session closing after it was accepted. Bad lines (no price, a price far from that day's close, a trade dated after its filing) go to `data_quarantine`. `coverage` writes `reports/altdata/coverage-form4.md`: filings and purchase / sale lines per stock and year.
 
+#### Option chains (research, `altdata_proposal.md` 13.5-13.7)
+
+Yahoo's option chains for the stock pool, one read per session. Per stock: a summary row (call and put volume and open interest, Yahoo's at-the-money and out-of-the-money IVs on the expiry nearest 30 days) and at most 24 contracts (a grid of 14 strikes around the price on that expiry, and the day's 5 largest volumes and 5 largest volume / open interest). Yahoo gives one volume per contract and day, with no trades and no side, so this is not a feed of single large trades. Research only: nothing live reads it.
+
+`run-daily` stores it as its last stage (about 20 s), so there is nothing to do. By hand:
+
+```bash
+python -m quant altdata options
+python -m quant altdata options --compare
+```
+
+A read counts for the session whose close it follows, until the next open; while the market is open it is skipped. The first stored read of a session is kept, so a later read changes nothing. `--compare` reads again, stores nothing and prints what moved against the stored read, which shows when Yahoo's volume and open interest are final.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.
