@@ -165,7 +165,7 @@ forward_test:                      # Phase 10 pre-registration (section 29); fro
     shadow_rule_bonds: {strategy: regime_switch, regime_rule: rule_bonds-v1}   # added 2026-10-15 (section 12.5.3)
 
 sentiment:                         # creator opinion factor (sentiment_proposal.md); research only, not in run-daily
-  lookback_days: 14                # `quant sentiment fetch` looks this far back (--days overrides)
+  lookback_days: 7                 # `quant sentiment fetch` looks this far back (--days overrides)
   min_duration_seconds: 180        # shorter videos (Shorts) are skipped
   include_live: false              # live-stream replays
   request_delay_seconds: [8, 15]   # random wait between requests to YouTube (shorter waits got the IP blocked)
