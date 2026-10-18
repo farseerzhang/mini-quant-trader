@@ -1600,6 +1600,95 @@ SPY                  11.1%  0.64  -55.2%      (same)
 - On 81 stocks it beats 70% of the random baselines on Sharpe and 100% on CAGR (48 stocks: 94%); a larger pool of mostly strong stocks makes random picks from it harder to beat, so the stock choice adds less than the regime timing.
 - `regime_switch` remains the baseline that the models (next) must beat.
 
+### 17.1.4 Pre-registered trial: a sector-balanced stock pool (registered 2026-10-18 by the owner, before any data on its new stocks)
+
+**Why.** The 81-stock pool is uneven: 23 information technology stocks, but only 2 real estate stocks and 3 each in energy, materials and utilities. 13 of the 81 were picked by hand after strong runs (section 17.1.3). The sector cap (`risk.max_sector_weight` 0.30, section 17.2) already stops technology from dominating the portfolio: on 2026-10-16 `live` held 15 technology stocks at exactly 30%. But the excess over the cap stays in cash (most of the 5.7% not invested that day), and in thin sectors there are few stocks to choose from. A pool with the same number of stocks in every sector, chosen by a fixed rule, has neither problem and no hand-picked stocks.
+
+**Question.** Does `regime_switch` do at least as well on a sector-balanced pool chosen by rule as on today's 81 stocks? If it does, the balanced pool is the cleaner choice for a later forward-test run: it is free of hindsight picks.
+
+**Scope.** Backtest only, on the development period (2005-10-17 .. 2025-10-09). The holdout is not used. Nothing changes for forward-test run 2. `market.symbols` in `config/settings.yaml` stays the 81-stock pool. A switch is the owner's decision at a later checkpoint (earliest the 6-month first look) and would start a new run.
+
+**The pool rule (fixed now, before any data on new stocks is loaded):**
+- Universe: the S&P 500 constituents with their GICS sectors, from the Wikipedia constituents table, read once on the registration day.
+- In each of the 11 GICS sectors, the **7 largest companies by market cap** (Yahoo `fast_info`, read the same day). 11 x 7 = **77 stocks**, close to 81, so the comparison is about balance, not size.
+- One share class per company (the larger-cap class; GOOGL rather than GOOG, BRK-B as now).
+- A stock with a short history (listed after 2005) stays in. It enters the backtest when its features are warm, as GEV and SNDK do now.
+- Ties at the cut: the larger market cap wins. A ticker Yahoo does not resolve is replaced by the next in its sector, and this is recorded.
+- The list, the market caps and the read date are written to `config/pools/sector_balanced_7.yaml` and into this section before any backtest runs.
+
+**The pool (fixed 2026-10-18, before any price of a new stock was loaded).** 503 constituents read from Wikipedia; market caps from Yahoo `fast_info` at 2026-10-18 14:12 UTC, all 503 resolved. Share classes: GOOGL kept over GOOG (Yahoo reports the company's cap for both; the pool's class wins the tie); FOX/FOXA and NWS/NWSA are below every cut. 77 stocks: 51 already in the pool, 26 new. Leaving the 81: the 30 others, among them 10 of the 13 hand-picked stocks of 2026-10-11 (CCL, FIG, LITE, LULU, PLTR, RMBS, SE, SPCX, TEM, XYZ); the other three (BRK-B, MU, TSLA) are among the largest of their sectors and qualify by the rule.
+
+| Sector | 7 largest |
+|---|---|
+| Communication Services | GOOGL, META, NFLX, DIS, VZ (new), TMUS (new), T (new) |
+| Consumer Discretionary | AMZN, TSLA, HD, MCD (new), TJX, BKNG (new), SBUX |
+| Consumer Staples | WMT, COST, KO, PG, PM, PEP, MO (new) |
+| Energy | XOM, CVX, COP (new), MPC (new), VLO (new), PSX (new), WMB (new) |
+| Financials | BRK-B, JPM, V, MA, BAC, MS, GS |
+| Health Care | LLY, JNJ, ABBV, UNH, MRK, TMO, AMGN |
+| Industrials | CAT, GE, RTX, GEV, DE, UNP, ETN (new) |
+| Information Technology | NVDA, AAPL, MSFT, AVGO, MU, AMD, INTC |
+| Materials | LIN, NEM, FCX (new), SHW, ECL (new), APD (new), NUE (new) |
+| Real Estate | WELL (new), PLD (new), EQIX (new), AMT (new), SPG (new), DLR (new), PSA |
+| Utilities | NEE, SO, CEG (new), DUK (new), AEP, D (new), SRE (new) |
+
+The first stock below each cut (for the record): APP, LOW, MNST, EOG, WFC, GILD, BA, PLTR, CRH, O, VST.
+
+**Held fixed:** strategies, sizing (`max_position_size` 0.10, `max_sector_weight` 0.30), the rule-based regime `rule_based-v1`, costs, dates, the random-baseline method. Only the pool changes.
+
+**Compared (one batch each, same code):**
+- A: today's 81 stocks (the batch of section 17.1.3 is re-run, so both use today's code)
+- B: the sector-balanced 77
+- reported for context, no decision: the 68 stocks without the hand-picked 13
+
+**Primary metric:** Sharpe of `regime_switch` after costs on the development period.
+
+**Pass (all three):**
+1. Sharpe(B) >= Sharpe(A) - 0.05 (not materially worse; a 20-year Sharpe carries an uncertainty of about +/-0.2, so a small gain is not claimed as a gain);
+2. max drawdown(B) no deeper than max drawdown(A) by more than 3 percentage points;
+3. `regime_switch` on B beats at least 70% of B's random baselines on Sharpe (A's level in section 17.1.3).
+
+**Pass:** the balanced pool is recorded as the preferred pool for the next forward-test run; switching stays a separate owner decision. **Fail:** the 81-stock pool stays; the result is recorded as it is.
+
+**Also reported, no decision:** CAGR, volatility, turnover, average invested share, average cash held back by the sector cap, the sector weights over time, per-fold Sharpe for both pools, and the same table for `trend`, `equal_weight` and `regime_switch_bear50`.
+
+**Known limits:**
+- Both pools are chosen by today's market caps, so both carry survivorship bias. The trial compares two biased pools; it does not remove the bias.
+- Sectors are today's GICS classification, not point-in-time.
+- The trial adds prices and features of up to about 40 new symbols to the database (new rows only, nothing existing is changed). The live pipeline reads only `market.symbols`, so it is not affected.
+- One trial, one rule, one k. Trying other k values afterwards would be new trials and would be reported as such.
+
+#### 17.1.4.1 As built (2026-10-18, before the run)
+
+- `quant pool-trial` (`quant/backtest/pool_trial.py`): loads the prices of B's 26 new stocks once (new rows only), recomputes the features, then backtests A, B and C with the same code. It writes `reports/backtest/pool-trial-*.md` and stores no backtest batch.
+- **The history ends at 2026-10-09** (`run_backtests(..., last_session=...)`, new and optional). The development/holdout split rolls forward with the data. Without the cut, prices through 2026-10-16 would move five sessions of section 17.1.3's holdout (2025-10-10 .. 2025-10-16) into development. With it, the development period is exactly 2005-10-17 .. 2025-10-09, and A should reproduce section 17.1.3's 81-stock numbers.
+- The trial never calls `sync_symbol_table` for B: it marks every symbol outside the given pool inactive, so it would switch off 30 of the live pool's stocks until the next `run-daily`.
+- After the trial, the daily feature step also computes the 26 trial stocks (it covers every symbol with stored prices). Their prices are not updated daily, and nothing live reads them.
+- "Cash held back by the sector cap": `regime_switch` weights computed with `max_sector_weight` 0.30 and with 1.0 (no cap); the difference in invested share, averaged over development sessions.
+- Per-fold Sharpe: the walk-forward validation years of the fold rule (section 15.1), each pool's `regime_switch` daily returns inside each year.
+
+#### 17.1.4.2 Result (2026-10-18; `reports/backtest/pool-trial-20261018T142248Z.md`): FAILED
+
+```text
+regime_switch, development 2005-10-17 .. 2025-10-09, after costs
+                            CAGR   Sharpe  max DD   beats random (Sharpe)
+A: today's 81              13.2%  1.0306  -25.0%   70%
+B: sector-balanced 77      12.0%  1.0196  -22.2%   55%
+C: 68 without hand-picked  12.0%  0.9987  -24.1%   87%   (context)
+```
+
+- Gates: Sharpe PASS (-0.011, within -0.05); max drawdown PASS (2.8 points shallower); random baselines **FAIL** (55% < 70%). One gate failed, so the trial fails: **the 81-stock pool stays**.
+- A reproduces section 17.1.3 exactly (13.2%, 1.03, -25.0%, 70%), and so does C (12.0%, 1.00, -24.1%). The `last_session` cut kept the registered window.
+- What the failure means: on B, picking the stocks the strategy picks is not better than picking at random from B. Most of `regime_switch`'s result there comes from the regime timing, which random picks share. B's per-sector spread is narrow (7 large caps each), so random choices inside it end up close to the strategy's.
+- Descriptive, no decision:
+  - B is lower in 8 of the 11 validation years;
+  - its volatility is lower (11.8% vs 12.9%), with lower CAGR;
+  - `trend` and `mean_reversion` do a little better on B.
+- **The sector cap was a smaller issue than the draft assumed:** on A it holds back 0.8% of value on average and binds on 15% of sessions (on B never). The 5.7% held back on 2026-10-16 was not typical. The draft's motivation is corrected here, not rewritten.
+- The 26 trial stocks' prices and features stay in the database (new rows only); the live pool and run 2 are unchanged. A later pool change is a new pre-registered trial.
+
+**Code removed after the result (2026-10-18, owner).** The trial's code was not kept: `quant pool-trial`, `quant/backtest/pool_trial.py`, its tests, the `last_session` option of `run_backtests` and `config/pools/sector_balanced_7.yaml`. The as-built notes above describe the code as it ran; the 77-stock list above is the full record of the pool file. The code was never committed, so re-running the trial would mean rebuilding it from these notes. The report under `reports/` is git-ignored (local only); the numbers that matter are in the result above.
+
 ## 17.2 Sizing (section 19)
 
 1. Each held stock gets `1 / (number held)`, capped at `risk.max_position_size`.
