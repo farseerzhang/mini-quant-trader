@@ -19,7 +19,7 @@ from quant.config.settings import DEFAULT_CONFIG_PATH, ConfigError, load_setting
 from quant.persistence import tables as core_tables
 from quant.persistence.database import create_db_engine, init_db
 from quant.sentiment import tables
-from quant.sentiment.fetch import fetch
+from quant.sentiment.fetch import fetch, run_message
 from quant.sentiment.sources import ListedVideo, MembersOnlyError, SourceError, VideoDetails
 from quant.sentiment.transcripts import (
     NoTranscriptError,
@@ -369,10 +369,89 @@ class SentimentSettingsTest(unittest.TestCase):
             lambda s: s.update(max_captions_per_run=0),
             lambda s: s.update(no_captions_retry_days=-1),
             lambda s: s.update(include_live="no"),
+            lambda s: s.update(min_hours_between_caption_fetches=-1),
+            lambda s: s.update(cooldown_hours_after_block=-1),
         ]
         for mutate in cases:
             with self.subTest(mutate=mutate), self.assertRaises(ConfigError):
                 load_settings(self.variant(mutate))
+
+
+class CaptionPacingTest(FetchTest):
+    """sentiment_proposal.md 12.5: a 6 h gap after a caption fetch, 8 h after a blocked one."""
+
+    def earlier_run(self, hours_ago, message, status="OK"):
+        with self.engine.begin() as conn:
+            conn.execute(core_tables.pipeline_runs.insert().values(
+                command="sentiment-fetch", stage="fetch", status=status, message=message,
+                started_at=NOW - timedelta(hours=hours_ago), finished_at=NOW - timedelta(hours=hours_ago)))
+
+    def fetch_now(self, **kwargs):
+        videos = FakeVideos(self.channel_listing(), self.channel_pages())
+        captions = FakeCaptions({"new1": _captions(), "nocaps": _captions()})
+        return self.run_fetch(videos, captions, **kwargs), captions
+
+    def test_no_earlier_run_fetches_captions(self):
+        result, captions = self.fetch_now()
+        self.assertEqual(len(captions.requests), 2)
+        self.assertIsNone(result.captions_waiting_until)
+        self.assertIn("captions requested", run_message(result))
+
+    def test_within_the_gap_only_the_listing_runs(self):
+        self.earlier_run(5, "3 new videos, 10 captions, 0 failed, 0 listing errors")  # stored before 12.5
+        result, captions = self.fetch_now()
+        self.assertEqual(captions.requests, [])
+        self.assertEqual(self.videos()["new1"]["transcript_status"], "PENDING")  # listed and stored
+        self.assertEqual(result.captions_waiting_until, NOW + timedelta(hours=1))
+        self.assertEqual(result.captions_wait_reason, "6 h since the last caption fetch")
+        self.assertTrue(result.ok)
+        message = run_message(result)
+        self.assertIn("captions skipped until", message)
+        self.assertNotIn("captions requested", message)
+
+    def test_after_the_gap_captions_are_fetched(self):
+        self.earlier_run(6, "0 new videos, 0 captions, 0 failed, 0 listing errors; captions requested")
+        result, captions = self.fetch_now()
+        self.assertEqual(len(captions.requests), 2)
+
+    def test_a_block_starts_a_longer_cooldown(self):
+        blocked = ("0 new videos, 0 captions, 0 failed, 0 listing errors; captions requested; stopped: YouTube "
+                   "refused caption requests (IpBlocked) after 0 of 10; the remaining videos stay PENDING")
+        self.earlier_run(7, blocked, status="FAILED")
+        result, captions = self.fetch_now()
+        self.assertEqual(captions.requests, [])
+        self.assertEqual((result.captions_waiting_until, result.captions_wait_reason),
+                         (NOW + timedelta(hours=1), "cooldown after a block"))
+
+        with self.engine.begin() as conn:
+            conn.execute(core_tables.pipeline_runs.delete())
+        self.earlier_run(8, blocked, status="FAILED")
+        result, captions = self.fetch_now()
+        self.assertEqual(len(captions.requests), 2)
+
+    def test_runs_without_caption_requests_do_not_count(self):
+        self.earlier_run(1, "2 new videos, 0 captions, 0 failed, 0 listing errors")
+        self.earlier_run(2, "0 new videos, 0 captions, 0 failed, 0 listing errors; "
+                            "captions skipped until 2026-10-13 23:00 UTC (6 h since the last caption fetch)")
+        self.earlier_run(9, "0 new videos, 10 captions, 0 failed, 0 listing errors; captions requested")
+        result, captions = self.fetch_now()
+        self.assertEqual(len(captions.requests), 2)
+
+    def test_force_captions_ignores_the_waits(self):
+        self.earlier_run(1, "0 new videos, 0 captions, 0 failed, 0 listing errors; captions requested; "
+                            "stopped: YouTube refused caption requests (IpBlocked)", status="FAILED")
+        result, captions = self.fetch_now(force_captions=True)
+        self.assertEqual(len(captions.requests), 2)
+        self.assertTrue(result.captions_forced)
+        self.assertIn("captions forced", run_message(result))
+
+    def test_a_blocked_run_message_starts_the_cooldown(self):
+        captions = FakeCaptions({"nocaps": TranscriptBlockedError("IpBlocked"), "new1": _captions()})
+        result = self.run_fetch(FakeVideos(self.channel_listing(), self.channel_pages()), captions)
+        self.earlier_run(0, run_message(result), status="FAILED")
+        result, captions = self.fetch_now()
+        self.assertEqual(captions.requests, [])
+        self.assertEqual(result.captions_wait_reason, "cooldown after a block")
 
 
 class SentimentCliTest(unittest.TestCase):
@@ -410,6 +489,33 @@ class SentimentCliTest(unittest.TestCase):
         finally:
             engine.dispose()
         self.assertEqual((run["command"], run["status"]), ("sentiment-fetch", "OK"))
+
+    def test_a_second_fetch_waits_unless_forced(self):
+        pages = {"v1": _page("v1", 2), "v2": _page("v2", 3), "v3": _page("v3", 1), "old": _page("old", 24 * 400)}
+        captions = FakeCaptions({"v1": _captions(), "v2": _captions(), "v3": _captions()})
+
+        def fetch_cli(listed, *extra):
+            videos = FakeVideos({CHIP: [_listed(v) for v in listed] + [_listed("old")]}, pages)
+            with mock.patch("quant.sentiment.sources.YtDlpSource", return_value=videos),                     mock.patch("quant.sentiment.transcripts.YouTubeTranscriptSource", return_value=captions),                     mock.patch("quant.sentiment.fetch.time.sleep"):
+                return self.run_cli("fetch", "--channel", CHIP, "--days", "30", *extra)
+
+        code, out, err = fetch_cli(["v1"])
+        self.assertEqual((code, len(captions.requests)), (0, 1), err)
+        code, out, err = fetch_cli(["v2", "v1"])  # right after: v2 is listed and stored, no captions asked
+        self.assertEqual((code, len(captions.requests)), (0, 1), err)
+        self.assertIn("Captions: skipped until", out)
+        code, out, err = fetch_cli(["v3", "v2", "v1"], "--force-captions")
+        self.assertEqual((code, len(captions.requests)), (0, 3), err)
+        self.assertIn("Captions: forced", out)
+        engine = create_db_engine(self.db, 1000)
+        try:
+            with engine.connect() as conn:
+                messages = [r.message for r in conn.execute(select(core_tables.pipeline_runs.c.message))]
+        finally:
+            engine.dispose()
+        self.assertIn("captions requested", messages[0])
+        self.assertIn("captions skipped until", messages[1])
+        self.assertIn("captions forced", messages[2])
 
     def test_run_does_every_step_even_after_a_fetch_problem(self):
         calls = []

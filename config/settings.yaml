@@ -171,6 +171,8 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
   request_delay_seconds: [8, 15]   # random wait between requests to YouTube (shorter waits got the IP blocked)
   max_captions_per_run: 10         # captions fetched per run, oldest first; the rest waits for the next run
   no_captions_retry_days: 3        # a video without captions is asked again while younger than this
+  min_hours_between_caption_fetches: 6   # captions only this long after the last caption fetch (proposal 12.5)
+  cooldown_hours_after_block: 8          # and this long after YouTube blocked one; --force-captions ignores both
   gold:                            # hand-labeled answer key for extraction (sentiment_proposal.md 4.6)
     videos: 10                     # how many videos `quant sentiment gold-export` picks
     labels_dir: research/sentiment_ai_reference   # labels (videos.csv, opinions.csv); committed. Now an AI

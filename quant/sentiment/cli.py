@@ -39,6 +39,8 @@ def add_parser(commands, db_help: str) -> None:
     fetch = sub.add_parser("fetch", help="list new videos of the configured channels and fetch their captions")
     fetch.add_argument("--days", type=int, help="look back this many days (default: sentiment.lookback_days)")
     fetch.add_argument("--channel", metavar="HANDLE", help="only this channel, e.g. @chipstockinvestor")
+    fetch.add_argument("--force-captions", action="store_true",
+                       help="ignore sentiment.min_hours_between_caption_fetches and cooldown_hours_after_block (proposal 12.5)")
     fetch.add_argument("--db", help=db_help)
     gold = sub.add_parser(
         "gold-export",
@@ -86,6 +88,8 @@ def add_parser(commands, db_help: str) -> None:
         "(extract runs even if fetch was partly blocked)")
     run.add_argument("--days", type=int, help="fetch: look back this many days (default: sentiment.lookback_days)")
     run.add_argument("--channel", metavar="HANDLE", help="fetch: only this channel")
+    run.add_argument("--force-captions", action="store_true",
+                     help="fetch: " + "ignore sentiment.min_hours_between_caption_fetches and cooldown_hours_after_block (proposal 12.5)")
     run.add_argument("--limit", type=int, metavar="N", help="extract: at most N videos this run")
     run.add_argument("--model", help="extract: use this model instead of sentiment.extraction.model")
     run.add_argument("--yes", action="store_true",
@@ -231,7 +235,8 @@ def _run_all(args: argparse.Namespace, settings: Settings) -> int:
     earlier one had problems (a YouTube block, a failed call): what is already stored still
     moves on."""
     print("===== [1/4] fetch: new videos and captions =====", flush=True)
-    fetched = _run_fetch(argparse.Namespace(days=args.days, channel=args.channel, db=args.db), settings)
+    fetched = _run_fetch(argparse.Namespace(days=args.days, channel=args.channel,
+                                            force_captions=args.force_captions, db=args.db), settings)
     print("\n===== [2/4] extract: opinions =====", flush=True)
     extracted = _run_extract(argparse.Namespace(limit=args.limit, video=None, model=args.model, reextract=False,
                                                 yes=args.yes, db=args.db), settings)
@@ -346,7 +351,7 @@ def _run_gold_export(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
-    from quant.sentiment.fetch import fetch
+    from quant.sentiment.fetch import FETCH_COMMAND, fetch, run_message
     from quant.sentiment.sources import YtDlpSource
     from quant.sentiment.transcripts import YouTubeTranscriptSource
 
@@ -362,24 +367,25 @@ def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
         result = fetch(engine, settings, YtDlpSource(), YouTubeTranscriptSource(), days=args.days,
-                       handle=args.channel, progress=progress)
+                       handle=args.channel, progress=progress, force_captions=args.force_captions)
         print("\nSummary")
         for channel in result.channels:
             print(f"  {channel.handle:22s} listed {channel.listed:3d}, new {channel.new:3d} "
                   f"(skipped {channel.skipped}: members-only, Shorts, live replays)"
                   + (f", {len(channel.errors)} error(s)" if channel.errors else ""))
-        print(f"Captions: {result.transcripts_ok} fetched, {result.no_transcript} without captions, "
-              f"{result.transcripts_failed} failed (retried next run)"
-              + (f", {result.captions_left} left for the next run" if result.captions_left else ""))
+        if result.captions_waiting_until is not None:
+            print(f"Captions: skipped until {result.captions_waiting_until:%Y-%m-%d %H:%M} UTC "
+                  f"({result.captions_wait_reason})")
+        else:
+            print(f"Captions: {result.transcripts_ok} fetched, {result.no_transcript} without captions, "
+                  f"{result.transcripts_failed} failed (retried next run)"
+                  + (f", {result.captions_left} left for the next run" if result.captions_left else ""))
         for error in result.errors:
             _error(f"  {error}")
         if result.blocked:
             _error(result.blocked)
-        message = (f"{sum(c.new for c in result.channels)} new videos, {result.transcripts_ok} captions, "
-                   f"{result.transcripts_failed} failed, {len(result.errors)} listing errors"
-                   + (f"; stopped: {result.blocked}" if result.blocked else ""))
-        queries.record_pipeline_run(engine, "sentiment-fetch", "fetch", "OK" if result.ok else "FAILED",
-                                    message=message)
+        queries.record_pipeline_run(engine, FETCH_COMMAND, "fetch", "OK" if result.ok else "FAILED",
+                                    message=run_message(result))
         return 0 if result.ok else 1
     finally:
         engine.dispose()

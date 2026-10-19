@@ -658,6 +658,11 @@ class SentimentSettings:
     # A video without captions is asked again on later runs while younger than this (captions
     # often appear hours after publishing); after that it stays NO_TRANSCRIPT.
     no_captions_retry_days: int
+    # Caption pacing (sentiment_proposal.md 12.5): YouTube blocks a second full caption run a few
+    # hours after the first, so captions are fetched only this long after the last caption fetch,
+    # and this long after a blocked one.
+    min_hours_between_caption_fetches: float
+    cooldown_hours_after_block: float
     gold: GoldSettings
     extraction: ExtractionSettings
     summary: SummarySettings
@@ -670,6 +675,9 @@ class SentimentSettings:
             raise ConfigError("sentiment.no_captions_retry_days must not be negative (0: never retry)")
         if self.max_captions_per_run < 1:
             raise ConfigError("sentiment.max_captions_per_run must be >= 1")
+        if self.min_hours_between_caption_fetches < 0 or self.cooldown_hours_after_block < 0:
+            raise ConfigError("sentiment.min_hours_between_caption_fetches and cooldown_hours_after_block "
+                              "must not be negative (0: no wait)")
         if self.min_duration_seconds < 0:
             raise ConfigError("sentiment.min_duration_seconds must not be negative")
         if not isinstance(self.include_live, bool):

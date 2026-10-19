@@ -17,19 +17,26 @@ without captions is asked again on later runs while younger than
 sentiment.no_captions_retry_days, because captions often appear hours after publishing; these
 retries come after every video not tried yet. If YouTube blocks the IP, the run stops at once;
 the remaining videos stay PENDING.
+
+Caption pacing (sentiment_proposal.md 12.5): the caption step runs only
+sentiment.min_hours_between_caption_fetches after the last fetch that requested captions, and
+sentiment.cooldown_hours_after_block after a blocked one; the times come from the
+`sentiment-fetch` rows of pipeline_runs. The listing always runs. `force_captions` ignores both waits.
 """
 
 from __future__ import annotations
 
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 
-from quant.config.settings import ChannelSettings, Settings
+from quant.config.settings import ChannelSettings, SentimentSettings, Settings
+from quant.persistence import tables as core_tables
 from quant.sentiment import store
 from quant.sentiment.sources import MembersOnlyError, SourceError, VideoSource
 from quant.sentiment.transcripts import (
@@ -43,6 +50,15 @@ from quant.sentiment.transcripts import (
 
 PUBLIC = (None, "public", "unlisted")
 NOT_YET = ("is_live", "is_upcoming", "post_live")  # not finished: read again on a later run
+
+# Markers in the stored message of a `sentiment-fetch` run, written by `run_message` and read by
+# `next_caption_fetch`.
+FETCH_COMMAND = "sentiment-fetch"
+BLOCKED_MARKER = "stopped: YouTube refused caption requests"
+CAPTIONS_REQUESTED_MARKER = "captions requested"
+CAPTIONS_FORCED_MARKER = "captions forced"
+# Runs stored before 12.5 have no marker; one with "N captions" (N > 0) requested captions too.
+_CAPTIONS_FETCHED_BEFORE_MARKERS = re.compile(r"\b[1-9]\d* captions\b")
 
 
 @dataclass
@@ -63,6 +79,9 @@ class FetchResult:
     transcripts_failed: int = 0
     captions_left: int = 0  # beyond sentiment.max_captions_per_run: fetched by the next run
     blocked: str | None = None  # why the run stopped early
+    captions_waiting_until: datetime | None = None  # caption step skipped: next allowed fetch (naive UTC)
+    captions_wait_reason: str | None = None
+    captions_forced: bool = False
 
     @property
     def errors(self) -> list[str]:
@@ -71,6 +90,51 @@ class FetchResult:
     @property
     def ok(self) -> bool:
         return not self.errors and not self.transcripts_failed and self.blocked is None
+
+    @property
+    def captions_requested(self) -> bool:
+        return bool(self.transcripts_ok or self.no_transcript or self.transcripts_failed or self.blocked)
+
+
+def run_message(result: FetchResult) -> str:
+    """The message stored with the run in pipeline_runs; `next_caption_fetch` reads its markers."""
+    parts = [f"{sum(c.new for c in result.channels)} new videos, {result.transcripts_ok} captions, "
+             f"{result.transcripts_failed} failed, {len(result.errors)} listing errors"]
+    if result.captions_requested:
+        parts.append(CAPTIONS_REQUESTED_MARKER)
+    if result.captions_forced:
+        parts.append(CAPTIONS_FORCED_MARKER)
+    if result.captions_waiting_until is not None:
+        parts.append(f"captions skipped until {result.captions_waiting_until:%Y-%m-%d %H:%M} UTC "
+                     f"({result.captions_wait_reason})")
+    if result.blocked:
+        parts.append(f"stopped: {result.blocked}")
+    return "; ".join(parts)
+
+
+def _requested_captions(message: str) -> bool:
+    return (CAPTIONS_REQUESTED_MARKER in message or BLOCKED_MARKER in message
+            or _CAPTIONS_FETCHED_BEFORE_MARKERS.search(message) is not None)
+
+
+def next_caption_fetch(engine: Engine, config: SentimentSettings, now: datetime) -> tuple[datetime, str] | None:
+    """(earliest next caption fetch, why) if the caption step must wait at `now` (naive UTC), else None."""
+    gap = timedelta(hours=config.min_hours_between_caption_fetches)
+    cooldown = timedelta(hours=config.cooldown_hours_after_block)
+    runs = core_tables.pipeline_runs
+    with engine.connect() as conn:
+        rows = conn.execute(select(runs.c.started_at, runs.c.message).where(
+            runs.c.command == FETCH_COMMAND, runs.c.started_at >= now - max(gap, cooldown))).all()
+    waits = []
+    for started_at, message in rows:
+        message = message or ""
+        if BLOCKED_MARKER in message:
+            waits.append((started_at + cooldown, "cooldown after a block"))
+        if _requested_captions(message):
+            waits.append((started_at + gap, f"{config.min_hours_between_caption_fetches:g} h since the last "
+                                            "caption fetch"))
+    until, reason = max(waits, default=(None, None))
+    return (until, reason) if until is not None and until > now else None
 
 
 def scan_limit(days: int) -> int:
@@ -219,8 +283,9 @@ def _fetch_transcripts(engine: Engine, channels: list[ChannelSettings], since: d
 def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcript_source: TranscriptSource,
           now: datetime | None = None, days: int | None = None, handle: str | None = None,
           sleep: Callable[[float], None] | None = None, rng: random.Random | None = None,
-          progress: Progress | None = None) -> FetchResult:
-    """List every configured channel (or one), store new videos, then fetch missing captions.
+          progress: Progress | None = None, force_captions: bool = False) -> FetchResult:
+    """List every configured channel (or one), store new videos, then fetch missing captions
+    unless the caption pacing says to wait (`force_captions` ignores it).
 
     `progress` receives one line per step (the CLI prints them as they happen)."""
     config = settings.sentiment
@@ -239,6 +304,15 @@ def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcr
         progress(f"[{number}/{len(channels)}] {channel.handle} ({channel.name})")
         result.channels.append(_list_channel(engine, channel, since, config.min_duration_seconds,
                                              config.include_live, video_source, pacer, scan_limit(days), progress))
+    wait = next_caption_fetch(engine, config, now)
+    if wait is not None and not force_captions:
+        result.captions_waiting_until, result.captions_wait_reason = wait
+        progress(f"Captions: skipped, next fetch after {wait[0]:%Y-%m-%d %H:%M} UTC ({wait[1]}); "
+                 "--force-captions fetches now")
+        return result
+    if wait is not None:
+        result.captions_forced = True
+        progress(f"Captions: forced (otherwise not before {wait[0]:%Y-%m-%d %H:%M} UTC, {wait[1]})")
     _fetch_transcripts(engine, channels, since, retry_since, transcript_source, pacer, result, progress,
                        config.max_captions_per_run)
     return result

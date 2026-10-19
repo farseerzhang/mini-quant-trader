@@ -54,6 +54,7 @@ Every step is idempotent, keyed by `video_id` (or date × ticker for summaries):
 - Traditional Chinese is converted to Simplified (`opencc`) and stored next to the raw text; extraction and the quote check use the Simplified text.
 - The full transcript with each segment's start second is stored, so a new prompt or model can re-extract without fetching again.
 - **Rate limiting:** a random wait of 8-15 s between requests and at most 10 captions per run, oldest first (waits of 2-5 s got the IP blocked after 19 requests, 12.2). One retry, then `FAILED`, retried next run. Run on this machine only.
+- **Caption pacing (12.5):** captions only 6 h after the last caption fetch and 8 h after a blocked one; the listing always runs; `--force-captions` ignores both.
 
 ---
 
@@ -209,7 +210,7 @@ Candidate features: `sentiment_net_5d`, `sentiment_consensus`, `sentiment_contra
 # 10. Configuration (as built)
 
 `sentiment` in `config/settings.yaml`:
-- fetching: `lookback_days` (7), `min_duration_seconds` (180), `include_live` (false), `request_delay_seconds` ([8, 15]), `max_captions_per_run` (10), `no_captions_retry_days` (3);
+- fetching: `lookback_days` (7), `min_duration_seconds` (180), `include_live` (false), `request_delay_seconds` ([8, 15]), `max_captions_per_run` (10), `no_captions_retry_days` (3), `min_hours_between_caption_fetches` (6), `cooldown_hours_after_block` (8);
 - `gold`: `videos`, `labels_dir` (`research/sentiment_ai_reference`), `transcripts_dir`;
 - `extraction`: `backend` (`claude_code`), `model` (`sonnet`), `report_models` ([sonnet, haiku]), `prompt_version` (1), `chunk_minutes` (10), `chunk_overlap_seconds` (30), `quote_match_threshold` (0.85), `max_videos_per_run` (40), `call_timeout_seconds`, `aliases_path`, `tickers_cache`;
 - `summary`: `backend`, `model` (`haiku`), `prompt_version`, `reports_dir`;
@@ -310,6 +311,40 @@ Not taken: Ticker Symbol: YOU (too rare then), 老李玩钱 (no captions), 北�
 - **For prompt version 2, after your week of reading:** summaries repeat "No bearish view was given" for single-creator stocks and sometimes write opinion ids into the text ("Financial Education (37)"); the extractor sometimes turns one quote into two opinions (MRVL 2026-10-12: BULLISH LONG and NEUTRAL from one sentence).
 - **Sonnet and Haiku together (2026-10-15):** `report_models: [sonnet, haiku]`: reports, summaries, `sentiment stock` and the dashboard take, per video, the opinions of the first listed model that extracted it (so a video counts once). The header says which model each day comes from, and Haiku quotes are marked "by haiku". **Haiku was not reviewed** like Sonnet, so Haiku days are weaker evidence.
 - **Dashboard:** a Sentiment page (the daily report: mood, tables, summaries, quotes) and opinion marks on the Stock detail chart.
+
+## 12.5 Caption-fetch pacing (planned and built 2026-10-19)
+
+**Problem.** YouTube still blocks caption requests (`IpBlocked`) with 8-15 s waits and 10 captions per run. The blocks depend on the **time since the last full run**, not on the pace within a run:
+
+```text
+fetch started (UTC)   hours since the previous fetch   result
+2026-10-18 07:50      -                                10 captions
+2026-10-18 10:14      2.4                              blocked at the first caption
+2026-10-18 14:36      4.4                              10 captions
+2026-10-19 14:45      24.1                             10 captions
+2026-10-19 17:01      2.3                              blocked at the first caption
+```
+
+Each caption costs about three requests (the video page, the player API and the caption file), so a full run sends about 30 caption requests plus the listing. YouTube seems to allow about that many per window of a few hours from one home IP. Five runs are too few to measure the window; 2.3-2.4 hours was too short twice, and 4.4 hours was enough once. The listing (`yt-dlp`) was not blocked in either failed run.
+
+**Plan** (code in `quant/sentiment/fetch.py` and `cli.py`; no new table: the times come from the `sentiment-fetch` rows of `pipeline_runs`):
+1. **Minimum gap.** The caption step runs only if the last fetch that requested captions started at least `sentiment.min_hours_between_caption_fetches` (new, default **6**) hours ago. A run that only listed, or found no captions waiting, does not count.
+2. **Cooldown after a block.** After a blocked run, the caption step waits `sentiment.cooldown_hours_after_block` (new, default **8**) hours from that run, so retries do not extend the block. A blocked run is recognised by a fixed marker in its stored message (today's "stopped: YouTube refused caption requests"), kept as a constant shared by the writer and the check.
+3. **What still runs.** The listing runs as before, so new videos are stored and the lookback window keeps moving. Only the caption step is skipped, with one line: `captions: next fetch after 2026-10-19 23:01 UTC (cooldown after a block)` or `(6 h since the last caption fetch)`. That run is stored as `OK` with this line in its message; `sentiment run` continues with extraction and summaries of the captions already stored, as today.
+4. **Override.** `--force-captions` on `sentiment fetch` and `sentiment run` ignores both waits, for a manual run when you know the IP has changed. The run's message records that it was forced.
+5. **Unchanged:** `request_delay_seconds` [8, 15], `max_captions_per_run` 10, oldest first.
+6. **Tests** (fake clock, fake sources, in-memory database): a caption fetch 5 hours after the last is skipped and the listing still runs; 6 hours after, it runs; after a blocked run, 7 hours is skipped and 8 runs; a listing-only run does not move the gap; `--force-captions` runs at once and is recorded.
+7. **Documents:** sections 3.2 and 10, `config/settings.yaml` and the README's sentiment section.
+
+**Backlog.** On 2026-10-19, 13 videos inside the 7-day window are PENDING (the oldest from 2026-10-15, so it leaves the window on 2026-10-22). At 10 captions per allowed run and up to four runs a day, the backlog clears within a day.
+
+**If blocks continue with 6 hours between runs:** the next step is fewer requests per video (captions read from the `yt-dlp` page data already loaded for the listing), which needs a check that its text matches today's captions. It would be planned separately.
+
+**As built (2026-10-19), as planned:**
+- `next_caption_fetch` in `fetch.py` reads the `sentiment-fetch` rows of `pipeline_runs` from the last max(6, 8) hours. A run requested captions if its message has the marker `captions requested` or the block marker; runs stored before 12.5 have no marker, so one with "N captions" (N > 0) also counts. The wait ends at the later of the last caption fetch + 6 h and the last block + 8 h. Times are taken from the stored run, which is written when the run ends.
+- `run_message` writes the stored message for the CLI, with the markers `captions requested`, `captions forced` and `captions skipped until <time> UTC (<why>)`, so the writer and the check share the constants.
+- A skipped caption step does not make the run fail: it is stored as `OK`.
+- Tests: `CaptionPacingTest` and `test_a_second_fetch_waits_unless_forced` in `test_sentiment_fetch.py`, and two invalid-settings cases.
 
 ---
 
