@@ -96,7 +96,8 @@ def store_market_data(
         row["provider"] = provider_name
 
     stored_prices = queries.upsert_daily_prices(engine, good)
-    quarantined = queries.quarantine_rows(engine, provider_name, bad)
+    queries.quarantine_rows(engine, provider_name, bad)  # a row quarantined before is not added again
+    quarantined = len(bad)
     if quarantined:
         log.warning("%s: %d rows quarantined (see data_quarantine)", symbol, quarantined)
     action_rows = _actions_to_rows(symbol, provider_name, actions)

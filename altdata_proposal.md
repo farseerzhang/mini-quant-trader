@@ -452,6 +452,21 @@ The question (owner): can sudden large option bets on one stock be detected, as 
 
 **Timing check, to run:** `quant altdata options --compare` on Monday 2026-10-19 about an hour after `run-daily`, and on Tuesday 2026-10-20 before 13:30 UTC. Unchanged volume with changed open interest on Tuesday would confirm that the evening read has the session's final volume and the previous session's open interest.
 
+## 13.8 Quarantine clean-up: Form 4 duplicates and the status warning (planned and built 2026-10-19)
+
+**Found (2026-10-19, read-only look at `data_quarantine`):** 2,511 rows, all from the last 7 days, so `quant status` warns every day. 2,373 are Form 4 lines (`sec-form4`, research only), 138 are prices (`yfinance`).
+- **Duplicates:** `store_filings` replaces a source key's filings on every load, but `queries.quarantine_rows` only appends. The loads of 2026-10-13 and 10-14 quarantined the same lines again: about 1,540 rows repeat an earlier one exactly (provider, symbol, date, reason, raw). The price loader does the same on a re-read (SPY 2026-10-16 twice).
+- **The quarantined Form 4 lines are correctly kept out:** preferred shares, depositary shares and the BRK class A price (price more than 50% from the close, 1,321), and lines with no price (932, mostly COST 2006). Nothing to change in `quality_problem`.
+- **The price rows are expected:** 126 `EURUSD=X` days (known since 2026-10-17, run-2 design in `proposal.md`), 9 `^IRX` days of zero yield in 2020, and three session-day bars read right after the close that the next morning's read replaced with valid ones.
+
+**Plan:**
+1. **No exact duplicates.** `queries.quarantine_rows` skips a row whose (provider, symbol, date, reason, raw) is already stored, for every caller (Form 4 and prices). It checks in code, one query per call; no unique index, so `data_quarantine` is not altered. It returns the number of rows actually added; the loaders' messages ("N quarantined") keep counting the lines found, so a re-load still reports them.
+2. **The status warning counts prices only.** `queries.count_quarantined` gets an optional `provider`; `quant status` passes `market.provider` (`yfinance`) for the 7-day warning. The status line shows both parts: `quarantined rows   138 prices, 2373 altdata in total; 0 prices this week`.
+3. **Existing duplicates are left alone.** Removing the about 1,540 repeated rows is deleting rows, so it is a separate step only with your explicit yes (after `backup-database`); the plan works without it.
+4. **Tests** (in-memory database): a second identical quarantine call adds nothing; a row differing only in `raw` or `reason` is added; status warns on a new price row and not on a new `sec-form4` row; the status line's two counts.
+
+**As built (2026-10-19):** steps 1, 2 and 4 as planned; step 3 not done (the existing duplicates stay). `quarantine_rows` compares dates as the Date column stores them; the dashboard caption shows the same two counts. Tests in `test_store.py` and `test_status.py`; full suite 486 OK. On the real database `status` now reads "142 prices, 2369 altdata in total; 142 prices this week": the warning is the price rows of 2026-10-12 .. 10-17 (126 of them `EURUSD=X`) and ends once they are older than 7 days (after 2026-10-24).
+
 ---
 
 # 14. Risks

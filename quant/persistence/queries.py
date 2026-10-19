@@ -82,12 +82,27 @@ def upsert_corporate_actions(engine: Engine, rows: Sequence[Mapping[str, Any]]) 
         return result.rowcount if result.rowcount is not None else 0
 
 
+def _quarantine_date(value: Any) -> date | None:
+    """The date as the Date column stores it, so a new row compares equal to a stored one."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
 def quarantine_rows(engine: Engine, provider: str, bad_rows: Iterable[Mapping[str, Any]]) -> int:
+    """Store the bad rows; returns how many were added. A row whose (provider, symbol, date, reason,
+    raw) is already stored, or repeated within this call, is skipped, so re-loading the same data
+    does not quarantine it again (altdata section 13.8)."""
+    quarantine = tables.data_quarantine
     now = _now()
     payload = [
         {
             "symbol": item["symbol"],
-            "date": item.get("date"),
+            "date": _quarantine_date(item.get("date")),
             "provider": provider,
             "reason": item["reason"],
             "raw": json.dumps(item.get("raw"), default=str),
@@ -98,8 +113,21 @@ def quarantine_rows(engine: Engine, provider: str, bad_rows: Iterable[Mapping[st
     if not payload:
         return 0
     with engine.begin() as conn:
-        conn.execute(tables.data_quarantine.insert(), payload)
-    return len(payload)
+        symbols = sorted({row["symbol"] for row in payload})
+        seen: set[tuple] = set()
+        for start in range(0, len(symbols), 500):
+            stored = select(quarantine.c.symbol, quarantine.c.date, quarantine.c.reason, quarantine.c.raw).where(
+                quarantine.c.provider == provider, quarantine.c.symbol.in_(symbols[start:start + 500]))
+            seen |= {tuple(row) for row in conn.execute(stored)}
+        new_rows = []
+        for row in payload:
+            key = (row["symbol"], row["date"], row["reason"], row["raw"])
+            if key not in seen:
+                seen.add(key)
+                new_rows.append(row)
+        if new_rows:
+            conn.execute(quarantine.insert(), new_rows)
+    return len(new_rows)
 
 
 def latest_stored_date(engine: Engine, symbol: str) -> date | None:
@@ -467,11 +495,13 @@ def latest_pipeline_runs(engine: Engine) -> pd.DataFrame:
     return pd.DataFrame([dict(row) for row in rows], columns=[c.name for c in runs.columns])
 
 
-def count_quarantined(engine: Engine, since: datetime | None = None) -> int:
+def count_quarantined(engine: Engine, since: datetime | None = None, provider: str | None = None) -> int:
     quarantine = tables.data_quarantine
     stmt = select(func.count()).select_from(quarantine)
     if since is not None:
         stmt = stmt.where(quarantine.c.quarantined_at >= since)
+    if provider is not None:
+        stmt = stmt.where(quarantine.c.provider == provider)
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar_one())
 

@@ -44,8 +44,9 @@ class StatusReport:
     prices_as_of: date | None  # SPY's last stored session
     stale_symbols: dict[str, date]
     missing_symbols: list[str]
-    quarantined_last_week: int
-    quarantined_total: int
+    quarantined_price_rows_last_week: int  # rows of the market data provider (altdata section 13.8)
+    quarantined_price_rows_total: int
+    quarantined_other_rows_total: int  # altdata and other research sources; never a warning
     features_as_of: date | None
     regime_as_of: date | None
     regime: str | None
@@ -169,9 +170,11 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
         warnings.append(f"no prices stored for: {', '.join(missing)}")
     if stale:
         warnings.append("behind the others: " + ", ".join(f"{s} ({d})" for s, d in sorted(stale.items())))
-    week = queries.count_quarantined(engine, since=now - timedelta(days=7))
+    price_provider = settings.market.provider
+    week = queries.count_quarantined(engine, since=now - timedelta(days=7), provider=price_provider)
     if week:
-        warnings.append(f"{week} rows quarantined in the last 7 days (see data_quarantine)")
+        warnings.append(f"{week} price rows quarantined in the last 7 days (see data_quarantine)")
+    quarantined_price_rows_total = queries.count_quarantined(engine, provider=price_provider)
     forward = forward_status(engine, settings, now, prices_as_of)
     if forward.started_on is None:
         if not positions_file.exists():
@@ -191,7 +194,9 @@ def collect_status(engine: Engine, settings: Settings, now: datetime | None = No
 
     return StatusReport(
         checked_at=now, expected_session=expected, prices_as_of=prices_as_of, stale_symbols=stale,
-        missing_symbols=missing, quarantined_last_week=week, quarantined_total=queries.count_quarantined(engine),
+        missing_symbols=missing, quarantined_price_rows_last_week=week,
+        quarantined_price_rows_total=quarantined_price_rows_total,
+        quarantined_other_rows_total=queries.count_quarantined(engine) - quarantined_price_rows_total,
         features_as_of=features_as_of, regime_as_of=regime_as_of,
         regime=None if regimes.empty else regimes.iloc[-1], regime_score=score,
         signals_as_of=signals_as_of, signal_counts=signal_counts, signal_strategy=signal_strategy,
@@ -268,7 +273,9 @@ def format_status(report: StatusReport) -> str:
     counts = ", ".join(f"{k} {v}" for k, v in sorted(report.signal_counts.items())) or "none"
     lines.append(f"  signals                 {report.signals_as_of or 'none'}: {counts}")
     lines.append(f"  positions snapshot      {report.positions_as_of or 'none'}")
-    lines.append(f"  quarantined rows        {report.quarantined_total} in total, {report.quarantined_last_week} this week")
+    lines.append(f"  quarantined rows        {report.quarantined_price_rows_total} prices, "
+                 f"{report.quarantined_other_rows_total} altdata in total; "
+                 f"{report.quarantined_price_rows_last_week} prices this week")
     forward = report.forward
     if forward is None or forward.started_on is None:
         lines.append("  forward test            not started (`quant forward-test --start`)")

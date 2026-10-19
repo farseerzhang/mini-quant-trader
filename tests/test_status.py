@@ -87,6 +87,18 @@ class StatusTests(unittest.TestCase):
         queries.record_pipeline_run(self.engine, command="calculate-features", stage="features", status="OK")
         self.assertNotIn("features: the last run FAILED", " | ".join(self.status().warnings))
 
+    def test_only_quarantined_price_rows_are_a_warning(self):
+        bad = [{"symbol": "AAPL", "date": LAST, "reason": "bad", "raw": {}}]
+        queries.quarantine_rows(self.engine, "sec-form4", bad)
+        report = self.status()
+        self.assertNotIn("quarantined", " | ".join(report.warnings))
+        queries.quarantine_rows(self.engine, self.settings.market.provider, bad)
+        report = self.status()
+        self.assertIn("1 price rows quarantined in the last 7 days", " | ".join(report.warnings))
+        self.assertEqual((report.quarantined_price_rows_total, report.quarantined_other_rows_total,
+                          report.quarantined_price_rows_last_week), (1, 1, 1))
+        self.assertIn("quarantined rows        1 prices, 1 altdata in total; 1 prices this week", format_status(report))
+
     def test_an_active_predictor_trained_on_another_regime_is_stale(self):
         with self.engine.begin() as conn:
             conn.execute(tables.model_versions.insert().values(

@@ -90,7 +90,8 @@ def page_status(engine, settings):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption(f"Signals use {report.strategy_in_use} with the {report.regime_in_use} regime. "
                f"Holdout evaluations so far: {report.holdout_evaluations}. "
-               f"Quarantined rows: {report.quarantined_total}.")
+               f"Quarantined rows: {report.quarantined_price_rows_total} prices, "
+               f"{report.quarantined_other_rows_total} altdata.")
 
 
 def _ribbon_chart(history: pd.DataFrame, title: str, ribbons: dict[str, pd.Series] | None = None):

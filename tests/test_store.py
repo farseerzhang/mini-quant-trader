@@ -105,6 +105,31 @@ class StoreMarketDataTests(unittest.TestCase):
         self.assertEqual(summary.quarantined, 1)
         self.assertEqual(queries.count_daily_prices(self.engine, "AAPL"), 1)
 
+    def test_the_same_invalid_row_is_quarantined_only_once(self):
+        prices = _prices_frame([("2026-09-30", 11.0, 9.0, 10.5, 12.5, 200)])  # high < close -> invalid
+        for _ in range(2):
+            summary = store_market_data(
+                self.engine, FakeProvider(prices, _actions_frame([])), "AAPL", date(2026, 9, 29), date(2026, 10, 1),
+                provider_name=SETTINGS.market.provider,
+            )
+            self.assertEqual(summary.quarantined, 1)  # the summary still reports what the read found
+        self.assertEqual(queries.count_quarantined(self.engine), 1)
+
+    def test_quarantine_skips_exact_duplicates_only(self):
+        row = {"symbol": "AAPL", "date": date(2026, 9, 30), "reason": "bad", "raw": {"price": 1.0}}
+        self.assertEqual(queries.quarantine_rows(self.engine, "sec-form4", [row, dict(row)]), 1)
+        self.assertEqual(queries.quarantine_rows(self.engine, "sec-form4", [row]), 0)
+        different = [
+            {**row, "raw": {"price": 2.0}},
+            {**row, "reason": "other"},
+            {**row, "date": date(2026, 10, 1)},
+            {**row, "symbol": "MSFT"},
+        ]
+        self.assertEqual(queries.quarantine_rows(self.engine, "sec-form4", different), 4)
+        self.assertEqual(queries.quarantine_rows(self.engine, "yfinance", [row]), 1)  # another provider
+        self.assertEqual(queries.count_quarantined(self.engine), 6)
+        self.assertEqual(queries.count_quarantined(self.engine, provider="sec-form4"), 5)
+
     def test_survives_reopen(self):
         store_market_data(
             self.engine, self._provider(), "AAPL", date(2026, 9, 29), date(2026, 10, 1),
