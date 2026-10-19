@@ -207,10 +207,10 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     - {handle: "@EverythingMoney", channel_id: UChBVf9YnourrEDTsbbwJPRA, name: "Everything Money", language: en, style: "valuation, buy / sell"}
     - {handle: "@DividendTalks", channel_id: UClLyc3C2K3C-RAh7eEJAwyg, name: "Dividend Talks", language: en, style: "dividend stocks"}
 
-altdata:                           # free structured alternative data (altdata_proposal.md); research only, not in run-daily
+altdata:                           # free structured alternative data (altdata_proposal.md); research only (only the option chains run in run-daily)
   version: 1
   user_agent: "mini-quant-trader Chenghao Zhang chenghao.zhang@outlook.de"  # sent to the SEC with every request
-  sec:                             # EDGAR: Form 4 insider trades, Schedule 13D activist stakes
+  sec:                             # EDGAR: Form 4 insider trades
     max_requests_per_second: 5     # the SEC allows 10
     insider_backfill_from: 2006-01-01   # set from the A0 spike
     extra_ciks:                    # earlier CIKs whose filings belong to a pool stock (A1 finding)
