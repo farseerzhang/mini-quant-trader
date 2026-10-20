@@ -9,7 +9,9 @@ and at most 24 contracts:
 - the unusual: the 5 largest volumes, and the 5 largest volume / open interest among contracts
   with a volume of at least 100 (any expiry within 60 days).
 
-A read counts for the session whose close it follows, only until the next open. The first stored
+A read counts for the session whose close it follows, only until the next open; it is stored only
+within altdata.options_max_hours_after_close of that close (13.7: overnight, Yahoo's open interest
+and volume are reset or half-loaded), and a missed window is never filled in later. The first stored
 read of a session is kept: a later read changes nothing (a stock missing from it is filled in), so
 the stored values are what was known that evening. `compare_options` reads again without storing
 and shows what moved, which tells when Yahoo's volume and open interest are final.
@@ -22,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -30,7 +32,7 @@ from sqlalchemy import Engine, and_, select
 
 from quant.altdata.tables import altdata_option_contracts, altdata_option_summaries, altdata_sync
 from quant.config.settings import Settings
-from quant.data.calendar import last_completed_session, next_open_after
+from quant.data.calendar import last_completed_session, next_open_after, session_close
 from quant.persistence import queries
 
 SOURCE = "options-yahoo"
@@ -59,16 +61,23 @@ Progress = Callable[[str], None]
 
 
 class OutsideWindowError(ValueError):
-    """The market is open: a read now would have partial volumes."""
+    """The market is open (a read now would have partial volumes), or, for storing, the session's
+    read window after its close has passed."""
 
 
-def options_session(now: datetime, calendar_name: str) -> date:
-    """The session a read at ``now`` belongs to: the last one closed, until the next open."""
+def options_session(now: datetime, calendar_name: str, max_hours_after_close: float | None = None) -> date:
+    """The session a read at ``now`` belongs to: the last one closed, until the next open. With
+    ``max_hours_after_close`` (storing reads), only until that long after its close (13.7)."""
     session = last_completed_session(now, calendar_name)
     opens = next_open_after(session, calendar_name)
     if now >= opens:
         raise OutsideWindowError(f"the market is open ({opens:%Y-%m-%d %H:%M} UTC .. the close): option volumes "
                                  "are partial; read after the close")
+    if max_hours_after_close is not None:
+        window_end = session_close(session, calendar_name) + timedelta(hours=max_hours_after_close)
+        if now > window_end:
+            raise OutsideWindowError(f"too late for the session of {session} (its read window closed at "
+                                     f"{window_end:%Y-%m-%d %H:%M} UTC); no option data is stored for it")
     return session
 
 
@@ -224,10 +233,10 @@ def _read(symbols: list[str], session: date, fetch: Fetch) -> dict[str, Chains |
 def update_options(engine: Engine, settings: Settings, now: datetime | None = None, fetch: Fetch = yahoo_fetch,
                    symbols: Iterable[str] | None = None, progress: Progress | None = None) -> OptionsUpdate:
     """Store the session's first read for every stock that has none yet (raises OutsideWindowError
-    while the market is open)."""
+    while the market is open or after the session's read window, before anything is read)."""
     progress = progress or (lambda line: None)
     now = now or datetime.now(timezone.utc)
-    session = options_session(now, settings.market.calendar)
+    session = options_session(now, settings.market.calendar, settings.altdata.options_max_hours_after_close)
     pool = list(symbols or settings.market.stocks)
     already = stored_symbols(engine, session)
     result = OptionsUpdate(session, already=len(already & set(pool)))

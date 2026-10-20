@@ -385,7 +385,7 @@ python -m quant altdata options
 python -m quant altdata options --compare
 ```
 
-A read counts for the session whose close it follows, until the next open; while the market is open it is skipped. The first stored read of a session is kept, so a later read changes nothing. `--compare` reads again, stores nothing and prints what moved against the stored read, which shows when Yahoo's volume and open interest are final.
+A read counts for the session whose close it follows, until the next open; while the market is open it is skipped. It is stored only within 4 hours after that close (`altdata.options_max_hours_after_close`; until 00:00 UTC after a normal close), because overnight Yahoo's open interest and volume are reset or half-loaded. A later `run-daily` prints "too late for the session of ..." and stores nothing; a missed session is never filled in. The first stored read of a session is kept, so a later read changes nothing. `--compare` reads again, stores nothing and prints what moved against the stored read, which shows when Yahoo's volume and open interest are final.
 
 #### Logs
 

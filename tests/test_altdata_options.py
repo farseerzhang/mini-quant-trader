@@ -1,9 +1,13 @@
 """Option chains loader (altdata_proposal.md 13.7): the window, the first read kept, the grid and the unusual
 contracts, the comparison; offline with a fake Yahoo, in memory."""
 
+import argparse
 import dataclasses
 import unittest
+from contextlib import redirect_stdout
 from datetime import date, datetime, timedelta, timezone
+from io import StringIO
+from unittest import mock
 
 import pandas as pd
 from sqlalchemy import select
@@ -82,6 +86,40 @@ class OptionsTest(unittest.TestCase):
         with self.assertRaises(OutsideWindowError):
             options_session(datetime(2026, 10, 19, 15, 0, tzinfo=timezone.utc), "XNYS")  # Monday, market open
 
+    def test_the_read_window_after_the_close(self):
+        friday_close = datetime(2026, 10, 16, 20, 0, tzinfo=timezone.utc)
+        self.assertEqual(options_session(friday_close + timedelta(hours=4), "XNYS", 4), FRIDAY)
+        for late in (friday_close + timedelta(hours=4, minutes=1),
+                     datetime(2026, 10, 18, 14, 0, tzinfo=timezone.utc)):  # Sunday: Friday's window is over
+            with self.subTest(late=late), self.assertRaisesRegex(OutsideWindowError, "too late for the session of 2026-10-16"):
+                options_session(late, "XNYS", 4)
+        self.assertEqual(options_session(datetime(2026, 10, 18, 14, 0, tzinfo=timezone.utc), "XNYS"), FRIDAY)  # no limit
+        # 2026-11-27, the day after Thanksgiving, closes early at 13:00 New York (18:00 UTC).
+        early = date(2026, 11, 27)
+        self.assertEqual(options_session(datetime(2026, 11, 27, 21, 30, tzinfo=timezone.utc), "XNYS", 4), early)
+        with self.assertRaises(OutsideWindowError):
+            options_session(datetime(2026, 11, 27, 22, 30, tzinfo=timezone.utc), "XNYS", 4)
+
+    def test_a_late_read_is_refused_before_any_request(self):
+        fake = FakeYahoo()
+        with self.assertRaisesRegex(OutsideWindowError, "too late"):
+            update_options(self.engine, SMALL, now=datetime(2026, 10, 17, 9, 0, tzinfo=timezone.utc), fetch=fake)
+        self.assertEqual(fake.calls, [])
+        self.assertTrue(self.rows(altdata_option_summaries).empty)
+        self.assertTrue(self.rows(altdata_sync).empty)
+
+    def test_a_late_read_is_a_note_not_a_failure(self):
+        # As in run-daily's stage 7: the command prints why and returns 0.
+        from quant.altdata import cli as altdata_cli
+
+        late = OutsideWindowError("too late for the session of 2026-10-16 (its read window closed at "
+                                  "2026-10-17 00:00 UTC); no option data is stored for it")
+        args = argparse.Namespace(altdata_command="options", compare=False, symbol=None, db=":memory:")
+        output = StringIO()
+        with mock.patch("quant.altdata.options.update_options", side_effect=late), redirect_stdout(output):
+            self.assertEqual(altdata_cli.run(args, SMALL), 0)
+        self.assertIn("Option chains not read: too late for the session of 2026-10-16", output.getvalue())
+
     def test_normalize(self):
         contracts = normalize(chain("MSFT"))
         self.assertTrue(contracts.loc[contracts["strike"] == 80, "volume"].isna().all())  # 0 = no trade
@@ -112,9 +150,9 @@ class OptionsTest(unittest.TestCase):
     def test_a_later_read_keeps_the_first(self):
         update_options(self.engine, SMALL, now=FRIDAY_EVENING, fetch=FakeYahoo(failing={"NVDA"}))
         self.assertEqual(self.rows(altdata_sync).iloc[0]["status"], "FAILED")
-        morning = datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc)  # Monday before the open: still Friday's
+        later = datetime(2026, 10, 16, 23, 30, tzinfo=timezone.utc)  # 3.5 h after the close: still in the window
         fake = FakeYahoo(volume_scale=3.0, open_interest=900.0)
-        result = update_options(self.engine, SMALL, now=morning, fetch=fake)
+        result = update_options(self.engine, SMALL, now=later, fetch=fake)
         self.assertEqual((fake.calls, result.stored, result.already), (["NVDA"], ["NVDA"], 1))  # only the gap
         summaries = self.rows(altdata_option_summaries).set_index("symbol")
         self.assertEqual(summaries.loc["MSFT", "read_at"], FRIDAY_EVENING.replace(tzinfo=None))  # kept

@@ -212,6 +212,7 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
 altdata:                           # free structured alternative data (altdata_proposal.md); research only (only the option chains run in run-daily)
   version: 1
   user_agent: "mini-quant-trader Chenghao Zhang chenghao.zhang@outlook.de"  # sent to the SEC with every request
+  options_max_hours_after_close: 4 # option chains are stored only this long after the close (13.7); --compare is not limited
   sec:                             # EDGAR: Form 4 insider trades
     max_requests_per_second: 5     # the SEC allows 10
     insider_backfill_from: 2006-01-01   # set from the A0 spike

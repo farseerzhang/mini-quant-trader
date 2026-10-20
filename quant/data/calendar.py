@@ -55,6 +55,12 @@ def next_session_after(session_date: date, through: date, calendar_name: str) ->
     return sessions[0].date() if len(sessions) else None
 
 
+def session_close(session_date: date, calendar_name: str) -> datetime:
+    """The UTC time of ``session_date``'s close (early closes included)."""
+    calendar = _calendar(calendar_name, session_date)
+    return calendar.session_close(pd.Timestamp(session_date.isoformat())).to_pydatetime().astimezone(timezone.utc)
+
+
 def next_open_after(session_date: date, calendar_name: str) -> datetime:
     """The UTC time of the first market open after ``session_date``'s session.
 

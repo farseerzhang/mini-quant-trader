@@ -748,6 +748,9 @@ class AltdataSettings:
 
     version: int
     user_agent: str  # sent with every request to the SEC: a name and an email address
+    # Option chains are stored only this long after the session's close (altdata_proposal.md 13.7):
+    # overnight, Yahoo's open interest and volume are reset or half-loaded.
+    options_max_hours_after_close: float
     sec: SecSettings
 
     def __post_init__(self) -> None:
@@ -755,6 +758,8 @@ class AltdataSettings:
             raise ConfigError("altdata.version must be >= 1")
         if "@" not in self.user_agent or len(self.user_agent.split()) < 3:
             raise ConfigError("altdata.user_agent must look like 'mini-quant-trader <name> <email>' (SEC rule)")
+        if self.options_max_hours_after_close <= 0:
+            raise ConfigError("altdata.options_max_hours_after_close must be > 0")
 
 
 @dataclass(frozen=True)

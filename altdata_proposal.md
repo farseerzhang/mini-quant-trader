@@ -4,7 +4,7 @@ Status (2026-10-19):
 - **Built:** Form 4 insider trades (A1, section 13.2), analyst changes (13.4), option chains (13.7, the only source in `run-daily`).
 - **Researched, nothing promoted:** A4 round 1, Form 4 (section 8.1.2); A4 round 2, analysts (8.2.1).
 - **Deferred:** Schedule 13D (dropped, decision 7), FINRA and Wikipedia (decision 10).
-- **Open:** the options timing check (13.7); a pre-registration after about 6 months of option data.
+- **Open:** a pre-registration after about 6 months of option data. The options timing check (13.7) is done: the evening read has the session's volume and the previous session's open interest.
 
 First written 2026-10-13, approved the same day (section 15). This file was compacted on 2026-10-19: the plans for sources that were never built were shortened, and the spike notes trimmed to their findings. Section 8 (the pre-registrations and their results) and the sale-side definitions in section 7 are unchanged, word for word. The full earlier text is in git (commit a7480b8).
 
@@ -451,6 +451,32 @@ The question (owner): can sudden large option bets on one stock be detected, as 
 - **Volume alone misleads:** AAPL's 19,000 puts at $0.01 are $19,000 in premium; a premium (volume x price x 100) is the better size measure.
 
 **Timing check, to run:** `quant altdata options --compare` on Monday 2026-10-19 about an hour after `run-daily`, and on Tuesday 2026-10-20 before 13:30 UTC. Unchanged volume with changed open interest on Tuesday would confirm that the evening read has the session's final volume and the previous session's open interest.
+
+**Timing check, result (2026-10-19 / 10-20):** the stored read of 2026-10-19 (20:40 UTC, 40 minutes after the close) was compared three times with `--compare`:
+
+```text
+compare read              total volume   total open interest   contracts found   volume changed   OI changed
+2026-10-19 evening        unchanged      unchanged             1,737 of 1,737    0                0
+2026-10-20 07:34 UTC      8.5M (-46%)    0.28M (-99%)          1,676 of 1,737    0                1,554
+2026-10-20 12:33 UTC      7.6M (-52%)    39.5M (+2.2%)         1,676 of 1,737    11               1,227
+```
+
+- **The evening read has the session's final volume:** unchanged later that evening, and unchanged on every contract found again at 07:34.
+- **Its open interest is the previous session's:** by 12:33 open interest had changed on 1,227 of 1,676 contracts (total +2.2%). So the stored open interest of session T is the open interest at the end of T-1; the open interest of T is only known the next morning. A volume / open interest ratio from one read is therefore volume(T) over open interest(T-1).
+- **The 61 contracts not found again** were all in high-volume names (AAPL, AMD, AMZN, AVGO, GOOGL, META, MSFT, MU, NVDA, SPCX, TSLA): same-day contracts that expired on 2026-10-19. They explain the drop in total volume.
+- **Overnight reads are not usable.** At 07:34 Yahoo's open interest was broken or half-loaded (total -99%, zeros for AMZN, FIG, INTC, TEM). At 12:33 volume had changed on 11 contracts and fallen for some stocks without a kept contract changing (e.g. PLTR), so Yahoo seems to start resetting volume before the open.
+- **Consequence for the loader (not changed yet):** it accepts any read between the close and the next open and keeps the first one stored. A `run-daily` run the next morning, after a missed evening, would store broken open interest or reduced volume for that session. A fix (e.g. store option reads only within a few hours after the close) would be planned here before it is built.
+
+**Read-window guard (planned and built 2026-10-20).** Store a session's option read only within `altdata.options_max_hours_after_close` (new, default **4**) hours after that session's close.
+- **Why 4 hours:** the reads known to be good were 40 minutes after the close and once more later that evening; 07:34 UTC the next morning (11.5 hours) was broken. 4 hours (until 00:00 UTC after a normal close, 21:00 UTC after an early close) covers a normal evening `run-daily` with room for a late one, and stays well before the overnight reset. The close comes from the NYSE calendar (`session_close`), so early closes count.
+- **Where:** `options_session` in `quant/altdata/options.py` gets a second refusal next to "the market is open": `too late for the session of <date> (its read window closed at <time> UTC); no option data is stored for it`. `update_options` raises it before any request, so nothing is read from Yahoo.
+- **`--compare` is not limited by it:** it stores nothing, so it stays allowed at any time outside market hours (needed for checks like the one above). Only storing is refused.
+- **In `run-daily` (stage 7):** a late run prints that line and the stage counts as skipped, not failed; as today it never stops the run.
+- **No backfill:** a session whose window was missed stays without option rows, as a missed forward-test session does.
+- **The read already stored for 2026-10-16** was made on Sunday 2026-10-18 at 15:15 UTC, 43 hours after its close, before this was known. It is not changed or deleted. Research uses only reads whose `read_at` is inside the window (computed from the stored `read_at` and the calendar), so it is left out there; this is stated in the options pre-registration.
+- **Tests:** a read 3 hours after the close is stored; 5 hours after is refused before any fetch; an early close (e.g. the day after Thanksgiving) uses its own close; a weekend read of Friday's session is refused; `--compare` still works outside the window; run-daily's stage 7 reports a late read as skipped (with the option stage patched, as in `tests/test_cli_daily.py`).
+- **Documents:** this section, `config/settings.yaml` and the README's option section.
+- **As built (2026-10-20), as planned:** `session_close` in `quant/data/calendar.py`; `options_session(now, calendar, max_hours_after_close)` refuses a late read only when the limit is given, which `update_options` does and `compare_options` does not. The refusal is an `OutsideWindowError`, so the existing handling applies: the command prints `Option chains not read: ...` and returns 0, and `run-daily`'s stage 7 goes on. A missing stock is filled in only inside the window too. Tests in `test_altdata_options.py`; the earlier gap-fill test now fills the gap 3.5 hours after the close instead of on Monday morning.
 
 ## 13.8 Quarantine clean-up: Form 4 duplicates and the status warning (planned and built 2026-10-19)
 
