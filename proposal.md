@@ -1689,6 +1689,93 @@ C: 68 without hand-picked  12.0%  0.9987  -24.1%   87%   (context)
 
 **Code removed after the result (2026-10-18, owner).** The trial's code was not kept: `quant pool-trial`, `quant/backtest/pool_trial.py`, its tests, the `last_session` option of `run_backtests` and `config/pools/sector_balanced_7.yaml`. The as-built notes above describe the code as it ran; the 77-stock list above is the full record of the pool file. The code was never committed, so re-running the trial would mean rebuilding it from these notes. The report under `reports/` is git-ignored (local only); the numbers that matter are in the result above.
 
+### 17.1.5 Pre-registered trials: four strategy families (registered 2026-10-21, before any data or result)
+
+Four well-documented, long-only, low-turnover strategies, proposed by the owner on 2026-10-21. Each is **one trial**. Drafted and confirmed by the owner on 2026-10-21; the choices marked *(confirm)* were confirmed as written (see the end of this section). Nothing about how these strategies perform on this data had been looked at. Not built yet.
+
+#### Common to all four
+
+- **Baseline:** `regime_switch` (bear exposure 0) with `rule_based-v1` on the 81-stock pool, the ACTIVE live strategy.
+- **Window:** the walk-forward validation window from the fold rule at run time (about 2014-10 .. 2025-10, 11 validation years); the report states its dates. Every portfolio starts from fresh cash on the window's first session; inputs may use the history before it. The holdout (from 2025-10-10) is not touched.
+- **Execution and costs:** as every backtest: weights at the close of T, fills at the open of T+1 on total-return prices, `backtest.fee_bps` (1) and `slippage_bps` (5) per side, `backtest.min_trade_weight` (0.02). Cash earns nothing in the backtest.
+- **Rebalance dates:** the first session of each calendar month (trials A, B and D). Between rebalances the holdings do not change; trials B and D follow the regime's exposure every session.
+- **Pass criteria** (all must hold; as section 12.7):
+  1. Sharpe after costs **higher** than the baseline;
+  2. max drawdown **no deeper** than the baseline;
+  3. a higher Sharpe in **at least 6 of the 11** validation years;
+  4. point in time: the targets at T are unchanged when later sessions are added (truncation at the two `default_cuts`).
+- **Multiple testing:** four trials registered together give four chances to beat a noisy baseline, so one pass among four is weaker evidence than a single pre-registered pass. A Sharpe margin below about 0.1 over 11 years is within noise and is reported as weak evidence.
+- **One trial each:** a failed strategy is not re-tested with other settings on this data. Other settings would be a new, separately registered trial.
+- **If one passes:** no live change during forward-test run 2. A registered holdout check follows (as section 12.5.3), then at most a new shadow at the next forward-test restart.
+- **Descriptive for all** (decides nothing): CAGR, volatility, Sortino, turnover, time invested, yearly returns, returns per regime, and SPY buy-and-hold and equal-weight over the same window.
+
+#### 17.1.5.1 Trial A: dual momentum (`dual_momentum`)
+
+**Idea** (Antonacci's dual momentum, US only): hold stocks while they beat cash; when they do not, hold bonds if bonds beat cash, else cash.
+
+**Rule**, on each rebalance date T:
+- `r_stocks` = SPY's total return over the last 252 sessions; `r_bonds` = IEF's over the same sessions *(confirm: IEF, 7-10 year Treasuries; TLT is more volatile, the original uses an aggregate bond fund)*;
+- `r_cash` = the average of `^IRX` over those 252 sessions, divided by 100 (the 3-month T-bill yield as a 12-month cash return);
+- if `r_stocks > r_cash`: 100% SPY; else if `r_bonds > r_cash`: 100% IEF; else 100% cash.
+
+**Sizing exception** *(confirm)*: SPY and IEF are diversified funds, so the single-stock caps (`risk.max_position_size` 10%, `max_sector_weight` 30%) do not apply; the position is 100% of the portfolio.
+
+**Data:** SPY, IEF and `^IRX` are stored from 2005. No new symbols.
+
+**Note:** it holds funds, not pool stocks, so it competes with `regime_switch` on risk-adjusted return, not on stock choice. SPY buy-and-hold is shown next to it.
+
+#### 17.1.5.2 Trial B: 12-1 momentum inside the regime timing (`momentum_regime`)
+
+**Idea:** keep `regime_switch`'s market timing, which most of its result comes from (17.1.3), and replace its stock choice (`trend` / `mean_reversion`) by cross-sectional 12-1 momentum. This isolates one question: is momentum a better stock choice than `trend`?
+
+**Rule:**
+- On each rebalance date: rank the 81 pool stocks by total return from 252 to 21 sessions before T (stocks without 252 sessions of history are not ranked).
+- Hold the **top 20** *(confirm)*; a held stock is kept while it ranks within the **top 30** *(confirm: a keep band against turnover)*.
+- Sizing as `regime_switch`: equal weight, `risk.max_position_size`, `max_sector_weight`, times the regime's exposure each session (BULL and SIDEWAYS 1, BEAR 0).
+
+**Data:** pool prices, stored. **Survivorship:** the pool is today's large caps, chosen partly for strong past returns (17.1.3), which favours momentum in particular; the report states it.
+
+**Descriptive:** the same momentum without the regime (always invested).
+
+#### 17.1.5.3 Trial C: volatility targeting on `regime_switch` (`regime_switch_voltarget`)
+
+**Idea:** hold less when the market is volatile. An overlay: `regime_switch`'s weights are kept and scaled down.
+
+**Rule**, each session T:
+- `sigma_T` = SPY's realized volatility over the last 20 sessions, annualized (daily total-return log returns x sqrt(252));
+- multiplier `m_T = min(1, 0.15 / sigma_T)` *(confirm: target 15% a year; no leverage, so it only ever reduces exposure)*;
+- weights = `regime_switch`'s weights x `m_T`. Small daily changes are absorbed by `min_trade_weight`.
+
+**Data:** SPY prices, stored.
+
+**Note:** the 15% target is a round number near SPY's long-run volatility; how often it binds has not been looked at. In BEAR the exposure is already 0, so the overlay acts on volatility spikes in BULL and SIDEWAYS.
+
+#### 17.1.5.4 Trial D: sector rotation with sector ETFs (`sector_rotation`)
+
+**Idea:** hold the sectors with the strongest momentum.
+
+**Universe** *(confirm)*: the nine original SPDR sector ETFs, all trading since 1998: XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU. XLRE (2015) and XLC (2018) are left out so the universe is the same over the whole window. The pool's own sectors are not used: they are uneven (23 technology stocks, 2 real estate) and today's classification.
+
+**Rule:**
+- On each rebalance date: rank the nine ETFs by total return from 252 to 21 sessions before T.
+- Hold the **top 3**, one third each *(confirm)*.
+- Times the regime's exposure each session (BEAR: cash) *(confirm: with the regime, so it is compared with `regime_switch` on equal timing; without the regime is descriptive)*.
+
+**Sizing exception** *(confirm)*: as trial A, the single-stock caps do not apply to sector funds.
+
+**Data needed first:** the nine ETFs added to `market.market_symbols` and loaded by `update-market-data` (new rows only). Only this trial reads them; signals, the regime and the forward test do not.
+
+#### Confirmed (2026-10-21, owner)
+
+- (a) the four trials as drafted, registered together, each judged alone by the common pass criteria 1-4;
+- (b) trial A: IEF as the bond leg, `^IRX` as cash, the sizing exception;
+- (c) trial B: top 20, keep band 30, with the regime's exposure;
+- (d) trial C: a 15% target on SPY's 20-session volatility, no leverage;
+- (e) trial D: the nine SPDR ETFs, top 3 equally weighted, with the regime's exposure, the sizing exception, and loading the nine ETFs;
+- (f) the names (`dual_momentum`, `momentum_regime`, `regime_switch_voltarget`, `sector_rotation`) and, if one ever becomes a shadow, `shadow_<name>`.
+
+All of (a) to (f) were confirmed as written on 2026-10-21. From here on, a change to any of them is a design change recorded below this section before any result, never a silent edit.
+
 ## 17.2 Sizing (section 19)
 
 1. Each held stock gets `1 / (number held)`, capped at `risk.max_position_size`.
