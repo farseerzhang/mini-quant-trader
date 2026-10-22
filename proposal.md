@@ -1837,6 +1837,46 @@ equal weight (context)                  20.3%   1.1370   -32.1%   17.6%        9
 
 **Note:** the 15% target is a round number near SPY's long-run volatility; how often it binds has not been looked at. In BEAR the exposure is already 0, so the overlay acts on volatility spikes in BULL and SIDEWAYS.
 
+**As built (2026-10-22, before the run):**
+- **Details the text left open**, settled before any result:
+  - `sigma_T` is the **sample** standard deviation (ddof 1) of the last 20 daily log returns of SPY's total-return close up to T (21 closes), times sqrt(252).
+  - The multiplier is applied to `regime_switch`'s target weights on every session of the window; the baseline's own weights come from the same strategy code.
+- **What `min_trade_weight` means here** (a consequence of the registered rule, stated before the run, not a change): a held position is resized only when its target moves at least 2 points from the last order. `regime_switch`'s positions are a few percent each (equal weight; about 24 stocks in the 17.3 measurement), so for a 4% position the multiplier has to fall to about 0.5 before it is cut; smaller drops change only new entries. The overlay therefore acts mainly in sharp volatility spikes.
+- **Point in time:** at the two `default_cuts`, SPY's total-return closes are rebuilt from the stored prices and corporate actions up to the cut only, `regime_switch`'s weights are recomputed from the features and the regime up to the cut, and every target weight from the window's first session to the cut must come out the same.
+- **Code:** `quant/strategies/volatility_target.py` (the overlay) and `quant/strategies/volatility_target_trial.py` (the trial, a table of how often and how much the multiplier binds, overall, per regime and per year), with the shared `strategy_trial.py`. Tests: `tests/test_strategy_volatility_target.py` (the volatility formula, the multiplier only reducing, the scaling, the point-in-time check with a later split and a dividend, and the whole command on a small fake market).
+- **Command:** `python -m quant strategy-trial volatility-target` is the one-time run. It writes `reports/strategies/volatility-target-trial-<time>.md` and stores nothing but its run log.
+
+**Result (2026-10-22; `reports/strategies/volatility-target-trial-20261022T073407Z.md`): FAILED**
+
+The run was a single one, made by you. The window was **2014-10-08 .. 2025-10-13** (11 validation years), the same as trials A and B.
+
+```text
+gate                     status  observed
+sharpe_higher            PASS    Sharpe 1.0350 vs 0.9698 for regime_switch [rule_based-v1]
+max_drawdown_no_deeper   PASS    -20.3% vs -25.0%
+years_higher             FAIL    5 of 11 validation years
+point_in_time            PASS    2/2 cuts identical (2018-04-12, 2025-04-15)
+verdict                  FAILED
+```
+
+```text
+window 2014-10-08 .. 2025-10-13      CAGR    Sharpe   max DD   volatility   invested   turnover
+regime_switch [rule_based-v1]        13.2%   0.9698   -25.0%   13.8%        76%        4.1x
+regime_switch_voltarget              13.3%   1.0350   -20.3%   12.9%        74%        3.8x
+```
+
+- **One gate failed, so the trial fails.** The Sharpe was higher (+0.065, below the about 0.1 that 11 years can tell apart) and the max drawdown 4.7 points shallower, but the Sharpe was higher in only 5 of 11 years, one short of the registered 6.
+- **The years were close both ways:** higher in 2015-16 (0.47 vs 0.26), 2016-17, 2019-20, 2023-24 and 2024-25; lower in 2014-15, 2017-18 (1.46 vs 1.47), 2018-19, 2020-21 (1.42 vs 1.62), 2021-22 and 2022-23. Most differences are small.
+- **Descriptive, decides nothing:**
+  - **The multiplier bound on 37% of sessions** (average 0.89, lowest 0.16): 21% of BULL sessions (lowest 0.50), 82% of SIDEWAYS and 99% of BEAR. In BEAR `regime_switch` already holds cash, so the overlay's effect comes from BULL and SIDEWAYS.
+  - It bound most in 2022 (97% of sessions, average 0.66) and 2020 (67%, 0.71), and never in 2017.
+  - Same return as the baseline (CAGR 13.3% vs 13.2%) with lower volatility (12.9% vs 13.8%): it removed some risk without costing return in this window.
+- **A near miss is not a pass.** The 6-of-11 rule was fixed before the run; it is not loosened after seeing 5, and the overlay is not re-tested with another target, window or trade threshold on this data.
+
+**Outcome of trial C: FAILED.**
+- Nothing changes: `regime_switch` with `rule_based-v1` stays the live strategy, and no holdout check or shadow follows.
+- Volatility targeting stays a plausible idea with weak, failed evidence here. A future test would need new data (for example forward data from a shadow registered at a restart, which would itself need a new pre-registration and counts as a new trial).
+
 #### 17.1.5.4 Trial D: sector rotation with sector ETFs (`sector_rotation`)
 
 **Idea:** hold the sectors with the strongest momentum.
