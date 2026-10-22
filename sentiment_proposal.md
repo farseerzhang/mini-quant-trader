@@ -1,9 +1,11 @@
 # Creator & Crowd Opinion Factor (YouTube, Reddit) — Proposal
 
-Status (2026-10-19):
+Status (2026-10-22):
 - **Built:** S0 (channels, 12.1), S1 fetch (12.2), S2 extraction (12.3; accepted **provisionally** with Sonnet after a weak review), S3 summaries and daily reports (12.4), plus `sentiment stock` and the dashboard's Sentiment page. 11 channels.
-- **Waiting:** your week of reading the reports (S3's done-when).
-- **Not built:** S4 scorecard, the S6 pre-registration and factor, the Gemini backend, S2 steps 6-8 (Haiku comparison), S3b Reddit (deferred, decision 9). S5 Whisper is dropped (decision 13).
+- **Accepted:** S3, by the owner on 2026-10-22 after a week of daily reports (12.4).
+- **Next:** S4, the 6-month backfill and the exploratory scorecard (8.2); not started.
+- **Registered:** the S6 test (9.1, 2026-10-22): forward videos from 2026-10-23 count; it runs once in about July 2027.
+- **Not built:** S4 scorecard, the S6 test code and factor, the Gemini backend, S2 steps 6-8 (Haiku comparison), S3b Reddit (deferred, decision 9). S5 Whisper is dropped (decision 13).
 
 Approved 2026-10-12, revised 2026-10-13 after review (decisions in section 14). This file was compacted on 2026-10-19: plans now describe what was built, the spike tables keep their findings, and the deferred Reddit plan is shortened. The full earlier text is in git.
 
@@ -205,6 +207,62 @@ Candidate features: `sentiment_net_5d`, `sentiment_consensus`, `sentiment_contra
 
 **Backfill limits:** the creators were picked today and may still be around because they were right (survivorship of creators); losing calls get deleted (survivorship of videos). Backfilled data is exploration only.
 
+## 9.1 S6 pre-registration (registered 2026-10-22, R = 2026-10-22; nothing built yet)
+
+Written before any hit rate or excess return of any creator has been computed: S4 (the scorecard) is not built, and no opinion has been scored against prices. Confirmed by the owner on 2026-10-22, with the choices marked *(confirm)* as written and haiku as the extraction model. **R = 2026-10-22:** the test counts videos published from 2026-10-23 00:00 UTC; 6 months of them run to 2027-04-22, so the test runs once in about July 2027 (after the 60-session windows close).
+
+**Question.** Do the stocks these YouTube creators call bullish (or bearish) do better (or worse) over the next 20 sessions than random pool stocks on the same days?
+
+**Forward data only:**
+- Opinions from videos **published after the end of day R (UTC)**. Everything before, the S4 backfill included, is exploration and never enters the test.
+- **Creators:** the 11 channels configured on day R (12.1). A channel added later is excluded from the test; a channel that stops publishing stays in with what it published.
+- A video deleted after its captions were fetched stays in (its transcript is stored), so deletions after the fact cannot hide wrong calls.
+
+**Which opinions count:**
+- `verification = VERIFIED` (quote found in the transcript), `stance` BULLISH or BEARISH (NEUTRAL and CONDITIONAL left out), any horizon.
+- `ticker` in the 81-stock pool as configured on day R (ETFs and out-of-pool stocks are descriptive only).
+- **Extraction fixed** *(confirm)*: backend `claude_code`, model **haiku**, `prompt_version` 1 — what the daily runs use. A forward video without a haiku v1 extraction is extracted with exactly that before the test. A later prompt version or model is kept apart and does not enter the test. (Alternative: sonnet, the model reviewed in S2, at a higher Pro usage cost.)
+- **Counting:** per creator, stock and stance, only the first opinion in each 20-session window (as 8.2), so a daily-wrap channel repeating a call does not count it many times.
+
+**Outcome of one opinion:**
+- From the **open of its effective date** d (section 5: the first session opening after publication) over 20 sessions: the stock's total return minus the equal-weight total return of the pool stocks over the same sessions.
+- **Signed** by stance: +excess for BULLISH, -excess for BEARISH.
+
+**Primary test** (one, all creators pooled):
+- **Statistic:** the mean signed 20-session excess return over all counted opinions.
+- **Null:** a permutation test with 10,000 draws (seed fixed in code): each opinion keeps its creator, date and stance, and its stock is replaced by a random pool stock that has a price on that date. p = the share of draws whose mean is at least the observed mean (one-sided: the creators' picks beat random picks).
+- **Pass:** p < **0.05**.
+
+**Secondary tests** (reported with a Holm correction over the three, at 0.05; they cannot rescue a failed primary):
+1. the same statistic over 5 sessions;
+2. the same statistic over 60 sessions;
+3. the pooled hit rate (share of counted opinions with a positive signed excess return) against the same permutation null.
+
+**When it runs** *(confirm)*:
+- **Once**, after **6 months** of forward opinions (videos published R+1 .. R + 6 months) plus the 60 sessions their longest window needs, so about **9 months after R**.
+- **Minimum data:** at least **200 counted opinions on at least 30 different pool stocks**. If either is not met at 6 months, the collection period is extended to **12 months** (and the run moves accordingly); if still not met, the test is reported as **not run (too little data)**, not as failed.
+- With about 200 opinions, only a fairly large effect can be told from noise (8.2: about 600 samples are needed to tell a 55% from a 50% hit rate). A failure is therefore weak evidence that there is no effect.
+
+**Data-quality check before the run** *(confirm)*:
+- S2 was accepted only provisionally, and haiku was not reviewed (12.3). So before the test, **50 counted opinions drawn at random (fixed seed)** are shown to the owner with their quote and video link; the owner marks each ticker and stance as right or wrong.
+- At least **90% right** (45 of 50): the test runs. Otherwise it is reported as **not run (extraction not reliable enough)**; the extraction is improved, and the test needs a new registration with a new R. The check is done before any test statistic is computed.
+
+**Descriptive only** (decides nothing): per creator (opinions, hit rate, mean signed excess return, permutation p-value, only where at least 30 counted opinions), per horizon, per language, bullish against bearish, ETFs and out-of-pool tickers, and the share of opinions that are bullish.
+
+**If the primary test passes:** no live change during an open forward-test run. The candidate features of section 9 (`sentiment_net_5d`, `sentiment_consensus`, `sentiment_contrarian`) would be built and tested as a **separate, pre-registered trial**; at most a new shadow at the next forward-test restart.
+
+**If it fails or does not run:** sentiment stays display only. The same forward data is not re-tested with another window, subset of creators or counting rule; a new question needs a new registration and new forward data.
+
+**Confirmed (2026-10-22, owner):**
+- (a) the question, the primary test (20 sessions, all creators pooled, permutation, one-sided, p < 0.05) and the three Holm-corrected secondary tests;
+- (b) the opinions counted: VERIFIED, BULLISH or BEARISH, pool stocks, any horizon, the 11 channels of day R, the counting rule;
+- (c) the extraction fixed to claude_code / haiku / prompt version 1 (or sonnet instead);
+- (d) the timing: once after 6 months of forward opinions (about 9 months after R), at least 200 counted opinions on 30 stocks, else extended to 12 months, else not run;
+- (e) the data-quality check: 50 random opinions checked by the owner, at least 90% right, before any statistic is computed;
+- (f) R = the day of confirmation.
+
+All of (a) to (f) were confirmed as written on 2026-10-22, with haiku for (c) and R = 2026-10-22. From here on, a change to any of them is a design change recorded below this section before any forward statistic is computed, never a silent edit.
+
 ---
 
 # 10. Configuration (as built)
@@ -251,9 +309,9 @@ The packages (`yt-dlp`, `youtube-transcript-api`, `opencc-python-reimplemented`,
 | S0 | channel spikes | done (12.1) |
 | S1 | fetch | done (12.2) |
 | S2 | extraction; AI reference; your review of disagreements | steps 1-5 done, accepted provisionally with Sonnet (12.3); steps 6-8 (Haiku comparison, Gemini) postponed |
-| S3 | summaries and daily reports | built (12.4); done when you accept a week of reports |
+| S3 | summaries and daily reports | done: accepted 2026-10-22 (12.4) |
 | S4 | 6-month backfill, scorecard, permutation test; exploratory | not built |
-| S6 pre-registration | the S6 test, **before looking at forward hit rates** | not written |
+| S6 pre-registration | the S6 test, **before looking at forward hit rates** | registered 2026-10-22 (9.1) |
 | S3b | Reddit (section 15) | deferred until S4 has been read |
 | ~~S5~~ | Whisper | dropped (decision 13) |
 | S6 | the pre-registered test after ≥ 6 months of forward data | later |
@@ -311,6 +369,7 @@ Not taken: Ticker Symbol: YOU (too rare then), 老李玩钱 (no captions), 北�
 - **For prompt version 2, after your week of reading:** summaries repeat "No bearish view was given" for single-creator stocks and sometimes write opinion ids into the text ("Financial Education (37)"); the extractor sometimes turns one quote into two opinions (MRVL 2026-10-12: BULLISH LONG and NEUTRAL from one sentence).
 - **Sonnet and Haiku together (2026-10-15):** `report_models: [sonnet, haiku]`: reports, summaries, `sentiment stock` and the dashboard take, per video, the opinions of the first listed model that extracted it (so a video counts once). The header says which model each day comes from, and Haiku quotes are marked "by haiku". **Haiku was not reviewed** like Sonnet, so Haiku days are weaker evidence.
 - **Dashboard:** a Sentiment page (the daily report: mood, tables, summaries, quotes) and opinion marks on the Stock detail chart.
+- **Accepted (2026-10-22, owner):** after a week of daily reports (2026-10-19 .. 10-23), with no new problems reported. The known summary issues above stay open for a later summary prompt version 2 (display only; it does not touch S6). The extraction prompt stays at version 1, which S6 (9.1) uses.
 
 ## 12.5 Caption-fetch pacing (planned and built 2026-10-19)
 
