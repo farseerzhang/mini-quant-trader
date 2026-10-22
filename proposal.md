@@ -1733,6 +1733,38 @@ Four well-documented, long-only, low-turnover strategies, proposed by the owner 
 - **Code:** `quant/strategies/dual_momentum.py` (the rule), `quant/strategies/strategy_trial.py` (the window, the baseline comparison and the four pass criteria, shared with trials B-D) and `quant/strategies/dual_momentum_trial.py` (the trial and its report). Tests: `tests/test_strategy_dual_momentum.py` (the rule, the rebalance dates, ties, missing yields, the point-in-time check with a later split and dividends, and the whole command on a small fake market).
 - **Command:** `python -m quant strategy-trial dual-momentum` is the one-time run. It writes `reports/strategies/dual-momentum-trial-<time>.md` and stores nothing but its run log.
 
+**Result (2026-10-22; `reports/strategies/dual-momentum-trial-20261022T070707Z.md`): FAILED**
+
+The run was a single one, made by you. The window from the fold rule was **2014-10-08 .. 2025-10-13** (11 validation years); it has moved a few sessions since the regime trials, so the baseline's Sharpe (0.9698) differs slightly from theirs (0.9841, 0.9733).
+
+```text
+gate                     status  observed
+sharpe_higher            FAIL    Sharpe 0.6724 vs 0.9698 for regime_switch [rule_based-v1]
+max_drawdown_no_deeper   FAIL    -33.7% vs -25.0%
+years_higher             FAIL    4 of 11 validation years
+point_in_time            PASS    2/2 cuts identical (2018-04-12, 2025-04-15)
+verdict                  FAILED
+```
+
+```text
+window 2014-10-08 .. 2025-10-13      CAGR    Sharpe   max DD   volatility   invested   turnover
+regime_switch [rule_based-v1]        13.2%   0.9698   -25.0%   13.8%        76%        4.1x
+dual_momentum                         9.9%   0.6724   -33.7%   15.9%        90%        0.8x
+SPY buy-and-hold (context)           13.6%   0.8078   -33.7%   17.8%       100%        -
+```
+
+- **Three of the four gates failed by wide margins.** It is also below SPY buy-and-hold on Sharpe (0.67 vs 0.81), with the same max drawdown.
+- **Descriptive, decides nothing:**
+  - **Mostly SPY:** of 133 monthly decisions, 112 held SPY (84%), 8 IEF and 13 cash; 14 switches in 11 years.
+  - **The monthly 12-month signal reacted after the falls, not before them:** the 2020 crash was taken in full (still SPY on 2020-03-02; IEF from 2020-04-01, back to SPY on 2020-06-01), which is SPY's -33.7% drawdown. After Q4 2018 it went to cash on 2019-01-02, near the low, and back on 2019-03-01.
+  - **It missed recoveries:** in cash from 2022-06-01 to 2023-06-01, so 2022-23 has a Sharpe of 0.56 against SPY's 1.40.
+  - In this window bonds rarely helped: IEF's 12-month return was negative in 2022, so the rule chose cash, not bonds.
+
+**Outcome of trial A: FAILED.**
+- Nothing changes: `regime_switch` with `rule_based-v1` stays the live strategy, and no holdout check or shadow follows.
+- Dual momentum is not re-tested with other settings (another lookback, TLT, weekly checks) on this data.
+- The code stays: `strategy_trial.py` is shared with trials B-D.
+
 #### 17.1.5.2 Trial B: 12-1 momentum inside the regime timing (`momentum_regime`)
 
 **Idea:** keep `regime_switch`'s market timing, which most of its result comes from (17.1.3), and replace its stock choice (`trend` / `mean_reversion`) by cross-sectional 12-1 momentum. This isolates one question: is momentum a better stock choice than `trend`?
