@@ -20,6 +20,7 @@ from quant.backtest.engine import Simulation, simulate, split_periods
 from quant.backtest.metrics import METRIC_NAMES, period_metrics
 from quant.backtest.orders import order_targets
 from quant.config.settings import Settings
+from quant.features.technical import prepare_adjusted_series
 from quant.models.folds import Fold, walk_forward_folds
 from quant.models.gates import FAIL, PASS, GateReport, GateResult
 from quant.models.report import percent
@@ -28,9 +29,32 @@ from quant.regime.comparison import RegimeComparison, compare_regimes, portfolio
 from quant.regime.pipeline import RULE_METHOD
 from quant.strategies.rules import Panel
 
+_NO_ACTIONS = pd.DataFrame(columns=["ex_date", "action_type", "value"])
 BASELINE_REGIME = "rule_based-v1"
 BASELINE = portfolio_name("regime_switch", BASELINE_REGIME)
 MIN_YEARS_HIGHER = 6
+
+
+def total_return_closes(stored: dict[str, pd.DataFrame], actions: dict[str, pd.DataFrame], symbols: list[str],
+                        until: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Total-return closes (sessions x symbols) from the stored rows, optionally from data up to ``until``
+    only (prices and corporate actions alike), as they would have been computed on that evening. Used by
+    the point-in-time checks."""
+    closes = {}
+    for symbol in symbols:
+        if symbol not in stored:
+            raise ValueError(f"no stored prices for {symbol}; update market data first")
+        frame = stored[symbol]
+        symbol_actions = actions.get(symbol, _NO_ACTIONS)
+        if until is not None:
+            frame = frame.loc[:until]
+            if not symbol_actions.empty:
+                symbol_actions = symbol_actions[pd.to_datetime(symbol_actions["ex_date"]) <= until]
+        if frame.empty:  # listed after ``until``: no closes yet, as on that evening
+            closes[symbol] = pd.Series(dtype=float)
+            continue
+        closes[symbol] = prepare_adjusted_series(frame, symbol_actions)["total_return_close"]
+    return pd.DataFrame(closes)
 
 
 def trial_folds(engine: Engine, settings: Settings) -> list[Fold]:

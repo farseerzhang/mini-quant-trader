@@ -17,7 +17,6 @@ from sqlalchemy import Engine
 
 from quant.backtest.data import load_prices
 from quant.config.settings import Settings
-from quant.features.technical import prepare_adjusted_series
 from quant.models.folds import Fold
 from quant.models.gates import GateReport
 from quant.models.report import markdown_table, percent
@@ -41,30 +40,19 @@ from quant.strategies.strategy_trial import (
     compare_with_baseline,
     overall_table,
     strategy_gates,
+    total_return_closes,
     trial_folds,
     yearly_sharpe_table,
 )
 
 NAME = "dual_momentum"
-_NO_ACTIONS = pd.DataFrame(columns=["ex_date", "action_type", "value"])
 
 
 def fund_closes(stored: dict[str, pd.DataFrame], actions: dict[str, pd.DataFrame],
                 until: pd.Timestamp | None = None) -> pd.DataFrame:
     """Total-return closes of SPY and IEF from the stored rows, optionally only from data up to ``until``
     (prices and corporate actions alike), as they would have been computed on that evening."""
-    closes = {}
-    for fund in FUNDS:
-        if fund not in stored:
-            raise ValueError(f"no stored prices for {fund}; update market data first")
-        frame = stored[fund]
-        fund_actions = actions.get(fund, _NO_ACTIONS)
-        if until is not None:
-            frame = frame.loc[:until]
-            if not fund_actions.empty:
-                fund_actions = fund_actions[pd.to_datetime(fund_actions["ex_date"]) <= until]
-        closes[fund] = prepare_adjusted_series(frame, fund_actions)["total_return_close"]
-    return pd.DataFrame(closes).dropna()
+    return total_return_closes(stored, actions, list(FUNDS), until).dropna()
 
 
 def trial_choices(closes: pd.DataFrame, cash_yield: pd.Series, first: pd.Timestamp,

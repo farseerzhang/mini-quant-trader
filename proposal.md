@@ -1778,6 +1778,52 @@ SPY buy-and-hold (context)           13.6%   0.8078   -33.7%   17.8%       100% 
 
 **Descriptive:** the same momentum without the regime (always invested).
 
+**As built (2026-10-22, before the run):**
+- **Details the text left open**, settled before any result:
+  - **Rebalance dates** as trial A: the window's first session, then the first session of each month.
+  - **The ranking** uses the total-return closes; 252 and 21 sessions are counted on the stored session calendar. A stock is not ranked on a session where its close at T, 21 sessions back or 252 sessions back is missing (e.g. GEV and SNDK until a year after listing).
+  - **The selection is made on every rebalance date, also in BEAR**, and held until the next one. In BEAR the exposure is 0 (cash); when the regime leaves BEAR during a month, the latest selection is held again.
+  - **The keep band** reuses `top_n_holdings` from `ml_select` (top 20, keep within 30; free places go to the best-ranked stocks not held; ties to the earlier stock in the pool order). The exposure follows the regime every session as in `ml_select` (BULL and SIDEWAYS 1, BEAR 0, no regime 0).
+- **Descriptive:** the same selection always invested (`momentum_12_1 (always invested)`), plus the stocks held most often and the average number replaced per month.
+- **Point in time:** at the two `default_cuts`, the pool's total-return closes are rebuilt from the stored prices and corporate actions up to the cut only, with the regime up to the cut, and every target weight from the window's first session to the cut must come out the same.
+- **Code:** `quant/strategies/momentum_regime.py` (the rule) and `quant/strategies/momentum_regime_trial.py` (the trial and its report), with the shared `strategy_trial.py`; the total-return rebuild for the point-in-time checks moved there from trial A's module (trial A's behaviour unchanged, its tests still pass). Tests: `tests/test_strategy_momentum_regime.py` (the score window, unrankable stocks, the top 20 and the keep band, the regime exposure, the point-in-time check with a later split and dividends, and the whole command on a small fake market).
+- **Command:** `python -m quant strategy-trial momentum-regime` is the one-time run. It writes `reports/strategies/momentum-regime-trial-<time>.md` and stores nothing but its run log.
+- **Fix before the first complete run (2026-10-22):** the first attempt stopped with an error in the point-in-time check, before any gate or result was printed or written: a pool stock with no prices before the first cut (listed later, e.g. GEV or SNDK) made the price rebuild fail. Such a stock now has no closes up to the cut, as on that evening, and is not ranked. Test: `test_a_stock_listed_after_the_cut`. The rule and the gates are unchanged; the run is repeated from the start.
+
+**Result (2026-10-22; `reports/strategies/momentum-regime-trial-20261022T071918Z.md`): FAILED**
+
+The complete run was a single one, made by you, after the fix above. The window was **2014-10-08 .. 2025-10-13** (11 validation years), the same as trial A's.
+
+```text
+gate                     status  observed
+sharpe_higher            FAIL    Sharpe 0.9223 vs 0.9698 for regime_switch [rule_based-v1]
+max_drawdown_no_deeper   FAIL    -36.7% vs -25.0%
+years_higher             FAIL    4 of 11 validation years
+point_in_time            PASS    2/2 cuts identical (2018-04-12, 2025-04-15)
+verdict                  FAILED
+```
+
+```text
+window 2014-10-08 .. 2025-10-13         CAGR    Sharpe   max DD   volatility   invested   turnover
+regime_switch [rule_based-v1]           13.2%   0.9698   -25.0%   13.8%        76%        4.1x
+momentum_regime                         17.7%   0.9223   -36.7%   19.8%        83%        1.8x
+momentum_12_1, always invested (ctx)    27.1%   1.1143   -37.6%   24.1%        96%        0.9x
+SPY buy-and-hold (context)              13.6%   0.8078   -33.7%   17.8%       100%        -
+equal weight (context)                  20.3%   1.1370   -32.1%   17.6%        93%        0.4x
+```
+
+- **Three of the four gates failed.** Momentum earned more (CAGR 17.7% vs 13.2%) but with much more risk (volatility 19.8% vs 13.8%), so its Sharpe is lower and its drawdown deeper. It was higher in 4 of 11 years.
+- **Descriptive, decides nothing:**
+  - **The worst year was 2021-22** (Sharpe -1.29 vs 0.06): the stocks with the strongest run into 2021 fell hardest in 2022.
+  - **The regime timing lowered momentum's Sharpe here** (1.11 always invested, 0.92 with the regime): going to cash in BEAR and buying back later cost more on these concentrated stocks than it saved.
+  - **Always-invested momentum looks strong (Sharpe 1.11, CAGR 27.1%) but is not evidence:** it was descriptive only, it is close to equal weight's 1.14, and it is the variant that the pool's survivorship helps most. The stocks held most often were NVDA (72% of sessions), AVGO, LLY, NFLX and AMD, all chosen into the pool in 2026 partly because of these runs (17.1.3).
+  - Selection: 20 stocks held, about 1.9 replaced a month, 77 different stocks over the window; turnover 1.8x a year against the baseline's 4.1x.
+
+**Outcome of trial B: FAILED.**
+- Nothing changes: `regime_switch` with `rule_based-v1` stays the live strategy, and no holdout check or shadow follows.
+- Momentum inside the regime timing is not re-tested with other settings (top N, keep band, lookback) on this data.
+- **Always-invested momentum is not a finding.** Testing it would be a new trial on data whose result for it has now been seen, on a survivorship-biased pool, so it would count as weak evidence at best; it is not planned.
+
 #### 17.1.5.3 Trial C: volatility targeting on `regime_switch` (`regime_switch_voltarget`)
 
 **Idea:** hold less when the market is volatile. An overlay: `regime_switch`'s weights are kept and scaled down.

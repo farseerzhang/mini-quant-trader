@@ -119,8 +119,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="a pre-registered one-time strategy trial of section 17.1.5 against regime_switch "
         "(research only; writes reports/strategies/<trial>-trial-*.md, stores nothing)",
     )
-    strategy_trial_command.add_argument("trial", choices=["dual-momentum"],
-                                        help="dual-momentum: trial A (SPY / IEF / cash, monthly)")
+    strategy_trial_command.add_argument("trial", choices=list(STRATEGY_TRIALS),
+                                        help="dual-momentum: trial A (SPY / IEF / cash, monthly); "
+                                        "momentum-regime: trial B (12-1 momentum top 20 inside the regime timing)")
     strategy_trial_command.add_argument("--db", help=db_help)
 
     backtest_command = commands.add_parser(
@@ -442,20 +443,35 @@ def _run_rate_shocks_trial(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+# strategy-trial <name> -> (trial letter, strategy name) of proposal section 17.1.5
+STRATEGY_TRIALS = {"dual-momentum": ("A", "dual_momentum"), "momentum-regime": ("B", "momentum_regime")}
+
+
+def _strategy_trial_functions(trial: str):
+    """(run, write report) of one strategy trial."""
+    if trial == "dual-momentum":
+        from quant.strategies.dual_momentum_trial import run_dual_momentum_trial, write_dual_momentum_report
+
+        return run_dual_momentum_trial, write_dual_momentum_report
+    from quant.strategies.momentum_regime_trial import run_momentum_regime_trial, write_momentum_regime_report
+
+    return run_momentum_regime_trial, write_momentum_regime_report
+
+
 def _run_strategy_trial(args: argparse.Namespace, settings: Settings) -> int:
     from datetime import datetime, timezone
 
-    from quant.strategies.dual_momentum_trial import run_dual_momentum_trial, write_dual_momentum_report
-
+    letter, name = STRATEGY_TRIALS[args.trial]
+    run_trial, write_report = _strategy_trial_functions(args.trial)
     engine = _engine(settings, args.db)
     try:
-        print("Section 17.1.5 trial A: dual_momentum against regime_switch with rule_based-v1 (a few minutes)",
+        print(f"Section 17.1.5 trial {letter}: {name} against regime_switch with rule_based-v1 (a few minutes)",
               flush=True)
-        outcome = run_dual_momentum_trial(engine, settings)
-        path = write_dual_momentum_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
+        outcome = run_trial(engine, settings)
+        path = write_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
         verdict = "PASSED" if outcome.gates.passed else "FAILED"
         queries.record_pipeline_run(engine, command="strategy-trial", stage=args.trial, status="OK",
-                                    message=f"section 17.1.5 trial A: gates {verdict}")
+                                    message=f"section 17.1.5 trial {letter}: gates {verdict}")
     except ValueError as exc:
         _error(f"Trial failed to run: {exc}")
         return 1
