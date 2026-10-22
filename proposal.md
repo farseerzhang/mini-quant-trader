@@ -1892,6 +1892,52 @@ regime_switch_voltarget              13.3%   1.0350   -20.3%   12.9%        74% 
 
 **Data needed first:** the nine ETFs added to `market.market_symbols` and loaded by `update-market-data` (new rows only). Only this trial reads them; signals, the regime and the forward test do not.
 
+**As built (2026-10-22, before the data load and the run):**
+- **Details the text left open**, settled before any result:
+  - **Rebalance dates** as trials A and B: the window's first session, then the first session of each month.
+  - **The score** is trial B's 12-1 score (`momentum_scores`) on the funds' total-return closes. **No keep band** (none was registered): the top 3 are re-chosen each month, ties to the earlier fund in the order XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU.
+  - **The selection is made on every rebalance date, also in BEAR**, and held until the next one; the exposure follows the regime every session (BULL and SIDEWAYS 1, BEAR 0, no regime 0), as in trial B.
+- **Descriptive:** the same rotation always invested, how often each fund was held, and the funds bought per year.
+- **Data:** the nine ETFs are added to `market.market_symbols` in `config/settings.yaml`. Nothing live reads them: only `update-market-data` (which loads them), `status` (freshness warnings) and the symbol table use that list; signals, features, the regime and the forward test do not. **They are not loaded yet**: the next `update-market-data` or `run-daily` loads their history from `market.initial_history` (new rows only). Until then `status` warns that they have no prices, and the trial refuses to run without them.
+- **Point in time:** at the two `default_cuts`, the funds' total-return closes are rebuilt from the stored prices and corporate actions up to the cut only, with the regime up to the cut, and every target weight from the window's first session to the cut must come out the same.
+- **Code:** `quant/strategies/sector_rotation.py` (the rule) and `quant/strategies/sector_rotation_trial.py` (the trial and its report), with the shared `strategy_trial.py`. Tests: `tests/test_strategy_sector_rotation.py` (the top 3 and one third each, a new leader replacing an old one, the regime exposure, the point-in-time check with a later split and dividends, the refusal without the funds configured, and the whole command on a small fake market); `tests/test_settings.py` updated for the longer list.
+- **Command:** `python -m quant strategy-trial sector-rotation` is the one-time run, after the data load. It writes `reports/strategies/sector-rotation-trial-<time>.md` and stores nothing but its run log.
+
+**Data load (2026-10-22, owner):** after a database backup (`quant-20261022T074352Z.db`), `update-market-data` stored the nine ETFs from 2005-01-03 to 2026-10-21, 5,485 sessions each, with nothing quarantined.
+
+**Result (2026-10-22; `reports/strategies/sector-rotation-trial-20261022T074446Z.md`): FAILED**
+
+The run was a single one, made by you. The window was **2014-10-08 .. 2025-10-13** (11 validation years), the same as trials A-C.
+
+```text
+gate                     status  observed
+sharpe_higher            FAIL    Sharpe 0.5186 vs 0.9698 for regime_switch [rule_based-v1]
+max_drawdown_no_deeper   PASS    -19.1% vs -25.0%
+years_higher             FAIL    3 of 11 validation years
+point_in_time            PASS    2/2 cuts identical (2018-04-12, 2025-04-15)
+verdict                  FAILED
+```
+
+```text
+window 2014-10-08 .. 2025-10-13          CAGR    Sharpe   max DD   volatility   invested   turnover
+regime_switch [rule_based-v1]            13.2%   0.9698   -25.0%   13.8%        76%        4.1x
+sector_rotation                           6.5%   0.5186   -19.1%   14.0%        86%        3.3x
+sector_rotation, always invested (ctx)   11.5%   0.6944   -31.2%   18.1%        99%        2.5x
+SPY buy-and-hold (context)               13.6%   0.8078   -33.7%   17.8%       100%        -
+```
+
+- **Two of the four gates failed by wide margins.** The return was half the baseline's (CAGR 6.5% vs 13.2%) with about the same volatility; only the drawdown was shallower. It was higher in 3 of 11 years.
+- **Descriptive, decides nothing:**
+  - **Below SPY even without the regime:** always invested it reached a Sharpe of 0.69 against SPY's 0.81. Over this window, holding the three strongest sectors of the last year did worse than holding the whole market.
+  - **The regime timing lowered it further** (0.69 to 0.52), as in trial B.
+  - **Its weakest years were recoveries:** 2022-23 (-0.53 vs SPY 1.40) and 2024-25 (0.00 vs 0.85).
+  - XLK was held on 63% of sessions; every fund was held at some point (XLB least, 13%). About 6-12 funds were bought a year.
+
+**Outcome of trial D: FAILED.**
+- Nothing changes: `regime_switch` with `rule_based-v1` stays the live strategy, and no holdout check or shadow follows.
+- Sector rotation is not re-tested with other settings (top N, lookback, the pool's own sectors) on this data.
+- The nine ETFs stay in `market.market_symbols` and the database (new rows only); nothing live reads them. Removing them from the settings later would stop their daily load; their rows would stay.
+
 #### Confirmed (2026-10-21, owner)
 
 - (a) the four trials as drafted, registered together, each judged alone by the common pass criteria 1-4;
@@ -1902,6 +1948,21 @@ regime_switch_voltarget              13.3%   1.0350   -20.3%   12.9%        74% 
 - (f) the names (`dual_momentum`, `momentum_regime`, `regime_switch_voltarget`, `sector_rotation`) and, if one ever becomes a shadow, `shadow_<name>`.
 
 All of (a) to (f) were confirmed as written on 2026-10-21. From here on, a change to any of them is a design change recorded below this section before any result, never a silent edit.
+
+#### 17.1.5.5 Outcome of the four trials (2026-10-22)
+
+```text
+trial                         Sharpe   vs baseline 0.9698   max DD    years higher   verdict
+A dual_momentum               0.6724   -0.297               -33.7%    4 of 11        FAILED
+B momentum_regime             0.9223   -0.048               -36.7%    4 of 11        FAILED
+C regime_switch_voltarget     1.0350   +0.065               -20.3%    5 of 11        FAILED (1 gate)
+D sector_rotation             0.5186   -0.451               -19.1%    3 of 11        FAILED
+```
+
+- **None passed.** `regime_switch` with `rule_based-v1` stays the live strategy; no holdout check or shadow follows from these trials.
+- **Trial C came closest** (higher Sharpe and a shallower drawdown, 5 of 11 years against the 6 required). Its Sharpe margin is below the about 0.1 that 11 years can tell apart, and with four trials registered together one near pass is expected by chance, so it is not treated as a finding.
+- **What the four suggest, descriptively:** replacing `regime_switch`'s pieces (its timing in A, its stock choice in B and D) did worse; only reducing its exposure in volatile markets (C) did about as well. No registered alternative has clearly beaten the baseline on this data: the bond inputs (12.5) passed only weakly and run as a shadow; the HMM regime (13), its combination with the rule (13.3), the rate-shock inputs (12.7), the sector-balanced pool (17.1.4) and these four failed.
+- Each of the four ideas would need new data (forward sessions) for any further test, with a new pre-registration.
 
 ## 17.2 Sizing (section 19)
 

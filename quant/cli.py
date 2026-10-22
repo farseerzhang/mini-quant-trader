@@ -122,7 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
     strategy_trial_command.add_argument("trial", choices=list(STRATEGY_TRIALS),
                                         help="dual-momentum: trial A (SPY / IEF / cash, monthly); "
                                         "momentum-regime: trial B (12-1 momentum top 20 inside the regime timing); "
-                                        "volatility-target: trial C (regime_switch scaled to a 15%% volatility target)")
+                                        "volatility-target: trial C (regime_switch scaled to a 15%% volatility target); "
+                                        "sector-rotation: trial D (top 3 SPDR sector ETFs inside the regime timing)")
     strategy_trial_command.add_argument("--db", help=db_help)
 
     backtest_command = commands.add_parser(
@@ -446,7 +447,7 @@ def _run_rate_shocks_trial(args: argparse.Namespace, settings: Settings) -> int:
 
 # strategy-trial <name> -> (trial letter, strategy name) of proposal section 17.1.5
 STRATEGY_TRIALS = {"dual-momentum": ("A", "dual_momentum"), "momentum-regime": ("B", "momentum_regime"),
-                   "volatility-target": ("C", "regime_switch_voltarget")}
+                   "volatility-target": ("C", "regime_switch_voltarget"), "sector-rotation": ("D", "sector_rotation")}
 
 
 def _strategy_trial_functions(trial: str):
@@ -459,9 +460,16 @@ def _strategy_trial_functions(trial: str):
         from quant.strategies.momentum_regime_trial import run_momentum_regime_trial, write_momentum_regime_report
 
         return run_momentum_regime_trial, write_momentum_regime_report
-    from quant.strategies.volatility_target_trial import run_volatility_target_trial, write_volatility_target_report
+    if trial == "volatility-target":
+        from quant.strategies.volatility_target_trial import (
+            run_volatility_target_trial,
+            write_volatility_target_report,
+        )
 
-    return run_volatility_target_trial, write_volatility_target_report
+        return run_volatility_target_trial, write_volatility_target_report
+    from quant.strategies.sector_rotation_trial import run_sector_rotation_trial, write_sector_rotation_report
+
+    return run_sector_rotation_trial, write_sector_rotation_report
 
 
 def _run_strategy_trial(args: argparse.Namespace, settings: Settings) -> int:
