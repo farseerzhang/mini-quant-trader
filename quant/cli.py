@@ -114,6 +114,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rate_shocks_command.add_argument("--db", help=db_help)
 
+    strategy_trial_command = commands.add_parser(
+        "strategy-trial",
+        help="a pre-registered one-time strategy trial of section 17.1.5 against regime_switch "
+        "(research only; writes reports/strategies/<trial>-trial-*.md, stores nothing)",
+    )
+    strategy_trial_command.add_argument("trial", choices=["dual-momentum"],
+                                        help="dual-momentum: trial A (SPY / IEF / cash, monthly)")
+    strategy_trial_command.add_argument("--db", help=db_help)
+
     backtest_command = commands.add_parser(
         "backtest",
         help="backtest the rule-based strategies against SPY, equal weight and a random baseline, and save the results",
@@ -421,6 +430,32 @@ def _run_rate_shocks_trial(args: argparse.Namespace, settings: Settings) -> int:
         verdict = "PASSED" if outcome.gates.passed else "FAILED"
         queries.record_pipeline_run(engine, command="regime-rate-shocks-trial", stage="trial", status="OK",
                                     message=f"section 12.7: gates {verdict}")
+    except ValueError as exc:
+        _error(f"Trial failed to run: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(f"gates {verdict}")
+    for result in outcome.gates.results:
+        print(f"  {result.name:28s} {result.status:5s} {result.observed}")
+    print(f"\n{path}")
+    return 0
+
+
+def _run_strategy_trial(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import datetime, timezone
+
+    from quant.strategies.dual_momentum_trial import run_dual_momentum_trial, write_dual_momentum_report
+
+    engine = _engine(settings, args.db)
+    try:
+        print("Section 17.1.5 trial A: dual_momentum against regime_switch with rule_based-v1 (a few minutes)",
+              flush=True)
+        outcome = run_dual_momentum_trial(engine, settings)
+        path = write_dual_momentum_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
+        verdict = "PASSED" if outcome.gates.passed else "FAILED"
+        queries.record_pipeline_run(engine, command="strategy-trial", stage=args.trial, status="OK",
+                                    message=f"section 17.1.5 trial A: gates {verdict}")
     except ValueError as exc:
         _error(f"Trial failed to run: {exc}")
         return 1
@@ -925,6 +960,7 @@ COMMANDS = {
     "regime-combo-trial": lambda args, settings: _run_combo_trial(args, settings),
     "regime-rule-v2-holdout": lambda args, settings: _run_rule_v2_holdout(args, settings),
     "regime-rate-shocks-trial": lambda args, settings: _run_rate_shocks_trial(args, settings),
+    "strategy-trial": lambda args, settings: _run_strategy_trial(args, settings),
     "promote": lambda args, settings: _run_promote(args, settings),
     "retire": lambda args, settings: _run_retire(args, settings),
     "status": lambda args, settings: _run_status(args, settings),

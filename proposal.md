@@ -1724,6 +1724,15 @@ Four well-documented, long-only, low-turnover strategies, proposed by the owner 
 
 **Note:** it holds funds, not pool stocks, so it competes with `regime_switch` on risk-adjusted return, not on stock choice. SPY buy-and-hold is shown next to it.
 
+**As built (2026-10-22, before the run):**
+- **Two details the text left open**, settled before any result:
+  - **The first decision** is made on the window's first session, then on the first session of each month. Otherwise the portfolio would sit in cash until the first month start, while the baseline is invested from the first session.
+  - **The 252 sessions** are SPY's and IEF's common sessions; `r_cash` averages `^IRX` over the 252 sessions ending at T (T-251 .. T), leaving a missing session out of the average.
+- **Baseline:** the stored `rule_based-v1` regime (the one the live signals use), traded by the same `compare_regimes` code as the regime trials; `regime_switch_bear50`, SPY and equal weight are shown as context.
+- **Point in time:** at the two `default_cuts`, SPY's and IEF's total-return closes are rebuilt from the stored prices and corporate actions up to the cut only, and every monthly choice (and its three returns) up to the cut must come out the same.
+- **Code:** `quant/strategies/dual_momentum.py` (the rule), `quant/strategies/strategy_trial.py` (the window, the baseline comparison and the four pass criteria, shared with trials B-D) and `quant/strategies/dual_momentum_trial.py` (the trial and its report). Tests: `tests/test_strategy_dual_momentum.py` (the rule, the rebalance dates, ties, missing yields, the point-in-time check with a later split and dividends, and the whole command on a small fake market).
+- **Command:** `python -m quant strategy-trial dual-momentum` is the one-time run. It writes `reports/strategies/dual-momentum-trial-<time>.md` and stores nothing but its run log.
+
 #### 17.1.5.2 Trial B: 12-1 momentum inside the regime timing (`momentum_regime`)
 
 **Idea:** keep `regime_switch`'s market timing, which most of its result comes from (17.1.3), and replace its stock choice (`trend` / `mean_reversion`) by cross-sectional 12-1 momentum. This isolates one question: is momentum a better stock choice than `trend`?
