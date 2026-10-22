@@ -83,17 +83,22 @@ def _metrics(simulation: Simulation, start: pd.Timestamp, end: pd.Timestamp) -> 
 
 
 def compare_with_baseline(candidates: dict[str, pd.DataFrame], folds: list[Fold], prices: Prices, panel: Panel,
-                          regime: pd.Series, settings: Settings) -> RegimeComparison:
-    """The baseline (and bear50, SPY, equal weight, as `compare_regimes`) plus each candidate,
-    given as target weights (sessions x symbols), over the same window from fresh cash."""
+                          regime: pd.Series, settings: Settings,
+                          ready_orders: dict[str, pd.DataFrame] | None = None) -> RegimeComparison:
+    """The baseline (and bear50, SPY, equal weight, as `compare_regimes`) plus each candidate, over the
+    same window from fresh cash. ``candidates`` are target weights (sessions x symbols), turned into
+    orders with backtest.min_trade_weight; ``ready_orders`` are order targets placed as given
+    (NaN = no order), for a strategy that sets its weights only on its rebalance sessions."""
     base = compare_regimes({BASELINE_REGIME: regime}, folds, prices, panel, settings)
     index = prices.close.index[(prices.close.index >= base.start) & (prices.close.index <= base.end)]
     bt = settings.backtest
     simulations = dict(base.simulations)
     overall = base.overall.copy()
     rows = [base.by_fold.reset_index()]
-    for name, weights in candidates.items():
-        targets = order_targets(weights.reindex(index).fillna(0.0), bt.min_trade_weight)
+    orders = {name: order_targets(weights.reindex(index).fillna(0.0), bt.min_trade_weight)
+              for name, weights in candidates.items()}
+    orders.update({name: targets.reindex(index) for name, targets in (ready_orders or {}).items()})
+    for name, targets in orders.items():
         simulation = simulate(targets, prices, bt)
         simulations[name] = simulation
         overall.loc[name] = pd.Series(_metrics(simulation, base.start, base.end)).reindex(overall.columns)

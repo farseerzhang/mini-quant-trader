@@ -123,7 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
                                         help="dual-momentum: trial A (SPY / IEF / cash, monthly); "
                                         "momentum-regime: trial B (12-1 momentum top 20 inside the regime timing); "
                                         "volatility-target: trial C (regime_switch scaled to a 15%% volatility target); "
-                                        "sector-rotation: trial D (top 3 SPDR sector ETFs inside the regime timing)")
+                                        "sector-rotation: trial D (top 3 SPDR sector ETFs inside the regime timing); "
+                                        "top3-momentum: trial E (the 3 strongest pool stocks of the last 12 months, "
+                                        "quarterly; section 17.1.6)")
     strategy_trial_command.add_argument("--db", help=db_help)
 
     backtest_command = commands.add_parser(
@@ -447,7 +449,8 @@ def _run_rate_shocks_trial(args: argparse.Namespace, settings: Settings) -> int:
 
 # strategy-trial <name> -> (trial letter, strategy name) of proposal section 17.1.5
 STRATEGY_TRIALS = {"dual-momentum": ("A", "dual_momentum"), "momentum-regime": ("B", "momentum_regime"),
-                   "volatility-target": ("C", "regime_switch_voltarget"), "sector-rotation": ("D", "sector_rotation")}
+                   "volatility-target": ("C", "regime_switch_voltarget"), "sector-rotation": ("D", "sector_rotation"),
+                   "top3-momentum": ("E", "top3_momentum_12m_quarterly")}
 
 
 def _strategy_trial_functions(trial: str):
@@ -467,9 +470,13 @@ def _strategy_trial_functions(trial: str):
         )
 
         return run_volatility_target_trial, write_volatility_target_report
-    from quant.strategies.sector_rotation_trial import run_sector_rotation_trial, write_sector_rotation_report
+    if trial == "sector-rotation":
+        from quant.strategies.sector_rotation_trial import run_sector_rotation_trial, write_sector_rotation_report
 
-    return run_sector_rotation_trial, write_sector_rotation_report
+        return run_sector_rotation_trial, write_sector_rotation_report
+    from quant.strategies.top3_momentum_trial import run_top3_momentum_trial, write_top3_momentum_report
+
+    return run_top3_momentum_trial, write_top3_momentum_report
 
 
 def _run_strategy_trial(args: argparse.Namespace, settings: Settings) -> int:
@@ -479,13 +486,14 @@ def _run_strategy_trial(args: argparse.Namespace, settings: Settings) -> int:
     run_trial, write_report = _strategy_trial_functions(args.trial)
     engine = _engine(settings, args.db)
     try:
-        print(f"Section 17.1.5 trial {letter}: {name} against regime_switch with rule_based-v1 (a few minutes)",
+        section = "17.1.6" if letter == "E" else "17.1.5"
+        print(f"Section {section} trial {letter}: {name} against regime_switch with rule_based-v1 (a few minutes)",
               flush=True)
         outcome = run_trial(engine, settings)
         path = write_report(outcome, settings.retrain.reports_dir, datetime.now(timezone.utc))
         verdict = "PASSED" if outcome.gates.passed else "FAILED"
         queries.record_pipeline_run(engine, command="strategy-trial", stage=args.trial, status="OK",
-                                    message=f"section 17.1.5 trial {letter}: gates {verdict}")
+                                    message=f"section {section} trial {letter}: gates {verdict}")
     except ValueError as exc:
         _error(f"Trial failed to run: {exc}")
         return 1

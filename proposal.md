@@ -1964,6 +1964,86 @@ D sector_rotation             0.5186   -0.451               -19.1%    3 of 11   
 - **What the four suggest, descriptively:** replacing `regime_switch`'s pieces (its timing in A, its stock choice in B and D) did worse; only reducing its exposure in volatile markets (C) did about as well. No registered alternative has clearly beaten the baseline on this data: the bond inputs (12.5) passed only weakly and run as a shadow; the HMM regime (13), its combination with the rule (13.3), the rate-shock inputs (12.7), the sector-balanced pool (17.1.4) and these four failed.
 - Each of the four ideas would need new data (forward sessions) for any further test, with a new pre-registration.
 
+### 17.1.6 Pre-registered trial E: the three strongest stocks of the last 12 months, quarterly (registered 2026-10-22, before any result with it)
+
+**Proposed by the owner on 2026-10-22**, after the results of section 17.1.5, and confirmed the same day; the choice marked *(confirm)* was confirmed as written (see the end of this section). Not built yet.
+
+**Rule** (`top3_momentum_12m_quarterly`):
+- **Universe:** the 81-stock pool.
+- **Rebalance dates:** the window's first session, then the first session of January, April, July and October.
+- **Ranking:** total return over the last 252 sessions up to the close of T, with no skipped month (the owner's choice: "the best of the last year"). A stock without a close at T or 252 sessions back is not ranked; ties go to the earlier stock in the pool order.
+- **Holdings:** the top 3, one third each, held until the next rebalance date. No keep band: the top 3 are re-chosen each quarter.
+- **Always invested:** no regime timing (the owner's choice).
+- **Sizing exception** *(confirm)*: the single-stock cap (`risk.max_position_size` 10%) and the sector cap (30%) do not apply; each stock is one third of the portfolio. Between rebalances the weights drift with prices and are not reset.
+
+**Test:** the same as section 17.1.5:
+- **Window:** the walk-forward validation window from the fold rule at run time (about 2014-10 .. 2025-10); the holdout is untouched.
+- **Fresh cash and costs:** from fresh cash on the window's first session, with the same costs and execution (close of T, open of T+1).
+- **Baseline:** `regime_switch` with `rule_based-v1` on the same pool. This is a pool strategy, so `regime_switch` is the fair comparison; SPY and the pool's equal weight are shown as context.
+- **Pass criteria** (all four of 17.1.5): Sharpe after costs higher; max drawdown no deeper; a higher Sharpe in at least 6 of the 11 validation years; targets point in time.
+
+**Why a pass would be weak evidence** (stated before the run):
+- **Survivorship is strongest here.** The pool was chosen in 2026 partly for strong past returns (17.1.3). A strategy that holds only the pool's 3 strongest stocks is the one that today's selection helps most.
+- **Momentum on this pool has been seen.** Trial B's descriptive always-invested 12-1 momentum (top 20, monthly) reached a Sharpe of 1.11 on this window. This trial is a close relative, chosen after that result.
+- **Few, concentrated decisions:** about 44 quarterly choices of 3 stocks; a few stocks can decide the result.
+- **The drawdown gate is likely the hardest:** three stocks at one third each can fall far more than `regime_switch`, which goes to cash in BEAR.
+
+**One trial.** If it fails, it is not re-tested with other settings (top N, lookback, rebalance frequency, a regime filter) on this data. If it passes: no live change during forward-test run 2; at most a registered holdout check and a shadow at the next restart, each pre-registered separately.
+
+**Descriptive** (decides nothing): CAGR, volatility, Sortino, turnover, Sharpe per year; the stocks held most often and the number of different stocks; SPY and the pool's equal weight.
+
+**As built (2026-10-22, before the run):**
+- **Details the text left open**, settled before any result:
+  - **Quarter starts** are the first sessions of January, April, July and October; the first decision is on the window's first session (2014-10), as in trials A-D.
+  - **"Weights drift and are not reset" is read as between rebalances.** On each rebalance session all three holdings are set to one third again (a kept stock included), and a dropped stock is sold. Between rebalances no orders are placed, so the weights follow prices. For this, the shared comparison takes this strategy's order targets as given (`ready_orders` in `strategy_trial.py`) instead of running them through `backtest.min_trade_weight`; the other strategies are unchanged.
+  - **The 252 sessions** are counted on the stored session calendar on total-return closes; a stock without a close at T or 252 sessions back is not ranked (e.g. GEV and SNDK until a year after listing).
+- **Point in time:** at the two `default_cuts`, the pool's total-return closes are rebuilt from the stored prices and corporate actions up to the cut only, and every holding from the window's first session to the cut must come out the same.
+- **Code:** `quant/strategies/top3_momentum.py` (the rule and its order targets) and `quant/strategies/top3_momentum_trial.py` (the trial and its report: the picks of every quarter, the stocks held most often, and pool equal weight and SPY as context), with the shared `strategy_trial.py`. Tests: `tests/test_strategy_top3_momentum.py` (quarter starts, the 12-month score, the top 3 and their replacement, the reset to one third with no orders in between, the point-in-time check with a later listing, a split and dividends, and the whole command on a small fake market).
+- **Command:** `python -m quant strategy-trial top3-momentum` is the one-time run. It writes `reports/strategies/top3-momentum-trial-<time>.md` and stores nothing but its run log.
+
+**Result (2026-10-22; `reports/strategies/top3-momentum-trial-20261022T190902Z.md`): FAILED**
+
+The run was a single one, made by you. The window was **2014-10-08 .. 2025-10-13** (11 validation years), the same as trials A-D.
+
+```text
+gate                     status  observed
+sharpe_higher            PASS    Sharpe 1.3732 vs 0.9698 for regime_switch [rule_based-v1]
+max_drawdown_no_deeper   FAIL    -47.0% vs -25.0%
+years_higher             PASS    7 of 11 validation years
+point_in_time            PASS    2/2 cuts identical (2018-04-12, 2025-04-15)
+verdict                  FAILED
+```
+
+```text
+window 2014-10-08 .. 2025-10-13      CAGR    Sharpe   max DD   volatility   invested   turnover
+regime_switch [rule_based-v1]        13.2%   0.9698   -25.0%   13.8%        76%        4.1x
+top3_momentum_12m_quarterly          59.3%   1.3732   -47.0%   39.7%       100%        1.7x
+pool equal weight (context)          20.3%   1.1370   -32.1%   17.6%        93%        0.4x
+SPY buy-and-hold (context)           13.6%   0.8078   -33.7%   17.8%       100%        -
+```
+
+- **The drawdown gate failed, so the trial fails.** The Sharpe was much higher (1.37 vs 0.97) and higher in 7 of 11 years, but the max drawdown was almost twice as deep (-47.0% vs -25.0%). The registration named this gate as the likely hardest.
+- **The return is mostly the pool's hindsight, not evidence for the rule:**
+  - **53 of the 135 picks (39%) were among the 13 stocks added by hand on 2026-10-11 after their strong runs** (17.1.3), although they are 16% of the pool: SE (held on 32% of sessions), XYZ (20%), PLTR (16%), TSLA (14%), LULU and MU (11% each), and LITE and RMBS.
+  - The single most held stock was NVDA (45% of sessions), also in the pool because of its run.
+  - A strategy that holds only the pool's three strongest stocks is the one this selection helps most, as stated before the run. The 59% CAGR shows the size of that bias more than the strength of the rule.
+- **Descriptive, decides nothing:**
+  - The volatility was 39.7% a year, about three times the baseline's; 30 different stocks were held over 45 quarters.
+  - The weakest year was 2021-22 (Sharpe -0.81); in mid-2022 the picks rotated into energy (XOM, CVX, SLB) and LLY.
+
+**Outcome of trial E: FAILED.**
+- Nothing changes: `regime_switch` with `rule_based-v1` stays the live strategy, and no holdout check or shadow follows.
+- It is not re-tested with other settings (more stocks, a regime filter, a drawdown limit, another lookback) on this data. A version with a regime filter or position caps would be a new trial chosen after seeing this drawdown, on a pool whose bias this result has just shown.
+- **Not a finding, even descriptively:** the high Sharpe cannot be separated from the hand-picked pool. Only a point-in-time pool (section 30) or forward data could test this idea fairly.
+
+**Confirmed (2026-10-22, owner):**
+- (a) the rule as drafted: 81-stock pool, 12-month total return without a skipped month, top 3 at one third each, quarterly, always invested;
+- (b) the sizing exception (no single-stock or sector cap, no reset between rebalances);
+- (c) the baseline `regime_switch` with `rule_based-v1` and the four pass criteria of 17.1.5;
+- (d) the name `top3_momentum_12m_quarterly`.
+
+All of (a) to (d) were confirmed as written on 2026-10-22. From here on, a change to any of them is a design change recorded below this section before any result, never a silent edit.
+
 ## 17.2 Sizing (section 19)
 
 1. Each held stock gets `1 / (number held)`, capped at `risk.max_position_size`.
