@@ -39,6 +39,8 @@ def add_parser(commands, db_help: str) -> None:
     fetch = sub.add_parser("fetch", help="list new videos of the configured channels and fetch their captions")
     fetch.add_argument("--days", type=int, help="look back this many days (default: sentiment.lookback_days)")
     fetch.add_argument("--channel", metavar="HANDLE", help="only this channel, e.g. @chipstockinvestor")
+    fetch.add_argument("--backfill", action="store_true",
+                       help="list videos back to sentiment.evaluation.backfill_from (S4, section 12.6); their captions come after the forward ones")
     fetch.add_argument("--force-captions", action="store_true",
                        help="ignore sentiment.min_hours_between_caption_fetches and cooldown_hours_after_block (proposal 12.5)")
     fetch.add_argument("--db", help=db_help)
@@ -71,6 +73,10 @@ def add_parser(commands, db_help: str) -> None:
     report.add_argument("--from", dest="start", type=_iso_date, help="first effective date (YYYY-MM-DD)")
     report.add_argument("--to", dest="end", type=_iso_date, help="last effective date")
     report.add_argument("--db", help=db_help)
+    scorecard = sub.add_parser(
+        "scorecard", help="the exploratory creator scorecard (S4, sections 8.2 and 12.6): opinions published up to "
+        "sentiment.evaluation.scored_until only; writes reports/sentiment/scorecard-<date>.md")
+    scorecard.add_argument("--db", help=db_help)
     stock = sub.add_parser("stock", help="every opinion on one stock over time, with quotes and links (read-only)")
     stock.add_argument("ticker", help="a ticker (NVDA, BRK-B) or a name from the alias table (英伟达, Nvidia)")
     stock.add_argument("--from", dest="start", type=_iso_date, help="first effective date (YYYY-MM-DD)")
@@ -88,6 +94,7 @@ def add_parser(commands, db_help: str) -> None:
         "(extract runs even if fetch was partly blocked)")
     run.add_argument("--days", type=int, help="fetch: look back this many days (default: sentiment.lookback_days)")
     run.add_argument("--channel", metavar="HANDLE", help="fetch: only this channel")
+    run.add_argument("--backfill", action="store_true", help="fetch: " + "list videos back to sentiment.evaluation.backfill_from (S4, section 12.6); their captions come after the forward ones")
     run.add_argument("--force-captions", action="store_true",
                      help="fetch: " + "ignore sentiment.min_hours_between_caption_fetches and cooldown_hours_after_block (proposal 12.5)")
     run.add_argument("--limit", type=int, metavar="N", help="extract: at most N videos this run")
@@ -121,6 +128,8 @@ def run(args: argparse.Namespace, settings: Settings) -> int:
         return _run_summarize(args, settings)
     if args.sentiment_command == "report":
         return _run_report(args, settings)
+    if args.sentiment_command == "scorecard":
+        return _run_scorecard(args, settings)
     if args.sentiment_command == "stock":
         return _run_stock(args, settings)
     raise ValueError(f"unknown sentiment command {args.sentiment_command!r}")
@@ -236,9 +245,12 @@ def _run_all(args: argparse.Namespace, settings: Settings) -> int:
     moves on."""
     print("===== [1/4] fetch: new videos and captions =====", flush=True)
     fetched = _run_fetch(argparse.Namespace(days=args.days, channel=args.channel,
-                                            force_captions=args.force_captions, db=args.db), settings)
+                                            force_captions=args.force_captions, backfill=args.backfill, db=args.db),
+                         settings)
     print("\n===== [2/4] extract: opinions =====", flush=True)
-    extracted = _run_extract(argparse.Namespace(limit=args.limit, video=None, model=args.model, reextract=False,
+    # At most one batch per run, forward videos first: a backfill backlog never stops the daily run (12.6).
+    batch = args.limit or settings.sentiment.extraction.max_videos_per_run
+    extracted = _run_extract(argparse.Namespace(limit=batch, video=None, model=args.model, reextract=False,
                                                 yes=args.yes, db=args.db), settings)
     print("\n===== [3/4] summarize: one summary per stock and day =====", flush=True)
     summarized = _run_summarize(argparse.Namespace(start=None, end=None, force=False, db=args.db), settings)
@@ -276,7 +288,13 @@ def _run_extract(args: argparse.Namespace, settings: Settings) -> int:
 
     engine = _engine(settings, args.db)
     try:
-        videos = videos_to_extract(engine, config.backend, model, config.prompt_version, args.video, args.reextract)
+        from datetime import timedelta
+
+        from quant.sentiment.store import now_utc
+
+        forward_since = now_utc() - timedelta(days=settings.sentiment.lookback_days)
+        videos = videos_to_extract(engine, config.backend, model, config.prompt_version, args.video, args.reextract,
+                                   forward_since)
         held = held_back_videos(settings.sentiment.gold.labels_dir)
         held_here = videos["video_id"].isin(held)
         videos = videos[~held_here]
@@ -350,6 +368,32 @@ def _run_gold_export(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if not result.missing else 1
 
 
+def _run_scorecard(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import datetime, timezone
+
+    from quant.sentiment.scorecard import build_scorecard, write_scorecard
+
+    engine = _engine(settings, args.db)
+    try:
+        evaluation = settings.sentiment.evaluation
+        print(f"Scorecard: opinions published up to {evaluation.scored_until}, {evaluation.permutations:,} "
+              "permutations per window (exploratory)", flush=True)
+        card = build_scorecard(engine, settings)
+        path = write_scorecard(card, settings, datetime.now(timezone.utc))
+        counted = ", ".join(f"{s.horizon} sessions: {int(s.table['opinions'].max()) if not s.table.empty else 0}"
+                            for s in card.horizons)
+        queries.record_pipeline_run(engine, "sentiment-scorecard", "scorecard", "OK",
+                                    message=f"{len(card.opinions)} opinions; counted {counted}")
+    except ValueError as exc:
+        _error(f"Scorecard failed: {exc}")
+        return 1
+    finally:
+        engine.dispose()
+    print(f"{len(card.opinions)} opinions up to {card.scored_until}; counted (all creators) {counted}")
+    print(path)
+    return 0
+
+
 def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
     from quant.sentiment.fetch import FETCH_COMMAND, fetch, run_message
     from quant.sentiment.sources import YtDlpSource
@@ -367,7 +411,8 @@ def _run_fetch(args: argparse.Namespace, settings: Settings) -> int:
     engine = _engine(settings, args.db)
     try:
         result = fetch(engine, settings, YtDlpSource(), YouTubeTranscriptSource(), days=args.days,
-                       handle=args.channel, progress=progress, force_captions=args.force_captions)
+                       handle=args.channel, progress=progress, force_captions=args.force_captions,
+                       backfill=getattr(args, "backfill", False))
         print("\nSummary")
         for channel in result.channels:
             print(f"  {channel.handle:22s} listed {channel.listed:3d}, new {channel.new:3d} "

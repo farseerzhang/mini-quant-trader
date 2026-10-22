@@ -3,7 +3,7 @@
 Status (2026-10-22):
 - **Built:** S0 (channels, 12.1), S1 fetch (12.2), S2 extraction (12.3; accepted **provisionally** with Sonnet after a weak review), S3 summaries and daily reports (12.4), plus `sentiment stock` and the dashboard's Sentiment page. 11 channels.
 - **Accepted:** S3, by the owner on 2026-10-22 after a week of daily reports (12.4).
-- **Next:** S4, the 6-month backfill and the exploratory scorecard (8.2); not started.
+- **Next:** S4, the 6-month backfill and the exploratory scorecard (8.2): built (12.6); the backfill is not run yet.
 - **Registered:** the S6 test (9.1, 2026-10-22): forward videos from 2026-10-23 count; it runs once in about July 2027.
 - **Not built:** S4 scorecard, the S6 test code and factor, the Gemini backend, S2 steps 6-8 (Haiku comparison), S3b Reddit (deferred, decision 9). S5 Whisper is dropped (decision 13).
 
@@ -270,11 +270,13 @@ All of (a) to (f) were confirmed as written on 2026-10-22, with haiku for (c) an
 `sentiment` in `config/settings.yaml`:
 - fetching: `lookback_days` (7), `min_duration_seconds` (180), `include_live` (false), `request_delay_seconds` ([8, 15]), `max_captions_per_run` (10), `no_captions_retry_days` (3), `min_hours_between_caption_fetches` (6), `cooldown_hours_after_block` (8);
 - `gold`: `videos`, `labels_dir` (`research/sentiment_ai_reference`), `transcripts_dir`;
-- `extraction`: `backend` (`claude_code`), `model` (`sonnet`), `report_models` ([sonnet, haiku]), `prompt_version` (1), `chunk_minutes` (10), `chunk_overlap_seconds` (30), `quote_match_threshold` (0.85), `max_videos_per_run` (40), `call_timeout_seconds`, `aliases_path`, `tickers_cache`;
+- `extraction`: `backend` (`claude_code`), `model` (`haiku` since 2026-10-22, the model S4 and S6 score), `report_models` ([sonnet, haiku]), `prompt_version` (1), `chunk_minutes` (10), `chunk_overlap_seconds` (30), `quote_match_threshold` (0.85), `max_videos_per_run` (40), `call_timeout_seconds`, `aliases_path`, `tickers_cache`;
 - `summary`: `backend`, `model` (`haiku`), `prompt_version`, `reports_dir`;
 - `channels`: 11 channels with handle, channel id, name, language and style (12.1).
 
-Planned with S4: `evaluation` (horizons [5, 20, 60], pool equal-weight benchmark, `min_samples` 30, 10,000 permutations). Secrets only from `.env` (git-ignored): `GEMINI_API_KEY` and, later, the Reddit credentials. No YouTube key.
+- `evaluation` (S4, 12.6): `horizons` ([5, 20, 60]), `min_samples` (30), `permutations` (10,000), `seed`, `model` (haiku), `scored_until` (2026-10-22, never later), `backfill_from` (2026-04-23).
+
+Secrets only from `.env` (git-ignored): `GEMINI_API_KEY` and, later, the Reddit credentials. No YouTube key.
 
 ---
 
@@ -404,6 +406,58 @@ Each caption costs about three requests (the video page, the player API and the 
 - `run_message` writes the stored message for the CLI, with the markers `captions requested`, `captions forced` and `captions skipped until <time> UTC (<why>)`, so the writer and the check share the constants.
 - A skipped caption step does not make the run fail: it is stored as `OK`.
 - Tests: `CaptionPacingTest` and `test_a_second_fetch_waits_unless_forced` in `test_sentiment_fetch.py`, and two invalid-settings cases.
+
+## 12.6 S4 plan: 6-month backfill and the exploratory scorecard (planned and confirmed 2026-10-22, not built)
+
+**Purpose.** Learn how the creators behave (how often they call stocks, how bullish they are, which stocks) and get a first, exploratory look at whether their calls are followed by excess returns. **S4 decides nothing** (section 9): the creators were picked today and losing videos may be deleted, so backfilled results are biased and only suggest what later questions to ask. The choices marked *(confirm)* were confirmed by the owner on 2026-10-22 as written (see the end of this section).
+
+**The rule that protects S6** *(confirm)*: the scorecard scores **only opinions from videos published up to the end of 2026-10-22 (R)**. Forward opinions (from 2026-10-23) are fetched and extracted every day as now, but **never scored before the S6 test runs** (9.1), so no forward hit rate is seen early.
+
+### Backfill
+
+- **Window** *(confirm)*: videos published **2026-04-23 .. 2026-10-22** (six months before R), for the 11 channels of R; the videos already stored are kept.
+- **Size:** at the current pace (about 150 long videos in the 23 days since 2026-09-29, about 6.5 a day) about **1,000 more videos** need captions and extraction. Shorts, members-only videos and live replays are skipped as now.
+- **The forward run comes first** *(confirm)*:
+  - Today the caption queue is oldest first within the lookback window (3.2), and a backfill would put about 1,000 old videos at its front. With 10 captions per run and at least 6 hours between caption fetches (12.5), new videos could then wait longer than `lookback_days` (7) and be lost to S6.
+  - So the queue changes to: **videos inside the lookback window first** (oldest first, as now), **then backfill videos** (oldest first) with the rest of the run's 10 captions. A forward video never waits behind the backfill.
+- **How it runs:** a backfill option on `sentiment fetch` and `sentiment run` (for example `--backfill-from 2026-04-23`) lists each channel back to that date once and stores the videos as PENDING; every later run then fetches backfill captions after the forward ones. With about 6-7 forward videos a day and up to 40 captions a day, the backfill takes **about 4-6 weeks** of daily runs. The first listing reads about 1,000 video pages (8-15 s apart, about 3-4 hours once).
+- **Extraction** *(confirm)*: the same `claude_code` / **haiku** / prompt version 1 as the forward data (9.1), so backfill and forward opinions are comparable. About 1,000 videos at up to 40 per run uses Pro usage over several weeks; the forward videos are extracted first in each run.
+- **Missing captions stay missing:** a backfill video whose captions cannot be fetched (none, disabled, failed twice) stays as it is; nothing is filled in from other sources.
+
+### Scorecard (`quant sentiment scorecard`, section 8.2 as written)
+
+- **Opinions scored:** VERIFIED, BULLISH or BEARISH, ticker in the 81-stock pool, published up to R; the counting rule of 8.2 (first opinion per creator, stock and stance in each window).
+- **Excess return** for windows of **5, 20 and 60 sessions** from the open of the effective date: the stock's total return minus the pool's equal-weight total return over the same sessions; a beta-adjusted excess return alongside (beta of the stock against SPY over the 252 sessions before the effective date).
+- **Hit:** a bullish call with a positive excess return, a bearish call with a negative one.
+- **Permutation test** (10,000 draws, fixed seed): each opinion keeps its creator, date and stance; its stock is replaced by a random pool stock with a price that day. Reported per creator and pooled.
+- **Each cell:** counted opinions, hit rate, mean excess return, p-value; below `min_samples` (30) only the counts. P-values are **uncorrected and exploratory** (11 creators x 3 windows x 2 measures, so several "significant" cells are expected by chance).
+- **Descriptive:** the share of bullish calls per creator, the stocks named most often, horizons, conviction, calls on ETFs and on out-of-pool stocks (counted, not scored), and unpriceable tickers.
+- **Out-of-pool stocks** *(confirm)*: not priced in this version; `sentiment_prices` (6) stays unbuilt. They are listed with their counts only.
+- **Output:** `reports/sentiment/scorecard-<date>.md`; no dashboard page in this version. Computed from the stored opinions and prices on each run; **no new table**.
+- **Settings:** a new `sentiment.evaluation` section (horizons [5, 20, 60], `min_samples` 30, `permutations` 10,000, `scored_until` 2026-10-22, `backfill_from` 2026-04-23).
+
+### Tests and documents
+
+- Tests (fakes and in-memory databases only, never YouTube, Yahoo or `claude -p`): forward videos are fetched before backfill videos and never wait behind them; the backfill listing stops at its date; the scorecard ignores opinions published after R; excess returns, the counting rule and hits on hand-made prices; the permutation test on a case with a known answer; cells below 30 show counts only.
+- Documents: this section (as built), sections 3.2, 8.2, 10 and 12, the README's sentiment section.
+
+**Confirmed (2026-10-22, owner):**
+- (a) the S6 protection: only opinions published up to 2026-10-22 are ever scored by S4;
+- (b) the backfill window 2026-04-23 .. 2026-10-22;
+- (c) the caption queue: forward videos first, backfill after;
+- (d) backfill extraction with haiku, prompt version 1;
+- (e) out-of-pool stocks counted but not priced in this version;
+- (f) the scorecard as in 8.2 (5 / 20 / 60 sessions, pool equal-weight benchmark, beta-adjusted alongside, permutation test, 30 minimum), exploratory only.
+
+All of (a) to (f) were confirmed as written on 2026-10-22. A later change is recorded below this section before it is built.
+
+**As built (2026-10-22; the backfill not run yet):**
+- **Settings:** `sentiment.evaluation` (horizons [5, 20, 60], `min_samples` 30, `permutations` 10,000, `seed` 42, `model` haiku, `scored_until` 2026-10-22, `backfill_from` 2026-04-23). Loading the settings **refuses a `scored_until` after 2026-10-22** (the S6 registration date), and the scorecard caps it there again, so forward opinions cannot be scored by mistake.
+- **Backfill:** `--backfill` on `sentiment fetch` and `sentiment run` lists each channel back to `backfill_from` (one long listing; afterwards ordinary runs are enough). The caption queue is now: forward videos (inside `lookback_days`) oldest first, then the recent no-caption retries, then **backfill videos (from `backfill_from` up to the lookback) oldest first**. This applies on every run, with or without `--backfill`, so backfill captions keep coming after the forward ones until none is left.
+- **Extraction order:** forward videos (published within `lookback_days`) first, then older ones, oldest first. **`sentiment run` now extracts at most one batch (`max_videos_per_run`, 40) per run** instead of refusing a larger backlog, so the backfill never stops the daily run; `sentiment extract` on its own still asks for `--yes` above 40.
+- **The model:** the backfill must be extracted with haiku (d). `extraction.model` was set to **haiku** on 2026-10-22 (owner), so a plain `sentiment run` extracts with the model S4 and S6 score. Side effects: `review-export` now defaults to haiku, and in the daily reports the quotes taken from sonnet extractions are now the ones marked "by sonnet" (`report_models` still prefers sonnet where a video has both).
+- **Scorecard:** `quant sentiment scorecard` (`quant/sentiment/scorecard.py`) writes `reports/sentiment/scorecard-<date>.md`. As 8.2 and (f): windows of 5, 20 and 60 sessions from the open of the effective date to the open h sessions later, against the pool's equal weight; beta-adjusted alongside (252 daily returns before the effective date, at least 200); the counting rule; the one-sided permutation test per creator and pooled; counts only below 30. Descriptive tables: per creator (videos, opinions, bullish share, pool / other stocks / ETFs), the stocks named most often, stances, horizons, conviction. Opinions whose window has not ended are counted as pending and left out. No new table.
+- **Tests:** `tests/test_sentiment_scorecard.py` (the settings guard, the backfill listing and the forward-first caption queue over two runs, the extraction order, the excess return, the counting rule, a known good and bad picker in the permutation test, counts-only cells, and the command scoring only haiku opinions up to `scored_until`).
 
 ---
 

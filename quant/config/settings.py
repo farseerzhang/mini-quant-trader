@@ -588,6 +588,36 @@ class GoldSettings:
             raise ConfigError("sentiment.gold.labels_dir and transcripts_dir must differ")
 
 
+# The S6 registration date (sentiment_proposal.md 9.1): S4 never scores an opinion published after it.
+S6_REGISTRATION_DATE = date(2026, 10, 22)
+
+
+@dataclass(frozen=True)
+class EvaluationSettings:
+    """The S4 backfill and exploratory scorecard (sentiment_proposal.md 8.2, 12.6)."""
+
+    horizons: tuple[int, ...]  # excess-return windows in sessions
+    min_samples: int  # cells with fewer counted opinions show counts only
+    permutations: int  # draws of the permutation test
+    seed: int  # the permutation test's random seed
+    model: str  # the extraction scored (with extraction.backend and prompt_version): haiku, as S6
+    scored_until: date  # only opinions published up to the end of this day (UTC) are scored
+    backfill_from: date  # `sentiment fetch --backfill` lists videos back to this day
+
+    def __post_init__(self) -> None:
+        if not self.horizons or any(h < 1 for h in self.horizons):
+            raise ConfigError("sentiment.evaluation.horizons must be a list of positive session counts")
+        if self.min_samples < 1 or self.permutations < 100:
+            raise ConfigError("sentiment.evaluation.min_samples must be >= 1 and permutations >= 100")
+        if not str(self.model).strip():
+            raise ConfigError("sentiment.evaluation.model must not be empty")
+        if self.scored_until > S6_REGISTRATION_DATE:
+            raise ConfigError(f"sentiment.evaluation.scored_until must not be after {S6_REGISTRATION_DATE} "
+                              "(S6 registration, sentiment_proposal.md 9.1): forward opinions are scored only by S6")
+        if self.backfill_from >= self.scored_until:
+            raise ConfigError("sentiment.evaluation.backfill_from must be before scored_until")
+
+
 EXTRACTION_BACKENDS = ("claude_code",)  # gemini: S2 step 8
 
 
@@ -666,6 +696,7 @@ class SentimentSettings:
     gold: GoldSettings
     extraction: ExtractionSettings
     summary: SummarySettings
+    evaluation: EvaluationSettings
     channels: tuple[ChannelSettings, ...]
 
     def __post_init__(self) -> None:
@@ -1005,7 +1036,10 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
                           "gold": _subsection(GoldSettings, "sentiment.gold"),
                           "extraction": _subsection(ExtractionSettings, "sentiment.extraction",
                                                     {"report_models": _as_name_tuple}),
-                          "summary": _subsection(SummarySettings, "sentiment.summary")}),
+                          "summary": _subsection(SummarySettings, "sentiment.summary"),
+                          "evaluation": _subsection(EvaluationSettings, "sentiment.evaluation",
+                                                    {"horizons": _as_int_tuple, "scored_until": _as_date,
+                                                     "backfill_from": _as_date})}),
         altdata=_build(AltdataSettings, "altdata", _section(raw, "altdata"),
                        {"sec": _subsection(SecSettings, "altdata.sec", {"insider_backfill_from": _as_date,
                                                                          "extra_ciks": _as_extra_ciks})}),

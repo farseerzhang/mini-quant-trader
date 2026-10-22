@@ -56,12 +56,18 @@ def insert_video(engine: Engine, values: Mapping[str, Any]) -> bool:
 
 
 def videos_needing_transcripts(engine: Engine, channel_ids: Sequence[str], since: datetime,
-                               retry_no_captions_since: datetime) -> pd.DataFrame:
+                               retry_no_captions_since: datetime,
+                               backfill_from: datetime | None = None) -> pd.DataFrame:
     """PENDING and FAILED videos published since `since`, oldest first; then NO_TRANSCRIPT videos
     published since `retry_no_captions_since` (captions often appear hours after publishing),
-    so retries never crowd out videos not tried yet."""
+    so retries never crowd out videos not tried yet; then, with `backfill_from`, PENDING and FAILED
+    backfill videos published from it up to `since`, oldest first (sentiment_proposal.md 12.6: a
+    forward video never waits behind the backfill)."""
     v, c = tables.sentiment_videos, tables.sentiment_channels
     retry = v.c.transcript_status == "NO_TRANSCRIPT"
+    untried = v.c.transcript_status.in_(["PENDING", "FAILED"])
+    backfill = and_(untried, v.c.published_at < since,
+                    v.c.published_at >= backfill_from) if backfill_from is not None else None
     stmt = (
         select(v.c.video_id, v.c.channel_id, v.c.title, v.c.published_at, v.c.attempts, v.c.transcript_status,
                c.c.language, c.c.handle)
@@ -69,11 +75,13 @@ def videos_needing_transcripts(engine: Engine, channel_ids: Sequence[str], since
         .where(and_(
             v.c.channel_id.in_(list(channel_ids)),
             or_(
-                and_(v.c.transcript_status.in_(["PENDING", "FAILED"]), v.c.published_at >= since),
+                and_(untried, v.c.published_at >= since),
                 and_(retry, v.c.published_at >= max(since, retry_no_captions_since)),
+                *([backfill] if backfill is not None else []),
             ),
         ))
-        .order_by(case((retry, 1), else_=0), v.c.published_at)
+        .order_by(case((retry, 1), *([(backfill, 2)] if backfill is not None else []), else_=0),
+                  v.c.published_at)
     )
     with engine.connect() as conn:
         return pd.DataFrame(conn.execute(stmt).mappings().all(),

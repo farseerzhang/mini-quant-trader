@@ -27,12 +27,12 @@ import difflib
 import json
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 import pandas as pd
-from sqlalchemy import Engine, and_, delete, select
+from sqlalchemy import Engine, and_, case, delete, select
 
 from quant.config.settings import Settings
 from quant.data.calendar import first_session_opening_after
@@ -249,7 +249,11 @@ def held_back_videos(labels_dir: str | Path) -> set[str]:
 
 
 def videos_to_extract(engine: Engine, backend: str, model: str, prompt_version: int,
-                      video_ids: list[str] | None = None, reextract: bool = False) -> pd.DataFrame:
+                      video_ids: list[str] | None = None, reextract: bool = False,
+                      forward_since: datetime | None = None) -> pd.DataFrame:
+    """Videos with a transcript and no OK extraction for this backend, model and prompt version, oldest
+    first; with ``forward_since``, videos published since then come first (sentiment_proposal.md 12.6:
+    the forward data before the backfill)."""
     v, t, c, x = (tables.sentiment_videos, tables.sentiment_transcripts, tables.sentiment_channels,
                   tables.sentiment_extractions)
     done = select(x.c.video_id).where(and_(x.c.backend == backend, x.c.model == model,
@@ -257,7 +261,11 @@ def videos_to_extract(engine: Engine, backend: str, model: str, prompt_version: 
     stmt = (select(v.c.video_id, v.c.channel_id, v.c.title, v.c.published_at, c.c.name, c.c.language,
                    t.c.segments_json, t.c.segments_simplified_json)
             .join(t, t.c.video_id == v.c.video_id).join(c, c.c.channel_id == v.c.channel_id)
-            .where(v.c.transcript_status == "OK").order_by(v.c.published_at))
+            .where(v.c.transcript_status == "OK"))
+    if forward_since is not None:
+        stmt = stmt.order_by(case((v.c.published_at >= forward_since, 0), else_=1), v.c.published_at)
+    else:
+        stmt = stmt.order_by(v.c.published_at)
     if not reextract:
         stmt = stmt.where(v.c.video_id.not_in(done))
     if video_ids:

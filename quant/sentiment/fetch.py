@@ -18,6 +18,11 @@ sentiment.no_captions_retry_days, because captions often appear hours after publ
 retries come after every video not tried yet. If YouTube blocks the IP, the run stops at once;
 the remaining videos stay PENDING.
 
+Backfill (sentiment_proposal.md 12.6): `backfill` lists each channel back to
+sentiment.evaluation.backfill_from instead of the lookback. Captions of backfill videos (published
+from backfill_from up to the lookback) are fetched on every run, but only after every forward video
+and retry, so the S6 forward data never waits behind the backfill.
+
 Caption pacing (sentiment_proposal.md 12.5): the caption step runs only
 sentiment.min_hours_between_caption_fetches after the last fetch that requested captions, and
 sentiment.cooldown_hours_after_block after a blocked one; the times come from the
@@ -33,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
 
+import pandas as pd
 from sqlalchemy import Engine, select
 
 from quant.config.settings import ChannelSettings, SentimentSettings, Settings
@@ -233,13 +239,16 @@ def _list_channel(engine: Engine, channel: ChannelSettings, since: datetime, min
 
 def _fetch_transcripts(engine: Engine, channels: list[ChannelSettings], since: datetime, retry_since: datetime,
                        source: TranscriptSource, pacer: _Pacer, result: FetchResult, progress: Progress,
-                       limit: int) -> None:
-    waiting = store.videos_needing_transcripts(engine, [c.channel_id for c in channels], since, retry_since)
-    pending = waiting.head(limit)  # not tried yet / failed, oldest first; then recent ones without captions
+                       limit: int, backfill_from: datetime | None = None) -> None:
+    waiting = store.videos_needing_transcripts(engine, [c.channel_id for c in channels], since, retry_since,
+                                               backfill_from)
+    pending = waiting.head(limit)  # forward first, oldest first; then retries; then the backfill
     result.captions_left = len(waiting) - len(pending)
     retries = int((waiting["transcript_status"] == "NO_TRANSCRIPT").sum())
+    backfill = int((pd.to_datetime(waiting["published_at"]) < since).sum()) if len(waiting) else 0  # retries are recent
     progress(f"Captions: {len(waiting)} video(s) waiting"
              + (f" ({retries} recent without captions, asked again)" if retries else "")
+             + (f" ({backfill} from the backfill, after the forward videos)" if backfill > 0 else "")
              + f"; fetching {len(pending)} this run"
              + (f" (sentiment.max_captions_per_run), {result.captions_left} left for the next run"
                 if result.captions_left else ""))
@@ -283,7 +292,7 @@ def _fetch_transcripts(engine: Engine, channels: list[ChannelSettings], since: d
 def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcript_source: TranscriptSource,
           now: datetime | None = None, days: int | None = None, handle: str | None = None,
           sleep: Callable[[float], None] | None = None, rng: random.Random | None = None,
-          progress: Progress | None = None, force_captions: bool = False) -> FetchResult:
+          progress: Progress | None = None, force_captions: bool = False, backfill: bool = False) -> FetchResult:
     """List every configured channel (or one), store new videos, then fetch missing captions
     unless the caption pacing says to wait (`force_captions` ignores it).
 
@@ -294,16 +303,21 @@ def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcr
     now = now or store.now_utc()
     since = now - timedelta(days=days)
     retry_since = now - timedelta(days=config.no_captions_retry_days)
+    backfill_from = datetime.combine(config.evaluation.backfill_from, datetime.min.time())
+    listed_since = min(since, backfill_from) if backfill else since
+    listed_days = max(days, (now - backfill_from).days + 1) if backfill else days
     channels = [config.channel(handle)] if handle else list(config.channels)
     store.sync_channels(engine, config.channels)
     pacer = _Pacer(config.request_delay_seconds, sleep or time.sleep, rng or random.Random())
     result = FetchResult(since=since)
     low, high = config.request_delay_seconds
-    progress(f"Videos published since {since:%Y-%m-%d %H:%M} UTC ({low:g}-{high:g} s wait between requests)")
+    progress(f"Videos published since {listed_since:%Y-%m-%d %H:%M} UTC"
+             + (" (backfill listing)" if backfill else "") + f" ({low:g}-{high:g} s wait between requests)")
     for number, channel in enumerate(channels, start=1):
         progress(f"[{number}/{len(channels)}] {channel.handle} ({channel.name})")
-        result.channels.append(_list_channel(engine, channel, since, config.min_duration_seconds,
-                                             config.include_live, video_source, pacer, scan_limit(days), progress))
+        result.channels.append(_list_channel(engine, channel, listed_since, config.min_duration_seconds,
+                                             config.include_live, video_source, pacer, scan_limit(listed_days),
+                                             progress))
     wait = next_caption_fetch(engine, config, now)
     if wait is not None and not force_captions:
         result.captions_waiting_until, result.captions_wait_reason = wait
@@ -314,5 +328,5 @@ def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcr
         result.captions_forced = True
         progress(f"Captions: forced (otherwise not before {wait[0]:%Y-%m-%d %H:%M} UTC, {wait[1]})")
     _fetch_transcripts(engine, channels, since, retry_since, transcript_source, pacer, result, progress,
-                       config.max_captions_per_run)
+                       config.max_captions_per_run, backfill_from)
     return result

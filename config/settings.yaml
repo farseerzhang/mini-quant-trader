@@ -180,7 +180,7 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     transcripts_dir: data/sentiment_gold/transcripts  # reading copies; git-ignored, delete any time
   extraction:                      # opinions from transcripts (sentiment_proposal.md section 4)
     backend: claude_code           # claude_code (your Pro subscription, `claude -p`); gemini comes later
-    model: sonnet                  # placeholder until the S2 comparison; `extract --model haiku` overrides
+    model: haiku                   # the model S4 and S6 score (sentiment_proposal.md 9.1, 12.6); `--model` overrides
     report_models: [sonnet, haiku] # reports use, per video, the first of these that extracted it
     prompt_version: 1              # bump when the prompt changes; each version's opinions are kept apart
     chunk_minutes: 10              # transcripts are sent in pieces of this length ...
@@ -195,6 +195,14 @@ sentiment:                         # creator opinion factor (sentiment_proposal.
     model: haiku                   # the input is short and already clean, so a cheaper model is enough
     prompt_version: 1
     reports_dir: reports/sentiment # one Markdown report per trading day: reports/sentiment/<date>.md
+  evaluation:                      # S4: backfill and exploratory scorecard (sentiment_proposal.md 8.2, 12.6)
+    horizons: [5, 20, 60]          # excess-return windows in sessions
+    min_samples: 30                # fewer counted opinions in a cell: counts only
+    permutations: 10000            # draws of the permutation test
+    seed: 42
+    model: haiku                   # the extraction scored (extraction.backend, prompt_version), as S6 (9.1)
+    scored_until: 2026-10-22       # never after the S6 registration date: forward opinions are scored only by S6
+    backfill_from: 2026-04-23      # `sentiment fetch --backfill` lists videos back to this day
 
   channels:                        # chosen after S0 (sentiment_proposal.md section 12.1)
     - {handle: "@FinancialEducation", channel_id: UCnMn36GT_H0X-w5_ckLtlgQ, name: "Financial Education", language: en, style: "aggressive growth"}
