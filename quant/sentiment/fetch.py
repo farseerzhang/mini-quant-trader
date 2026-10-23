@@ -148,6 +148,14 @@ def scan_limit(days: int) -> int:
     return 3 * days + 10
 
 
+def backfill_scan_limit(days: int) -> int:
+    """The listing cap of a backfill (sentiment_proposal.md 12.6): 10 entries a day, so a channel posting
+    about 3 videos a day still reaches backfill_from. The flat listing is cheap (one request per page of
+    entries), and the walk still stops at the first video older than the window, so a high cap adds no
+    video-page requests."""
+    return 10 * days + 10
+
+
 class _Pacer:
     """A random wait from sentiment.request_delay_seconds before every request but the first."""
 
@@ -232,6 +240,10 @@ def _list_channel(engine: Engine, channel: ChannelSettings, since: datetime, min
             record(video.video_id, title, "SKIPPED", "short", **info)
         else:
             record(video.video_id, title, "PENDING", **info)
+    else:  # no video older than the window was reached
+        if len(listed) >= limit:
+            progress(f"    the listing reached its cap of {limit} entries before the start of the window: "
+                     "older videos may be missing")
     if result.new == 0 and not result.errors:
         progress("    no new videos")
     return result
@@ -316,7 +328,8 @@ def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcr
     for number, channel in enumerate(channels, start=1):
         progress(f"[{number}/{len(channels)}] {channel.handle} ({channel.name})")
         result.channels.append(_list_channel(engine, channel, listed_since, config.min_duration_seconds,
-                                             config.include_live, video_source, pacer, scan_limit(listed_days),
+                                             config.include_live, video_source, pacer,
+                                             (backfill_scan_limit if backfill else scan_limit)(listed_days),
                                              progress))
     wait = next_caption_fetch(engine, config, now)
     if wait is not None and not force_captions:

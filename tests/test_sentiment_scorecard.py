@@ -97,6 +97,43 @@ class BackfillFetchTest(unittest.TestCase):
         self.assertEqual([r[0] for r in captions.requests], ["newer", "old2"])  # then the oldest backfill video
 
 
+    def test_a_backfill_listing_reads_10_entries_a_day_and_warns_when_cut_off(self):
+        limits = []
+
+        class RecordingVideos(FakeVideos):
+            def list_channel(self, handle, limit):
+                limits.append(limit)
+                return super().list_channel(handle, limit)
+
+        class AnyCaptions(FakeCaptions):
+            def fetch(self, video_id, languages):
+                return _captions()
+
+        lines = []
+        listing = {CHIP: [_listed("a"), _listed("b")]}
+        pages = {"a": _page("a", 24), "b": _page("b", 48)}
+        fetch(self.engine, self.settings, RecordingVideos(listing, pages), AnyCaptions({}), now=NOW, backfill=True,
+              progress=lines.append)
+        days = (NOW - datetime(2026, 9, 1)).days + 1
+        self.assertEqual(limits, [10 * days + 10])
+        self.assertFalse(any("reached its cap" in line for line in lines))  # the listing simply ended
+
+        # A normal run whose short listing is full of recent videos is not a cut-off ...
+        lines.clear()
+        listing = {CHIP: [_listed(f"r{i}") for i in range(40)]}
+        pages = {f"r{i}": _page(f"r{i}", 1 + i) for i in range(40)}
+        fetch(self.engine, self.settings, FakeVideos(listing, pages), AnyCaptions({}), now=NOW,
+              progress=lines.append)
+        cut = [line for line in lines if "reached its cap" in line]
+        self.assertEqual(len(cut), 1)  # ... unless no entry older than the window was reached
+        lines.clear()
+        listing = {CHIP: [_listed(f"r{i}") for i in range(5)] + [_listed("old")]}  # the window's start is reached
+        pages["old"] = _page("old", 24 * 20)
+        fetch(self.engine, self.settings, FakeVideos(listing, pages), AnyCaptions({}), now=NOW, days=1,
+              progress=lines.append)
+        self.assertFalse(any("reached its cap" in line for line in lines))
+
+
 class ExtractionOrderTest(unittest.TestCase):
     def test_forward_videos_are_extracted_first(self):
         engine = create_db_engine(":memory:", 1000)
