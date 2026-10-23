@@ -118,14 +118,14 @@ class BackfillFetchTest(unittest.TestCase):
         self.assertEqual(limits, [10 * days + 10])
         self.assertFalse(any("reached its cap" in line for line in lines))  # the listing simply ended
 
-        # A normal run whose short listing is full of recent videos is not a cut-off ...
+        # A normal run uses the same 10 entries a day (80 for 7 days); a full listing of recent videos ...
         lines.clear()
-        listing = {CHIP: [_listed(f"r{i}") for i in range(40)]}
-        pages = {f"r{i}": _page(f"r{i}", 1 + i) for i in range(40)}
+        listing = {CHIP: [_listed(f"r{i}") for i in range(90)]}  # 90 in 7 days: more than the cap of 80
+        pages = {f"r{i}": _page(f"r{i}", 1 + i) for i in range(90)}
         fetch(self.engine, self.settings, FakeVideos(listing, pages), AnyCaptions({}), now=NOW,
               progress=lines.append)
         cut = [line for line in lines if "reached its cap" in line]
-        self.assertEqual(len(cut), 1)  # ... unless no entry older than the window was reached
+        self.assertEqual(len(cut), 1)  # ... is a cut-off when no entry older than the window was reached
         lines.clear()
         listing = {CHIP: [_listed(f"r{i}") for i in range(5)] + [_listed("old")]}  # the window's start is reached
         pages["old"] = _page("old", 24 * 20)

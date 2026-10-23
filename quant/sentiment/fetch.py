@@ -144,15 +144,10 @@ def next_caption_fetch(engine: Engine, config: SentimentSettings, now: datetime)
 
 
 def scan_limit(days: int) -> int:
-    """How many listing entries to read at most: a few videos a day plus Shorts and members-only."""
-    return 3 * days + 10
-
-
-def backfill_scan_limit(days: int) -> int:
-    """The listing cap of a backfill (sentiment_proposal.md 12.6): 10 entries a day, so a channel posting
-    about 3 videos a day still reaches backfill_from. The flat listing is cheap (one request per page of
-    entries), and the walk still stops at the first video older than the window, so a high cap adds no
-    video-page requests."""
+    """How many listing entries to read at most (sentiment_proposal.md 12.6): 10 a day of the window, so
+    a channel posting about 5 videos a day still reaches the window's start. The flat listing is cheap
+    (one request per page of entries), and the walk stops at the first video older than the window, so a
+    high cap adds no video-page requests."""
     return 10 * days + 10
 
 
@@ -329,7 +324,7 @@ def fetch(engine: Engine, settings: Settings, video_source: VideoSource, transcr
         progress(f"[{number}/{len(channels)}] {channel.handle} ({channel.name})")
         result.channels.append(_list_channel(engine, channel, listed_since, config.min_duration_seconds,
                                              config.include_live, video_source, pacer,
-                                             (backfill_scan_limit if backfill else scan_limit)(listed_days),
+                                             scan_limit(listed_days),
                                              progress))
     wait = next_caption_fetch(engine, config, now)
     if wait is not None and not force_captions:
