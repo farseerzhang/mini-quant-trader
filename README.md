@@ -18,9 +18,9 @@ Mini Quant Trader is a personal research system designed to:
 
 ## Current Status
 
-**Phase 10 - Forward testing** (Built: every evening the live strategy and two shadow strategies are frozen, paper portfolios trade them, your real account is replayed from a trade log, and `quant forward-report` and the dashboard score them all; the first look at the results is after 6 months). No ML predictor and no HMM regime passed its gates (Phases 5-7), so the signals come from the rule-based `regime_switch` strategy with the rule-based regime.
+**Phase 10 - Forward testing, run 2** (since 2026-10-16). Every evening the live strategy and three shadow strategies are frozen, paper portfolios trade them, your real account is read from Trading 212 and IBKR, and `quant forward-report` and the dashboard score them all; the first look at the results is after about 6 months, the verdict after 12. No ML predictor, HMM regime or alternative strategy has clearly beaten the rule-based `regime_switch` strategy with the rule-based regime (Phases 5-7, and the trials in sections 12, 13, 15.4 and 17.1 of `proposal.md`), so it drives the signals.
 
-The project is currently in early development. Implemented features include:
+Implemented features include:
 - SQLite database with WAL mode for concurrent access
 - Market data provider abstraction (YFinance)
 - Incremental market data downloader
@@ -34,14 +34,19 @@ The project is currently in early development. Implemented features include:
 - VectorBT backtests against SPY, equal weight and a random baseline, saved per run
 - A filtered, walk-forward HMM market regime as a REGIME candidate (`quant retrain --role regime`)
 - Logistic Regression, Random Forest and XGBoost predictors with purged walk-forward validation, calibration, pre-defined gates and a model registry (`quant retrain`)
-- A signal engine: your positions file, the strategy's target weights at the latest close (identical to the backtest's), a risk layer, BUY / HOLD / REDUCE / EXIT with a hold band, suggested shares and a written reason per signal, stored in `signals` (`quant generate-signals`)
+- A signal engine: your holdings, the strategy's target weights at the latest close (identical to the backtest's), a risk layer, BUY / HOLD / REDUCE / EXIT with a hold band, suggested shares and a written reason per signal, stored in `signals` (`quant generate-signals`)
+- A forward test with frozen evening targets, paper portfolios and your real accounts read through the brokers' read-only APIs (`quant forward-test`, `quant forward-report`, `quant broker`)
+- One-time, pre-registered research trials of regimes and strategies (`quant regime-*-trial`, `quant strategy-trial`)
+- Research modules that never reach the signals: creator opinions from YouTube (`quant sentiment`), SEC insider trades, analyst changes and option chains (`quant altdata`)
+- A Streamlit dashboard, database backups and a log file
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.10 or higher (developed on 3.12)
 - pip
+- For the sentiment extraction: Claude Code (`claude`) logged in with a Pro subscription
 
 ### Setup
 
@@ -56,13 +61,7 @@ cd mini-quant-trader
 pip install -e .
 ```
 
-This will install the required packages:
-- pandas >= 2.0
-- numpy >= 1.24
-- yfinance >= 0.2.54
-- SQLAlchemy >= 2.0
-- exchange-calendars >= 4.5
-- PyYAML >= 6.0
+This installs the packages listed in `pyproject.toml`: pandas, numpy, yfinance, SQLAlchemy, exchange-calendars and PyYAML for the core; vectorbt for the backtests; scikit-learn, joblib, xgboost and hmmlearn for the models; streamlit for the dashboard; yt-dlp, youtube-transcript-api and opencc for the creator opinions; python-dotenv for the broker credentials in `.env`.
 
 ## Usage
 
@@ -78,17 +77,29 @@ Run every stage in one step:
 python -m quant run-daily
 ```
 
-This runs `update-market-data`, `calculate-features`, `calculate-regime`, `generate-signals` and `forward-test` in that order (they are described below). A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features, the regime and the signals are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`, and `--reasons` like `generate-signals`.
+It runs seven stages in order (described below):
 
-A typical day, after the US close (and before the next open, so the forward test can freeze the day):
+1. `update-market-data`
+2. `calculate-features`
+3. `calculate-regime`
+4. broker snapshots (`broker sync-accounts`; skipped without credentials, never stops the run)
+5. `generate-signals`
+6. `forward-test` (the evening freeze)
+7. option chains (research only, never stops the run)
 
-1. Add any fills since the last run to `data/trades.csv` (see Forward Testing; before the forward test starts, update `data/positions.csv` instead).
-2. Run `python -m quant run-daily --reasons`.
-3. Read the signals. They are computed at the last close and meant for the next open; the suggested shares are estimates at that close.
+A stage that fails stops the run, because the next stage reads its output. Symbols that fail to download do not stop it: features, the regime and the signals are calculated from the stored data, and the command still exits with code 1. Every stage is safe to rerun. It accepts `--initial-date` and `--db` like `update-market-data`, and `--reasons` like `generate-signals`.
+
+A typical day:
+
+1. After the US close, run `python -m quant run-daily --reasons` (or let a scheduled task do it, see Scheduled Runs). It must run **before the next open** so the forward test can freeze the day, and within 4 hours of the close for the option chains.
+2. Read the signals. They are computed at the last close and meant for the next open; the suggested shares are estimates at that close.
+3. Check `python -m quant status` now and then: it warns about missing data or an unfrozen session.
 
 #### Your Positions
 
-The signals compare the strategy's target weights with what you hold. List your holdings in `data/positions.csv` (the path is `positions.path`; `data/` is git-ignored, so the file stays private):
+The signals compare the strategy's target weights with what you hold. **In forward-test run 2 your holdings come from the broker snapshots** (Trading 212 and IBKR, see Forward Testing), so there is nothing to type. The positions file below is read only when no forward-test run is open (for example between ending one run and starting the next): then the signals use it, or all cash without it. Every new run starts from the brokers (`forward-test --start`), and `data/trades.csv` is no longer used.
+
+List your holdings in `data/positions.csv` (the path is `positions.path`; `data/` is git-ignored, so the file stays private):
 
 ```text
 symbol,quantity,cost_basis
@@ -106,7 +117,7 @@ CASH,25000,
 
 Holdings are valued at the as-traded close of the signal session. Each run stores the file as that session's snapshot in the `positions` table.
 
-Once the forward test has started, this file is **read only once, as its start**: your holdings then come from the start plus `data/trades.csv`, and the signals use those. Do not edit the file again (`status` warns if you do).
+In a run started from this file (as run 1 was), it is **read only once, as its start**: your holdings then come from the start plus `data/trades.csv`. Do not edit the file again during such a run (`status` warns if you do).
 
 #### Generate Signals
 
@@ -177,6 +188,20 @@ python -m quant backtest --evaluate-holdout
 
 Orders are decided at the close and filled at the next open, with fees, slippage and a minimum trade size from the `backtest` settings; the strategies are described in section 17 of `proposal.md` and the engine in section 20.1. The report shows the development period. The holdout (the last `retrain.validation.holdout_months`) is shown only with `--evaluate-holdout`; every evaluation is logged in `pipeline_runs`, and the report says how many times the holdout has been viewed. Each run is saved as a batch in `backtest_runs` (metrics, costs, parameters, config hash, git commit) and `backtest_equity` (daily value), with holdout rows only when it was evaluated. A run takes about 40 seconds, mostly the random baseline.
 
+#### Pre-registered Trials (one-time research)
+
+Each trial was written into `proposal.md` before any result, run once, and its result recorded there, pass or fail. The commands stay for the record; re-running one is not a new test.
+
+```bash
+python -m quant regime-bond-trial
+python -m quant regime-rate-shocks-trial
+python -m quant strategy-trial dual-momentum
+python -m quant strategy-trial top3-momentum
+```
+
+- Regime trials: `regime-bond-trial`, `regime-combo-trial`, `regime-rule-v2-holdout`, `regime-rate-shocks-trial` (sections 12.5, 12.7 and 13.3), reports in `reports/regime/`.
+- Strategy trials: `strategy-trial` with `dual-momentum`, `momentum-regime`, `volatility-target`, `sector-rotation` (section 17.1.5) and `top3-momentum` (section 17.1.6), against `regime_switch` with `rule_based-v1` on the same window and costs; reports in `reports/strategies/`. All five failed their gates; the summary is in section 17.1.5.5.
+
 #### Retrain a Predictor (manual)
 
 Train and validate a machine-learning stock predictor, and register it as a candidate:
@@ -224,7 +249,7 @@ A read-only view of the database in the browser (it never writes or triggers any
 
 The only clean evidence left is what happens from now on. Every evening the system freezes what each strategy wanted at that close, and later scores it against what actually happened. The rules were fixed before any forward data (Phase 10 in section 29 of `proposal.md`).
 
-**Your accounts read from the brokers (run 2 design).** Instead of typing positions and trades, `real` can be your Trading 212 and IBKR accounts, combined in USD, read through their read-only APIs.
+**Run 2 (open since 2026-10-16): your accounts read from the brokers.** `real` is your Trading 212 and IBKR accounts, combined in USD, read through their read-only APIs. Every new run starts this way; run 1 (2026-10-12 .. 10-16, typed positions and trades) is kept for reading.
 
 - **Setup:** put your read-only credentials in `.env`; `.env.example` lists the variables. Check the connection with:
 
@@ -256,20 +281,13 @@ The only clean evidence left is what happens from now on. Every evening the syst
 | `live` | `regime_switch` with the regime in use: the signals you see |
 | `shadow_hmm` | `regime_switch` with the retired HMM regime (never traded) |
 | `shadow_lr` | `ml_select` with the logistic regression candidate (never traded) |
-| `real` | your account: `positions.csv` at the start plus `trades.csv` |
+| `shadow_rule_bonds` | `regime_switch` with the bond-input regime `rule_bonds-v1` (never traded) |
+| `real` | your own portfolio: both broker accounts in USD (run 2) |
 | `SPY` | buy-and-hold from the start |
 
-Shadows are set in `forward_test.shadows`. Paper portfolios start with your account's value in cash and trade their frozen targets at the next open with the backtest's costs.
+Shadows are set in `forward_test.shadows`. Paper portfolios start with your account's value in cash and trade their frozen targets at the next open with the backtest's costs. From the start, `run-daily` freezes every evening. A session is frozen only before the next market open (a whole evening and night, or a weekend); a session you miss is counted as missed and never added later. Paper portfolios keep their last targets over a missed day.
 
-**Start, once,** on an evening after the close and before the next open, with your real account in `data/positions.csv`:
-
-```bash
-python -m quant forward-test --start
-```
-
-It prints the start date and value (check it against your account). From then on `run-daily` freezes every evening. A session is frozen only before the next market open (a whole evening and night, or a weekend); a session you miss is counted as missed and never added later. Paper portfolios keep their last targets over a missed day.
-
-**Record every fill** in `data/trades.csv` (`positions.trades_path`), one line per fill:
+**Run 1 only (typed positions and trades, for reading).** A run started from `data/positions.csv` replays your account from `data/trades.csv` (`positions.trades_path`), one line per fill:
 
 ```text
 date,symbol,side,quantity,price,fees,amount
@@ -289,7 +307,7 @@ date,symbol,side,quantity,price,fees,amount
 python -m quant forward-report
 ```
 
-Return, volatility, Sharpe, max drawdown and missed sessions per portfolio; the **followed share** (how much of the live targets you held, compared with the previous evening's target) and your **execution cost** against the open (next to the backtest's 6 bp). It is read-only. Before about 126 forward sessions (6 months) the numbers are mostly noise, and the pre-registration rules out any decision on them before then; a verdict comes at 12 months.
+Return, volatility, Sharpe, max drawdown and missed sessions per portfolio. For run 2 also `real`'s split (pool, outside the pool, cash), the EUR/USD effect and the **followed share**, a descriptive overlap with the live targets (you do not follow the signals). Run 1's report (`--run 1`) also shows the execution cost from its trade log. It is read-only. Before about 126 forward sessions (6 months) the numbers are mostly noise, and the pre-registration rules out any decision on them before then; a verdict comes at 12 months.
 
 **Restart** only for a wrong start, a changed setup or a long gap, never because results look bad:
 
@@ -297,11 +315,13 @@ Return, volatility, Sharpe, max drawdown and missed sessions per portfolio; the 
 python -m quant forward-test --end --reason "started with the wrong positions"
 ```
 
-The run is kept, with its end date and reason, and the report lists it (`quant forward-report --run 1`). Then put the account in `positions.csv` and `--start` again after a close; only trades after the new start count. `quant status` shows the run, frozen and missed sessions, and warns when tonight's session is not frozen yet or the trade log has an error. The dashboard's Forward test page shows the same, with the curves.
+The run is kept, with its end date and reason, and the report lists it (`quant forward-report --run 1`). Then `--start` again after a close, once both broker snapshots of that session are stored. `quant status` shows the run, frozen and missed sessions, and warns when tonight's session is not frozen yet or the trade log has an error. The dashboard's Forward test page shows the same, with the curves.
 
 #### Creator Opinions (research, `sentiment_proposal.md`)
 
 Collects what a few finance YouTube creators say about single stocks. It is research only: not part of `run-daily`, and nothing from it reaches the signals. Its packages (yt-dlp, youtube-transcript-api, opencc) come with the normal `pip install -e .`.
+
+Where it stands (section 12 of the sentiment proposal): S1-S3 are built and accepted; S4 (a 6-month backfill and an exploratory scorecard) is built and its backfill is running; the **S6 test is registered** (section 9.1, 2026-10-22): it counts only videos published from 2026-10-23 and runs once in about July 2027. Until then, keep `sentiment run` going regularly: a new video's captions must be fetched within 7 days of publication.
 
 Step 1 (S1) lists new videos of the channels in `sentiment.channels` and stores their captions:
 
@@ -310,7 +330,7 @@ python -m quant sentiment fetch
 python -m quant sentiment fetch --channel @chipstockinvestor --days 30
 ```
 
-It prints each step as it goes (also in the log). Members-only videos, Shorts and live replays are recorded as skipped. Re-runs only fetch what is missing; failed captions are retried on the next run, and a video without captions is asked again for 3 days (`sentiment.no_captions_retry_days`), because captions often appear hours after a video is published. To avoid being blocked by YouTube, each request waits 8-15 s (`sentiment.request_delay_seconds`) and a run fetches at most 10 captions, oldest first (`sentiment.max_captions_per_run`); the rest waits for the next run. If YouTube blocks the requests anyway, the run stops and the rest waits for a later run. Captions are fetched only 6 hours after the last caption fetch (`sentiment.min_hours_between_caption_fetches`) and 8 hours after a blocked one (`sentiment.cooldown_hours_after_block`); until then a run only lists new videos and says when captions are next allowed. `--force-captions` (on `sentiment fetch` and `sentiment run`) ignores both waits, e.g. after the IP has changed. **Backfill (S4):** `--backfill` lists the channels back to `sentiment.evaluation.backfill_from` (2026-04-23) once; from then on every run fetches backfill captions after the forward ones, and `sentiment run` extracts at most 40 videos a run, forward first. Extraction uses haiku (`sentiment.extraction.model`), the model S4 and S6 score. `python -m quant sentiment scorecard` writes the exploratory creator scorecard (`reports/sentiment/scorecard-<date>.md`) from opinions published up to 2026-10-22 only; it decides nothing (section 12.6 of the sentiment proposal).
+It prints each step as it goes (also in the log). Members-only videos, Shorts and live replays are recorded as skipped. Re-runs only fetch what is missing; failed captions are retried on the next run, and a video without captions is asked again for 3 days (`sentiment.no_captions_retry_days`), because captions often appear hours after a video is published. To avoid being blocked by YouTube, each request waits 8-15 s (`sentiment.request_delay_seconds`) and a run fetches at most 10 captions (`sentiment.max_captions_per_run`): new videos (the last 7 days) first, oldest first, then recent videos still without captions, then the backfill; the rest waits for the next run. If YouTube blocks the requests anyway, the run stops and the rest waits for a later run. Captions are fetched only `sentiment.min_hours_between_caption_fetches` hours (currently 5) after the last caption fetch and 8 hours after a blocked one (`sentiment.cooldown_hours_after_block`); until then a run only lists new videos and says when captions are next allowed. Each listing reads up to 10 entries per day of its window and warns if that cut a channel off. `--force-captions` (on `sentiment fetch` and `sentiment run`) ignores both waits, e.g. after the IP has changed. **Backfill (S4):** `--backfill` lists the channels back to `sentiment.evaluation.backfill_from` (2026-04-23) once; from then on every run fetches backfill captions after the forward ones, and `sentiment run` extracts at most 40 videos a run, forward first. Extraction uses haiku (`sentiment.extraction.model`), the model S4 and S6 score. `python -m quant sentiment scorecard` writes the exploratory creator scorecard (`reports/sentiment/scorecard-<date>.md`) from opinions published up to 2026-10-22 only; it decides nothing (section 12.6 of the sentiment proposal).
 
 The **gold set** is the hand-labeled answer key that extraction is scored against (section 4.6 of the proposal):
 
@@ -320,11 +340,11 @@ python -m quant sentiment gold-export
 
 The first run picks `sentiment.gold.videos` (10) videos with stored captions, channels taking turns, and writes `videos.csv`, an empty `opinions.csv` and the rules in `LABELING.md` to `sentiment.gold.labels_dir` (committed: they hold no transcript text), plus readable transcripts in `data/sentiment_gold/transcripts/` (git-ignored; delete them any time). Label every video, then set its `status` to `done` or `done-none`. Later runs never touch the label files; they only write the transcripts again, and `--add N` appends N more videos. The current set in `research/sentiment_ai_reference/` (20 videos) was labeled with an AI tool (GPT or MAI), so it is an **AI reference**: scores against it measure agreement, not accuracy (see its `SOURCE.md`).
 
-Step 2 (S2) extracts opinions from the stored transcripts with `sentiment.extraction.backend`; `claude_code` runs Claude Code (`claude -p`) on your Pro subscription, so it needs no API key, but `ANTHROPIC_API_KEY` must not be set:
+Step 2 (S2) extracts opinions from the stored transcripts with `sentiment.extraction.backend` and `sentiment.extraction.model` (haiku); `claude_code` runs Claude Code (`claude -p`) on your Pro subscription, so it needs no API key, but `ANTHROPIC_API_KEY` must not be set:
 
 ```bash
 python -m quant sentiment extract --limit 5
-python -m quant sentiment extract --video khnPevsQ_TE --model haiku
+python -m quant sentiment extract --video khnPevsQ_TE --model sonnet
 ```
 
 It prints the number of calls and an estimate of the tokens first; more than `max_videos_per_run` videos need `--yes`. Each opinion has a ticker, stance, horizon, conviction, the creator's own action, a verbatim quote and its time. A quote that does not match the transcript makes the opinion UNVERIFIED, and a ticker that is neither in `config/sentiment_aliases.yaml` nor listed on a US exchange makes it UNRESOLVED; the run lists unresolved names so you can add them to the alias table. Every video is extracted once per backend, model and prompt version (`--reextract` does it again); a usage limit stops the run cleanly. Results are in the `sentiment_opinions` table; reports come with S3.
@@ -347,13 +367,13 @@ python -m quant sentiment stock 美光 --from 2026-10-01
 
 `--all` also shows opinions whose quote did not match the transcript.
 
-Everything in one go, e.g. once a day (it is never part of `run-daily`):
+Everything in one go, about every 6 hours while the backfill runs (it is never part of `run-daily`; see Scheduled Runs):
 
 ```bash
 python -m quant sentiment run
 ```
 
-It runs `fetch`, `extract`, `summarize` and `report`; each step runs even when an earlier one had problems (e.g. YouTube blocking the fetch). `--days` and `--channel` go to the fetch, `--limit`, `--model` and `--yes` to the extract.
+It runs `fetch`, `extract`, `summarize` and `report`; each step runs even when an earlier one had problems (e.g. YouTube blocking the fetch). `--days`, `--channel`, `--backfill` and `--force-captions` go to the fetch, `--limit`, `--model` and `--yes` to the extract; without `--limit` it extracts at most 40 videos a run, new ones first.
 
 To review the extraction against the labeled videos (the S2 quality gate):
 
@@ -387,6 +407,20 @@ python -m quant altdata options --compare
 
 A read counts for the session whose close it follows, until the next open; while the market is open it is skipped. It is stored only within 4 hours after that close (`altdata.options_max_hours_after_close`; until 00:00 UTC after a normal close), because overnight Yahoo's open interest and volume are reset or half-loaded. A later `run-daily` prints "too late for the session of ..." and stores nothing; a missed session is never filled in. The first stored read of a session is kept, so a later read changes nothing. `--compare` reads again, stores nothing and prints what moved against the stored read, which shows when Yahoo's volume and open interest are final.
 
+#### Scheduled Runs (Windows Task Scheduler)
+
+Nothing in the project schedules itself. On Windows, two tasks in Task Scheduler (`taskschd.msc`) run the commands with the project's Python, working directory = the project folder:
+
+| Task | Command | When |
+|---|---|---|
+| run-daily | `.venv\Scripts\python.exe -m quant run-daily` | Monday to Friday, 30 minutes after the US close in local time (22:30 in Central European time) |
+| sentiment run | `.venv\Scripts\python.exe -m quant sentiment run` | four times a day, 6 hours apart |
+
+- Use a **plain local time** (untick "Synchronize across time zones"), otherwise the start moves by an hour when the clocks change and `run-daily` can fall before the US close.
+- "Wake the computer to run this task" and "Run task as soon as possible after a scheduled start is missed" help after sleep or a shutdown; a shut-down computer runs nothing. A missed `run-daily` must still run before the next open, or the forward test counts the session as missed.
+- `claude -p` uses your Windows user's Claude login, so run the tasks as your user.
+- Check them with `Get-ScheduledTask -TaskName "mini-quant*" | Get-ScheduledTaskInfo`, and the output in `data/logs/quant.log`.
+
 #### Logs
 
 Every command logs to `data/logs/quant.log` (next to the database; rotated by `logging.max_megabytes` and `logging.backups`): start and finish with exit code and duration, crashes with the traceback, every error shown in the terminal, every pipeline stage, download failures, quarantined rows and signal warnings.
@@ -395,7 +429,7 @@ Every command accepts `--db PATH` to use another SQLite file instead of `databas
 
 ### Configuration
 
-All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, calendar, initial history), features, regime, strategies, model, retrain, backtest, risk, positions and signals. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Every section and key is required, and unknown or invalid settings are rejected at startup; there are no defaults in code, so the file is the only place a value is defined. `market.symbols` maps each GICS sector to its stocks (e.g. `energy: [XOM, CVX, SLB]`); sectors feed the sector cap `risk.max_sector_weight`, and `update-market-data` writes them into the `symbols` table. The `strategies` and `risk` sections drive the rule-based strategies (section 17 of `proposal.md`) and the signal engine: `risk.max_position_size`, `risk.max_sector_weight` and `risk.max_portfolio_exposure` change weights (in the backtest too), while `risk.atr_stop_multiple` and `risk.high_volatility` only add an ATR stop price and a volatility flag to the reasons. `signals.strategy` picks the rule-based strategy that drives the signals and `signals.hold_band` the HOLD band; a band different from `backtest.min_trade_weight` gives a warning, because live signals would then not trade like the backtest.
+All settings live in one file, `config/settings.yaml`, laid out as in section 27 of `proposal.md`: database, market (provider, symbols, market symbols, calendar, initial history), features, regime, strategies, model, retrain, backtest, risk, positions, signals, logging, forward_test, sentiment and altdata. Use another file with `python -m quant --config path\to\settings.yaml <command>`. Every section and key is required, and unknown or invalid settings are rejected at startup; there are no defaults in code, so the file is the only place a value is defined. `market.symbols` maps each GICS sector to its stocks (e.g. `energy: [XOM, CVX, SLB]`); sectors feed the sector cap `risk.max_sector_weight`, and `update-market-data` writes them into the `symbols` table. The `strategies` and `risk` sections drive the rule-based strategies (section 17 of `proposal.md`) and the signal engine: `risk.max_position_size`, `risk.max_sector_weight` and `risk.max_portfolio_exposure` change weights (in the backtest too), while `risk.atr_stop_multiple` and `risk.high_volatility` only add an ATR stop price and a volatility flag to the reasons. `signals.strategy` picks the rule-based strategy that drives the signals and `signals.hold_band` the HOLD band; a band different from `backtest.min_trade_weight` gives a warning, because live signals would then not trade like the backtest.
 
 `features.sma` must match the `price_vs_sma<N>` columns of the `features` table (checked when features are calculated), because those columns are named after the windows. Other indicator parameters (MACD 12/26/9, return and volatility windows) are part of the feature definition, so changing them means bumping `features.version`.
 
@@ -409,7 +443,7 @@ The application uses SQLite with WAL mode for local data storage. The database f
 python -m quant backup-database
 ```
 
-- It writes a dated copy such as `data/backups/quant-20261016T204347Z.db` (about 300 MB).
+- It writes a dated copy such as `data/backups/quant-20261016T204347Z.db` (about 380 MB).
 - It checks the copy (SQLite integrity check, and the forward-test row counts against the original) and keeps the newest `database.backups_to_keep` copies (5).
 - It is safe while the dashboard is open.
 
@@ -422,22 +456,23 @@ To restore: close the dashboard and any running command, move `data/quant.db` as
 ```
 mini-quant-trader/
   config/settings.yaml   all settings (proposal section 27)
-  data/                  quant.db, positions.csv, trades.csv, logs/ (git-ignored)
+  data/                  quant.db, backups/, logs/, broker/ (git-ignored)
   quant/
     cli.py               the commands
     data/                provider, calendar, ingestion, quality checks
     features/            technical and market features
     regime/              rule-based regime, HMM candidate, regime report and chart
-    strategies/          rule-based strategies and sizing
+    strategies/          rule-based strategies, sizing, and the pre-registered strategy trials
     backtest/            VectorBT backtests, metrics, reports
     models/              ML predictors, walk-forward validation, gates, registry
     signals/             positions, target weights, BUY/HOLD/REDUCE/EXIT, reasons, signal stages
     forward/             forward test: freeze, paper portfolios, real account, report
+    broker/              read-only Trading 212 and IBKR clients and the daily snapshots
     ops/                 status, promote, retire
     dashboard/           data for the Streamlit app
     persistence/         tables and queries (SQLAlchemy Core)
-    sentiment/           creator opinions: YouTube captions, extraction, summaries, reports (research only)
-    altdata/             SEC Form 4 and analyst changes, A4 research (research only)
+    sentiment/           creator opinions: captions, extraction, summaries, reports, scorecard (research only)
+    altdata/             SEC Form 4, analyst changes, option chains, A4 research (research only)
   dashboard/app.py       the Streamlit app
   models/, reports/      written by `retrain` and the research commands (git-ignored)
   tests/                 unittest suite
@@ -492,8 +527,10 @@ Each evening `run-daily` runs the trading core in order. The freeze writes tonig
 flowchart LR
     update["Update data<br/>81 stocks, ETFs"] --> features["Features<br/>stock + market"]
     features --> regime["Regime<br/>rule_based-v1"]
-    regime --> signals["Signals<br/>regime_switch"]
+    regime --> broker["Broker snapshots<br/>Trading 212, IBKR"]
+    broker --> signals["Signals<br/>regime_switch"]
     signals --> freeze["Freeze<br/>before next open"]
+    freeze --> options["Option chains<br/>research"]
     freeze --> live["live<br/>your signals"]
     freeze --> hmm["shadow_hmm<br/>HMM regime"]
     freeze --> lr["shadow_lr<br/>ML stock picks"]
@@ -501,8 +538,8 @@ flowchart LR
 
     classDef trading fill:#EEEDFE,stroke:#534AB7,color:#3C3489
     classDef shadow fill:#E1F5EE,stroke:#0F6E56,color:#085041
-    class update,features,regime,signals,freeze,live trading
-    class hmm,lr,bonds shadow
+    class update,features,regime,broker,signals,freeze,live trading
+    class hmm,lr,bonds,options shadow
 ```
 
 Shadows are never traded: they are recorded so that, after 12 months, each can be compared with `live` under the rule fixed before the forward test began (`proposal.md`, Phase 10).
@@ -551,7 +588,8 @@ Where it stands:
 - The rule-based regime `rule_based-v1` is ACTIVE.
 - The HMM regime was promoted and later retired after its holdout check.
 - The logistic regression and the HMM run on as forward-test shadows. A rule-based variant with bond-market inputs (`rule_bonds-v1`) runs as a third shadow.
-- The full trial record is in `proposal.md` (sections 13 and 15.4).
+- Five pre-registered alternative strategies (dual momentum, momentum inside the regime timing, volatility targeting, sector rotation, the three strongest stocks quarterly) all failed against `regime_switch` (section 17.1.5.5 and 17.1.6).
+- The full trial record is in `proposal.md` (sections 12, 13, 15.4 and 17.1).
 
 ## Architecture Principles
 
@@ -563,21 +601,27 @@ Where it stands:
 
 ## Planned Features
 
-See [quant_app_developer_proposal_final.md](proposal.md) for the complete design specification.
+See [proposal.md](proposal.md) for the complete design specification, and `sentiment_proposal.md` and `altdata_proposal.md` for the research modules.
 
 Later work:
-- The 6-month first look and the 12-month verdict of the forward test
+- The 6-month first look and the 12-month verdict of the forward test (run 2)
+- The S6 creator-opinion test, once, in about July 2027
+- A pre-registration for the option-chain data after about 6 months of collection
+- Point-in-time index constituents, to backtest without survivorship bias (`proposal.md` section 30)
 - Drawdown protection on the real account (its value history now exists in the forward test)
-- Automatic daily runs (e.g. a scheduled task), if wanted
 - Paper trading through a broker API only after the forward test; no live trading in V1
 
 ## Development
 
 ### Running Tests
 
-```bash
-python -m unittest discover -s tests
+In PowerShell, from the project folder (about two minutes):
+
+```powershell
+$env:PYTHONPATH="tests"; python -m unittest discover -s tests
 ```
+
+The tests never call real services (brokers, Yahoo, YouTube, the SEC, `claude -p`) and never write the real database.
 
 ### Code Style
 
